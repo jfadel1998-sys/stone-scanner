@@ -1,11 +1,16 @@
 # Stone Scanner — project guide
 
 Cross-supplier stone material search. Aggregates the **public** online catalogs of
-stone suppliers on the Stone Profits platform (`*.stoneprofitsweb.com`) into one
-categorized, searchable database so you can compare materials across suppliers.
+stone suppliers into one categorized, searchable database so you can compare
+materials across suppliers. Most are on the Stone Profits platform
+(`*.stoneprofitsweb.com`); other platforms are supported via providers (below).
 
 **Scope constraint (important):** public catalogs only — the same pages customers
 browse. No logins, no private data. Rate-limited, identifiable crawler.
+**We honor robots.txt** — it's what makes that claim true across ~80 suppliers.
+Aria Stone Gallery is deliberately excluded: it disallows all non-search crawlers
+on both its storefront *and* (uniquely among SPS tenants) its catalog host. Getting
+Aria is a commercial ask, not a code change.
 
 ## Run it
 
@@ -28,6 +33,7 @@ build/packaging details.
 | Path | Purpose |
 |------|---------|
 | `stonescan/crawler.py` | Playwright crawler — per supplier: creds/contacts, getItemGallery, slab pre-fetch |
+| `stonescan/providers/` | Non-StoneProfits adapters (`umi`, `slabware`, `stonetrash`, `slabcloud`); all plain HTTP. `base.material_row()` is mandatory — it's what keeps `material_key` identical across platforms |
 | `stonescan/normalize.py` | Category classifier, cross-supplier `material_key`, color/thickness cleanup |
 | `stonescan/smartsearch.py` | Natural-language query parser ("blue marble slabs" → filters) |
 | `stonescan/db.py` | SQLite schema + all query/storage helpers (materials, slabs, history, watchlist) |
@@ -66,6 +72,17 @@ build/packaging details.
   reassigned every crawl. Sourcing lists also snapshot name/photo so an item that
   leaves a catalog still renders (flagged "gone").
 
+- **Other platforms** (`suppliers.json` → `"provider": "..."`; omit = Stone Profits):
+  each has one trap worth remembering. **UMI**: its API only offers legacy RSA ciphers
+  so OpenSSL 3 refuses the handshake (curl works — schannel is laxer); its "branches"
+  are regional windows onto ONE pool (connecticut/boston/brooklyn return identical
+  sets), so union by item and trust the slab's own `Branch`. **SlabWare**: browser UA
+  required (Cloudflare), `Bundles` is JSON-inside-JSON, `DetalheBundleNovo` needs the
+  full param set, prices may be the literal `"CALL"`. **StoneTrash**: `buildId` changes
+  every deploy (read it from `__NEXT_DATA__`); type comes from `materials_Tags`, since
+  `taxonomy` can be just "Tile". **SlabCloud**: list returns one row PER SLAB with the
+  count repeated (group by name or slabs inflate); names carry a leading TAB that must
+  be sent back verbatim.
 - **Locations are not addresses.** `slabs.location` is free text: ~56 of 99 are real
   cities, the rest are internal yard names (`KLZ`, `HG-NJ`) or towns below the city
   dataset's ~15k-population floor. `geocode.py` resolves what it can **offline** and
