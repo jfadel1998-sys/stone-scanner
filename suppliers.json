@@ -1,0 +1,337 @@
+{
+  "_comment": "Allow-list of PUBLIC Stone Profits catalogs to index. Edit freely. 'host' is the public site; 'name' is optional (the crawler reads the real company name from the page). Only add catalogs that are publicly published (no login).",
+  "suppliers": [
+    {
+      "host": "swtm.stoneprofitsweb.com",
+      "name": "Stone Warehouse of Michigan"
+    },
+    {
+      "host": "thestonegallery.stoneprofitsweb.com",
+      "name": "The Stone Gallery"
+    },
+    {
+      "host": "stonemall.stoneprofitsweb.com",
+      "name": "Stone Mall"
+    },
+    {
+      "host": "lapietra.stoneprofitsweb.com",
+      "name": "La Pietra"
+    },
+    {
+      "host": "stonefactory.stoneprofitsweb.com",
+      "name": "The Stone Factory"
+    },
+    {
+      "host": "easystones.stoneprofitsweb.com",
+      "name": "Easy Stones"
+    },
+    {
+      "host": "stoneholding.stoneprofitsweb.com",
+      "name": "Stone Holding"
+    },
+    {
+      "host": "stonexusa.stoneprofitsweb.com",
+      "name": "StoneX USA"
+    },
+    {
+      "host": "wholesalegranitedirect.stoneprofitsweb.com",
+      "name": "Wholesale Granite Direct"
+    },
+    {
+      "host": "hilltopstones.stoneprofitsweb.com",
+      "name": "Hilltop Granite"
+    },
+    {
+      "host": "emerstone.stoneprofitsweb.com",
+      "name": "Emerstone"
+    },
+    {
+      "host": "rsistone.stoneprofitsweb.com",
+      "name": "RSI Stone"
+    },
+    {
+      "host": "gsgraniteslc.stoneprofitsweb.com",
+      "name": "GS Granite"
+    },
+    {
+      "host": "ugmsurfaces.stoneprofitsweb.com",
+      "name": "UGM Surfaces"
+    },
+    {
+      "host": "natureofmarble.stoneprofitsweb.com",
+      "name": "Nature of Marble"
+    },
+    {
+      "host": "klz.stoneprofitsweb.com",
+      "name": "KLZ"
+    },
+    {
+      "host": "thegraniteplace.stoneprofitsweb.com",
+      "name": "The Granite Place"
+    },
+    {
+      "host": "metasurfaces.stoneprofitsweb.com",
+      "name": "Meta Surfaces"
+    },
+    {
+      "host": "graniteslabsuk.stoneprofitsweb.com",
+      "name": "Granite Slabs UK"
+    },
+    {
+      "host": "graniteimports.stoneprofitsweb.com",
+      "name": "Granite Imports"
+    },
+    {
+      "host": "gsi.stoneprofitsweb.com",
+      "name": "GSI"
+    },
+    {
+      "host": "inventory.tritonstone.com",
+      "name": "Triton Stone"
+    },
+    {
+      "host": "agstones.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "americangranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "americanquartz.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "ameriquartz.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "apps.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "aracruz.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "aracruzre.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "arca.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "arcadia.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "arista.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "avanimarble.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "bellaterra.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "beststone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "builderstonegroup.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "capitolgranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "carthage.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "classicrock.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "crsgranitetexas.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "crsgranitetx.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "devinecountertops.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "dgmdev.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "dynamosurfaces.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "eburlington.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "egm.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "emgeestone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "encore2.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "encorestone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "epicstones.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "evereststone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "fabstone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "fourstones.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "georgianstone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "gramarstone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "granitedepot.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "gsgranitecalgary.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "gsgraniteedmonton.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "gsgraniteroseville.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "gsgranitesavage.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "gsgranitewinnipeg.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "heliosna.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "hgstones.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "imcstone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "instylegm.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "kbr.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "marbleexpressla.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "mfgranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "multisurface.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "omnisurfaces.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "pmi.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "prmarble.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "qualitystones.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "stonefusionsurfaces.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "surfacesbypacific.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "swt.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "tajams.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "ultrastones.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "veneziastone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "nwww.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "ollinsurfaces.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "progressive.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "tritonnashville.stoneprofitsweb.com",
+      "name": ""
+    }
+  ]
+}

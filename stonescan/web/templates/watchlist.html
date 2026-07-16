@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Watchlist · Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><a href="/">🪨 Stone Scanner</a>
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/watchlist" class="active">★ Watchlist</a></nav>
+  </div>
+  <div class="stats">{% if stats.last_updated %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}</div>
+</header>
+
+<div class="block">
+  <h1 style="font-size:22px;margin:14px 0 6px;">Watchlist</h1>
+  <p class="muted" style="margin:0 0 16px;">Save any search (from the Search page's <b>★ Save search</b> button) to track materials over time.
+     Each shows its current match count and how many are newly arrived.</p>
+
+  {% for it in items %}
+  <div class="watchrow">
+    <div class="watchhead">
+      <a class="watchq" href="/?q={{ it.watch.query|urlencode }}">{{ it.watch.query }}</a>
+      <span class="watchcount">{{ it.total }} match{{ '' if it.total == 1 else 'es' }}{% if it.new_count %} · <span class="new">{{ it.new_count }} NEW</span>{% endif %}</span>
+      <form method="post" action="/watchlist/remove" style="display:inline;margin-left:auto;">
+        <input type="hidden" name="id" value="{{ it.watch.id }}">
+        <button class="rmbtn" title="Remove from watchlist">✕</button>
+      </form>
+    </div>
+    <div class="watchprev">
+      {% for r in it.preview %}
+        <a class="pvthumb" href="/item?id={{ r.id }}" title="{{ r.item_name }}">
+          {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.style.display='none'">{% else %}🪨{% endif %}
+        </a>
+      {% else %}<span class="muted">No current matches.</span>{% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <p class="empty" style="padding:30px 0;">Your watchlist is empty. Run a search, then click <b>★ Save search</b> to add it here.</p>
+  {% endfor %}
+</div>
+
+<footer>Watched searches are re-run against the latest crawl each time you open this page.</footer>
+</body>
+</html>

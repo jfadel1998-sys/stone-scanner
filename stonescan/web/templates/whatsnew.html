@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What's New · Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><a href="/">🪨 Stone Scanner</a>
+    <nav class="topnav"><a href="/">Search</a><a href="/new" class="active">✨ What's New</a><a href="/watchlist">★ Watchlist</a></nav>
+  </div>
+  <div class="stats">{% if stats.last_updated %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}</div>
+</header>
+
+{% if restock %}
+<section class="block">
+  <h2>Back in stock <span class="muted">— newly available since the previous crawl ({{ restock|length }})</span></h2>
+  <table class="materials">
+    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th><th>Supplier</th><th class="num">Slabs</th><th></th></tr></thead>
+    <tbody>
+    {% for r in restock %}
+      <tr>
+        <td class="thumbcell"><a href="/item?id={{ r.id }}">{% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</a></td>
+        <td class="name"><a class="itemlink" href="/item?id={{ r.id }}">{{ r.name_norm|title }}</a></td>
+        <td>{{ r.material_type }}</td>
+        <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
+        <td>{{ r.thickness }}</td>
+        <td>{{ r.supplier_name }}</td>
+        <td class="num">{{ r.slabs or '' }}</td>
+        <td><a class="compare" href="/item?id={{ r.id }}">view →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="block">
+  <h2>New arrivals <span class="muted">— materials the suppliers flagged as new ({{ total }})</span></h2>
+  {% if not restock %}
+  <p class="hintline muted">Tip: “Back in stock” alerts appear here once the app has crawled at least twice (it compares each night's inventory to the last).</p>
+  {% endif %}
+  <table class="materials">
+    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th><th>Supplier</th><th class="num">Slabs</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="thumbcell"><a href="/item?id={{ r.id }}">{% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</a></td>
+        <td class="name"><a class="itemlink" href="/item?id={{ r.id }}">{{ r.item_name }}</a> <span class="new">NEW</span></td>
+        <td>{{ r.material_type }}</td>
+        <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
+        <td>{{ r.thickness }}</td>
+        <td>{{ r.supplier_name }}</td>
+        <td class="num">{{ r.available_slabs or '' }}</td>
+        <td><a class="compare" href="/material?key={{ r.material_key | urlencode }}">compare →</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="empty">No new arrivals flagged right now.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if pages > 1 %}
+  <nav class="pager">
+    {% if page > 1 %}<a href="/new?page={{ page-1 }}">‹ Prev</a>{% endif %}
+    <span>Page {{ page }} / {{ pages }}</span>
+    {% if page < pages %}<a href="/new?page={{ page+1 }}">Next ›</a>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+
+<footer>“New arrivals” come from each supplier's own new-item flag; “back in stock” is detected by comparing nightly crawls.</footer>
+</body>
+</html>

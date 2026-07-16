@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ name }} — suppliers · Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><a href="/">🪨 Stone Scanner</a></div>
+</header>
+
+<div class="material-head">
+  <a class="back" href="/">‹ Back to search</a>
+  <h1>{{ name }}</h1>
+  <p class="muted">{{ rows|length }} listing{{ '' if rows|length == 1 else 's' }} across
+     {{ rows|map(attribute='supplier_name')|unique|list|length }} supplier(s)</p>
+</div>
+
+<table class="materials">
+  <thead>
+    <tr>
+      <th></th><th>Supplier</th><th>Listed as</th><th>Type</th><th>Color</th>
+      <th>Thk</th><th>Finish</th><th class="num">Slabs</th><th class="num">Avg size</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td class="thumbcell">
+        {% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">
+        {% else %}<span class="thumb noimg"></span>{% endif %}
+      </td>
+      <td class="name">{{ r.supplier_name }}</td>
+      <td><a class="itemlink" href="/item?id={{ r.id }}">{{ r.item_name }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</td>
+      <td>{{ r.material_type }}</td>
+      <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
+      <td>{{ r.thickness }}</td>
+      <td class="muted">{{ r.finish }}</td>
+      <td class="num">{{ r.available_slabs or '' }}</td>
+      <td class="num muted">{% if r.avg_length and r.avg_width %}{{ r.avg_length|int }}×{{ r.avg_width|int }}{% endif %}</td>
+      <td><a class="compare" href="https://{{ r.supplier_host }}/" target="_blank" rel="noopener">visit ↗</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<footer>Availability and sizes reflect each supplier's public catalog at last crawl.</footer>
+</body>
+</html>

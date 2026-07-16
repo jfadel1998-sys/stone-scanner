@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ m.item_name }} — {{ m.supplier_name }} · Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><a href="/">🪨 Stone Scanner</a></div>
+  <div class="stats"><a class="back" href="javascript:history.back()">‹ Back to results</a></div>
+</header>
+
+<div class="detail">
+  <div class="detail-photo">
+    {% if m.image_url %}
+      <a href="{{ m.image_url }}" target="_blank" rel="noopener" title="Open full-size photo">
+        <img src="{{ m.image_url }}" alt="{{ m.item_name }}" loading="eager"
+             onerror="this.closest('.detail-photo').classList.add('noimg')">
+      </a>
+    {% else %}<div class="bigph">🪨<span>No photo published</span></div>{% endif %}
+  </div>
+
+  <div class="detail-body">
+    <div class="crumbs">{{ m.material_type }}{% if m.category and m.category != m.material_type %} · {{ m.category }}{% endif %}</div>
+    <h1>{{ m.item_name }}{% if m.new_arrival %} <span class="new">NEW</span>{% endif %}</h1>
+    <div class="supplier-line">at <strong>{{ m.supplier_name }}</strong></div>
+
+    <div class="specs">
+      <div><span>Type</span>{{ m.material_type or '—' }}</div>
+      <div><span>Sub-category</span>{{ m.subcategory or '—' }}</div>
+      <div><span>Color</span>{{ m.color or '—' }}</div>
+      <div><span>Finish</span>{{ m.finish or '—' }}</div>
+      <div><span>Thickness</span>{{ m.thickness or '—' }}</div>
+      <div><span>Form</span>{{ m.product_form or '—' }}</div>
+      {% if m.sku %}<div><span>SKU</span>{{ m.sku }}</div>{% endif %}
+      {% if m.origin %}<div><span>Origin</span>{{ m.origin }}</div>{% endif %}
+      {% if m.locations %}<div><span>Locations</span>{{ m.locations.replace(',', ', ') }}</div>{% endif %}
+    </div>
+
+    <div class="inv-box">
+      <div class="inv-stat"><b>{{ m.available_slabs or 0 }}</b><span>slabs available</span></div>
+      {% if m.avg_length and m.avg_width %}
+      <div class="inv-stat"><b>{{ m.avg_length|int }}×{{ m.avg_width|int }}</b><span>avg size (in)</span></div>{% endif %}
+      {% if m.available_qty %}
+      <div class="inv-stat"><b>{{ m.available_qty|round|int }}</b><span>{{ m.uom or 'qty' }} available</span></div>{% endif %}
+      {% if m.price_range %}<div class="inv-stat"><b>{{ m.price_range }}</b><span>price range</span></div>{% endif %}
+    </div>
+
+    <div class="contact-card">
+      <div class="cc-name">{{ m.supplier_name }}</div>
+      <div class="cc-lines">
+        {% if m.supplier_phone %}<a href="tel:{{ m.supplier_phone }}" class="cc-link">📞 {{ m.supplier_phone }}</a>{% endif %}
+        {% if m.supplier_email %}<a href="mailto:{{ m.supplier_email }}?subject=Inquiry: {{ m.item_name|urlencode }}" class="cc-link">✉ {{ m.supplier_email }}</a>{% endif %}
+        {% if not m.supplier_phone and not m.supplier_email %}<a class="cc-link" href="https://{{ m.supplier_host }}/" target="_blank" rel="noopener">Contact via their site ↗</a>{% endif %}
+      </div>
+    </div>
+
+    <div class="actions">
+      <a class="btn" href="https://{{ m.supplier_host }}/{{ ('InventoryDetail/' ~ m.item_id) if m.item_id else '' }}" target="_blank" rel="noopener">View this on {{ m.supplier_name }}'s live catalog ↗</a>
+      <a class="btn ghost" href="/material?key={{ m.material_key | urlencode }}">Compare all suppliers</a>
+    </div>
+    <p class="stamp">Inventory reflects {{ m.supplier_name }}'s public catalog
+       {% if m.supplier_updated %}as of {{ m.supplier_updated[:16].replace('T',' ') }} UTC{% endif %}.
+       Availability changes as slabs are sold — open the live catalog for real-time stock.</p>
+  </div>
+</div>
+
+<section class="block" id="slabgallery">
+  <h2>Slabs in stock <span id="slabcount" class="muted"></span></h2>
+  <div id="slablist" class="slabgrid">
+    <div class="slabloading"><span class="spin"></span> Loading live slab photos from {{ m.supplier_name }}…</div>
+  </div>
+</section>
+
+<div id="lightbox" class="lightbox" onclick="this.classList.remove('show')">
+  <img id="lightbox-img" src="" alt="">
+</div>
+
+<script>
+(function(){
+  var id = {{ m.id }};
+  var host = "{{ m.supplier_host }}";
+  var list = document.getElementById('slablist');
+  var countEl = document.getElementById('slabcount');
+  var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
+  fetch('/api/slabs?id='+id).then(function(r){return r.json();}).then(function(d){
+    var slabs = (d && d.slabs) || [];
+    if(!slabs.length){ list.innerHTML = '<div class="slabloading">No individual slab photos are published right now. '+liveLink+'</div>'; return; }
+    countEl.textContent = '· '+slabs.length+' slab'+(slabs.length===1?'':'s');
+    list.innerHTML = '';
+    slabs.forEach(function(s){
+      var card = document.createElement('div'); card.className='slabcard';
+      var size = (s.length && s.width) ? Math.round(s.length)+'×'+Math.round(s.width) : '';
+      var img = s.thumb ? '<img loading="lazy" src="'+s.thumb+'" data-full="'+s.photo+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">' : '<span class="thumb noimg"></span>';
+      card.innerHTML = img + '<div class="slabmeta"><b>'+(s.slab_no||'Slab')+'</b>'
+        + (size?'<span>'+size+' '+(s.uom||'in')+'</span>':'')
+        + (s.location?'<span>'+s.location+'</span>':'')
+        + (s.barcode?'<span class="bc">#'+s.barcode+'</span>':'')
+        + '</div>';
+      var im = card.querySelector('img');
+      if(im) im.addEventListener('click', function(){
+        var lb=document.getElementById('lightbox');
+        document.getElementById('lightbox-img').src=im.getAttribute('data-full');
+        lb.classList.add('show');
+      });
+      list.appendChild(card);
+    });
+  }).catch(function(){
+    list.innerHTML = '<div class="slabloading">Couldn\'t load slab photos just now. '+liveLink+'</div>';
+  });
+})();
+</script>
+
+{% if variants %}
+<section class="block">
+  <h2>Other {{ m.thickness_label if false else 'options' }} at {{ m.supplier_name }}</h2>
+  <table class="materials">
+    <thead><tr><th></th><th>Listed as</th><th>Thk</th><th>Finish</th><th>Form</th><th class="num">Slabs</th><th></th></tr></thead>
+    <tbody>
+    {% for v in variants %}
+      <tr>
+        <td class="thumbcell">{% if v.image_url %}<img class="thumb" loading="lazy" src="{{ v.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
+        <td class="name">{{ v.item_name }}</td>
+        <td>{{ v.thickness }}</td>
+        <td class="muted">{{ v.finish }}</td>
+        <td class="muted">{{ v.product_form }}</td>
+        <td class="num">{{ v.available_slabs or '' }}</td>
+        <td><a class="compare" href="/item?id={{ v.id }}">view →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="block">
+  <h2>Available from {{ others|length }} supplier{{ '' if others|length == 1 else 's' }}</h2>
+  <table class="materials">
+    <thead><tr><th></th><th>Supplier</th><th class="num">Slabs</th><th class="num">Listings</th><th></th></tr></thead>
+    <tbody>
+    {% for o in others %}
+      <tr class="{{ 'self' if o.supplier_host == m.supplier_host }}">
+        <td class="thumbcell">{% if o.image_url %}<img class="thumb" loading="lazy" src="{{ o.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
+        <td class="name">{{ o.supplier_name }}{% if o.supplier_host == m.supplier_host %} <span class="here">viewing</span>{% endif %}</td>
+        <td class="num">{{ o.slabs or '' }}</td>
+        <td class="num muted">{{ o.variants }}</td>
+        <td>
+          <a class="compare" href="/item?id={{ o.id }}">view →</a>
+          <a class="compare" href="https://{{ o.supplier_host }}/{{ ('InventoryDetail/' ~ o.item_id) if o.item_id else '' }}" target="_blank" rel="noopener">site ↗</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if similar %}
+<section class="block">
+  <h2>Similar materials <span class="muted">— comparable {{ m.material_type|lower }} you might consider</span></h2>
+  <div class="simgrid">
+    {% for x in similar %}
+    <a class="simcard" href="/item?id={{ x.id }}">
+      {% if x.image_url %}<img loading="lazy" src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
+      {% else %}<span class="simph">🪨</span>{% endif %}
+      <div class="simmeta">
+        <b>{{ x.item_name }}</b>
+        <span>{% if x.color %}{{ x.color }} · {% endif %}{{ x.suppliers }} supplier{{ '' if x.suppliers == 1 else 's' }}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<footer>Stone Scanner indexes suppliers' public catalogs. Photos and availability link to each supplier's live listing.</footer>
+</body>
+</html>
