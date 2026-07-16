@@ -45,6 +45,68 @@ def _build_slab_rows(result, supplier_id: int, crawled_at: str) -> list[dict]:
     return out
 
 
+def _store(conn, data, *, with_slabs: bool) -> tuple[int, int]:
+    """Persist one provider's SupplierData; returns (materials, slabs)."""
+    supplier_id = db.upsert_supplier(
+        conn, host=data.host,
+        company=data.company or None,
+        products=data.products or None,
+        image_base=data.image_base or None,
+        phone=data.phone or None,
+        email=data.email or None,
+        last_crawled=utc_now_iso(),
+        last_error=data.error or None,
+    )
+    for r in data.materials:
+        r["supplier_id"] = supplier_id
+    n = db.replace_materials(conn, supplier_id, data.materials)
+    ns = 0
+    if with_slabs and data.slabs:
+        for s in data.slabs:
+            s["supplier_id"] = supplier_id
+        ns = db.replace_slabs(conn, supplier_id, data.slabs, utc_now_iso())
+        db.backfill_locations(conn, supplier_id)
+    db.snapshot_history(conn, supplier_id, utc_now_iso()[:10])
+    return n, ns
+
+
+async def run_providers(entries: list[dict], *, delay: float, db_path: str,
+                        with_slabs: bool = False, limit_items: int = 0) -> tuple[int, int, int]:
+    """Crawl every non-StoneProfits supplier entry, one provider at a time."""
+    from . import providers
+
+    conn = db.init_db(db_path)
+    items = slabs = ok = 0
+    for entry in entries:
+        name = providers.provider_of(entry)
+        label = entry.get("name") or entry.get("host")
+        try:
+            crawl = providers.get(name)
+            data = await crawl(entry, with_slabs=with_slabs, delay=delay,
+                               limit=limit_items)
+        except Exception as e:  # noqa: BLE001 - a broken provider must not kill the run
+            print(f"  [err]  {label:<34} {name}: {e}")
+            continue
+        if not data.ok:
+            db.upsert_supplier(conn, host=data.host, last_crawled=utc_now_iso(),
+                               last_error=data.error or "no items returned")
+            print(f"  [skip] {label:<34} {data.error}")
+            continue
+        try:
+            n, ns = _store(conn, data, with_slabs=with_slabs)
+        except Exception as e:  # noqa: BLE001
+            db.upsert_supplier(conn, host=data.host, last_error=f"store failed: {e}")
+            print(f"  [err]  {label:<34} store failed: {e}")
+            continue
+        items += n
+        slabs += ns
+        ok += 1
+        note = f" (+{ns} slabs)" if with_slabs else ""
+        print(f"  [ok]   {label:<34} {n:>5} materials{note}  [{name}]")
+    conn.close()
+    return ok, items, slabs
+
+
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
               db_path: str, with_slabs: bool = False) -> None:
     conn = db.init_db(db_path)
@@ -123,6 +185,8 @@ def main() -> None:
                     help="Incremental refresh: skip suppliers successfully crawled within this many hours.")
     ap.add_argument("--slabs", action="store_true",
                     help="Also pre-fetch and cache each in-stock item's full slab gallery (slower).")
+    ap.add_argument("--provider-limit", type=int, default=0,
+                    help="Cap materials per non-StoneProfits supplier (0 = all; handy for smoke tests).")
     args = ap.parse_args()
 
     if args.discover:
@@ -131,12 +195,21 @@ def main() -> None:
         added = discover.merge_discovered(found)
         print(f"  found {len(found)} candidates, added {added} new.\n")
 
+    from . import providers
+
+    entries = discover.load_suppliers()
     if args.only:
-        hosts = [h.strip() for h in args.only.split(",") if h.strip()]
-    else:
-        hosts = [s["host"] for s in discover.load_suppliers()]
+        want = {h.strip().lower() for h in args.only.split(",") if h.strip()}
+        entries = [e for e in entries if e["host"].lower() in want]
+        # Allow crawling a host that isn't in suppliers.json yet.
+        known = {e["host"].lower() for e in entries}
+        entries += [{"host": h} for h in want if h not in known]
     if args.limit:
-        hosts = hosts[: args.limit]
+        entries = entries[: args.limit]
+
+    other = [e for e in entries if providers.provider_of(e) != providers.STONEPROFITS]
+    hosts = [e["host"] for e in entries
+             if providers.provider_of(e) == providers.STONEPROFITS]
 
     if args.stale_hours:
         from datetime import datetime, timedelta, timezone
@@ -150,17 +223,28 @@ def main() -> None:
         hosts = [h for h in hosts if h not in fresh]
         print(f"Incremental: skipping {before - len(hosts)} supplier(s) refreshed in the last {args.stale_hours:g}h.\n")
 
-    print(f"Crawling {len(hosts)} catalog(s)...\n")
-    asyncio.run(
-        run(
-            hosts,
-            concurrency=args.concurrency,
-            delay=args.delay,
-            headless=not args.show_browser,
-            db_path=args.db,
-            with_slabs=args.slabs,
+    if hosts:
+        print(f"Crawling {len(hosts)} Stone Profits catalog(s)...\n")
+        asyncio.run(
+            run(
+                hosts,
+                concurrency=args.concurrency,
+                delay=args.delay,
+                headless=not args.show_browser,
+                db_path=args.db,
+                with_slabs=args.slabs,
+            )
         )
-    )
+
+    if other:
+        kinds = ", ".join(sorted({providers.provider_of(e) for e in other}))
+        print(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
+        ok, items, slabs = asyncio.run(
+            run_providers(other, delay=max(args.delay * 0.2, 0.2), db_path=args.db,
+                          with_slabs=args.slabs, limit_items=args.provider_limit)
+        )
+        print(f"\n  {ok} supplier(s), {items} materials"
+              + (f", {slabs} slabs" if args.slabs else ""))
 
 
 if __name__ == "__main__":

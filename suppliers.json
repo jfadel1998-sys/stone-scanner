@@ -1,5 +1,5 @@
 {
-  "_comment": "Allow-list of PUBLIC Stone Profits catalogs to index. Edit freely. 'host' is the public site; 'name' is optional (the crawler reads the real company name from the page). Only add catalogs that are publicly published (no login).",
+  "_comment": "Allow-list of PUBLIC catalogs to index. Edit freely. 'host' is the public site; 'name' is optional (the crawler reads the real company name from the page). 'provider' selects the adapter (omit for Stone Profits, the default): umi | slabware | stonetrash | slabcloud. Only add catalogs that are publicly published (no login).",
   "suppliers": [
     {
       "host": "swtm.stoneprofitsweb.com",
@@ -332,6 +332,82 @@
     {
       "host": "riostones.stoneprofitsweb.com",
       "name": "Rio Stones"
+    },
+    {
+      "host": "umistone.com",
+      "name": "UMI Stone",
+      "provider": "umi"
+    },
+    {
+      "host": "stonetrash.com",
+      "name": "StoneTrash (marketplace)",
+      "provider": "stonetrash"
+    },
+    {
+      "host": "blackstonesd.slabware.com",
+      "name": "Blackstone SD",
+      "provider": "slabware"
+    },
+    {
+      "host": "selectstone.slabware.com",
+      "name": "Select Stone",
+      "provider": "slabware"
+    },
+    {
+      "host": "slabsupplync.slabware.com",
+      "name": "Slab Supply NC",
+      "provider": "slabware"
+    },
+    {
+      "host": "stratastonedistributors.slabware.com",
+      "name": "Strata Stone Distributors",
+      "provider": "slabware"
+    },
+    {
+      "host": "stonearrangement.slabware.com",
+      "name": "Stone Arrangement",
+      "provider": "slabware"
+    },
+    {
+      "host": "rgs.slabware.com",
+      "name": "RGS",
+      "provider": "slabware"
+    },
+    {
+      "host": "owstone.slabcloud.com",
+      "slug": "owstone",
+      "name": "OW Stone",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "mogastone.slabcloud.com",
+      "slug": "mogastone",
+      "name": "Moga Stone",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "firenzastone.slabcloud.com",
+      "slug": "firenzastone",
+      "name": "Firenza Stone",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "solidstone.slabcloud.com",
+      "slug": "solidstone",
+      "name": "Solid Stone",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "isdistributor.slabcloud.com",
+      "slug": "isdistributor",
+      "name": "IS Distributor",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "graniteworks.slabcloud.com",
+      "slug": "graniteworks",
+      "name": "Granite Works",
+      "provider": "slabcloud"
     }
   ]
 }
