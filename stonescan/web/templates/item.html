@@ -58,7 +58,9 @@
     </div>
 
     <div class="actions">
-      <a class="btn" href="https://{{ m.supplier_host }}/{{ ('InventoryDetail/' ~ m.item_id) if m.item_id else '' }}" target="_blank" rel="noopener">View this on {{ m.supplier_name }}'s live catalog ↗</a>
+      {# /InventoryDetail/<id> is a Stone Profits URL shape; other platforms store
+         their own real link in source_url. #}
+      <a class="btn" href="{{ m.source_url or ('https://' ~ m.supplier_host ~ '/' ~ (('InventoryDetail/' ~ m.item_id) if m.item_id else '')) }}" target="_blank" rel="noopener">View this on {{ m.supplier_name }}'s live catalog ↗</a>
       <a class="btn ghost" href="/material?key={{ m.material_key | urlencode }}">Compare all suppliers</a>
       {% if lists %}
       <form class="addform detailadd" method="post" action="/lists/add">
@@ -162,7 +164,7 @@
         <td class="num muted">{{ o.variants }}</td>
         <td>
           <a class="compare" href="/item?id={{ o.id }}">view →</a>
-          <a class="compare" href="https://{{ o.supplier_host }}/{{ ('InventoryDetail/' ~ o.item_id) if o.item_id else '' }}" target="_blank" rel="noopener">site ↗</a>
+          <a class="compare" href="{{ o.source_url or ('https://' ~ o.supplier_host ~ '/' ~ (('InventoryDetail/' ~ o.item_id) if o.item_id else '')) }}" target="_blank" rel="noopener">site ↗</a>
         </td>
       </tr>
     {% endfor %}

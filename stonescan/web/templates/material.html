@@ -75,7 +75,10 @@
           {% if not s.phone and not s.email %}—{% endif %}
         </td>
         <td>
-          {% if s.item_id %}<a class="compare" href="https://{{ s.supplier_host }}/InventoryDetail/{{ s.item_id }}" target="_blank" rel="noopener">on their site ↗</a>
+          {# source_url is what the crawler actually saw. Only Stone Profits uses
+             /InventoryDetail/<id>; building that for any other platform 404s. #}
+          {% if s.source_url %}<a class="compare" href="{{ s.source_url }}" target="_blank" rel="noopener">on their site ↗</a>
+          {% elif s.item_id %}<a class="compare" href="https://{{ s.supplier_host }}/InventoryDetail/{{ s.item_id }}" target="_blank" rel="noopener">on their site ↗</a>
           {% else %}<a class="compare" href="https://{{ s.supplier_host }}/" target="_blank" rel="noopener">visit ↗</a>{% endif %}
         </td>
       </tr>

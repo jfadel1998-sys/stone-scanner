@@ -35,7 +35,13 @@ UA = "Mozilla/5.0 (compatible; StoneScanner/0.1; +public-catalog indexer)"
 
 
 def _slug(entry: dict) -> str:
-    """Tenant slug: explicit, else the label from '<slug>.slabcloud.com'."""
+    """Tenant slug: explicit, else the label from '<slug>.slabcloud.com'.
+
+    NB: `<slug>.slabcloud.com` is the supplier's identity key in our DB, not
+    necessarily a real host — only some tenants have that subdomain (owstone does;
+    mogastone and friends do not resolve). The public page every tenant does have
+    is `slabcloud.com/inventory/<slug>`, which is what `source_url` must point at.
+    """
     if entry.get("slug"):
         return str(entry["slug"]).strip()
     return (entry.get("host") or "").split(".")[0].strip()
@@ -101,7 +107,7 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.3,
                     avg_width=round(sum(wids) / len(wids), 1) if wids else None,
                     uom="SF", sku=str(m.get("InventoryID") or ""),
                     image_url=_img(slug, m.get("SlabID")),
-                    source_url=f"{SITE}/{slug}",
+                    source_url=f"{SITE}/inventory/{slug}",
                 ))
 
                 for s in slabs:

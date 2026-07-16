@@ -318,11 +318,16 @@ def material(request: Request, key: str):
             "supplier_name": r["supplier_name"], "supplier_host": r["supplier_host"],
             "phone": r["supplier_phone"], "email": r["supplier_email"],
             "slabs": 0, "image_url": "", "id": r["id"], "item_id": r["item_id"],
+            # Each platform has its own public URL shape, so carry the one the
+            # crawler actually saw rather than reconstructing it.
+            "source_url": r["source_url"] or "",
             "listings": [], "locations": set(),
         })
         s["slabs"] += r["available_slabs"] or 0
         if not s["image_url"] and r["image_url"]:
+            # Keep the outbound link on the same listing as the photo we show.
             s["image_url"], s["id"], s["item_id"] = r["image_url"], r["id"], r["item_id"]
+            s["source_url"] = r["source_url"] or s["source_url"]
         for loc in (r["locations"] or "").split(","):
             if loc.strip():
                 s["locations"].add(loc.strip())
@@ -411,8 +416,8 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
     # Every supplier that carries this material (one row per supplier).
     others = conn.execute(
         """SELECT COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
-                  mm.id AS id, mm.item_id AS item_id, g.variants AS variants,
-                  g.slabs AS slabs, g.image_url AS image_url
+                  mm.id AS id, mm.item_id AS item_id, mm.source_url AS source_url,
+                  g.variants AS variants, g.slabs AS slabs, g.image_url AS image_url
            FROM (SELECT supplier_id, MIN(id) AS min_id, COUNT(*) AS variants,
                         MAX(available_slabs) AS slabs, MAX(image_url) AS image_url
                  FROM materials WHERE material_key = ? AND material_key <> ''
