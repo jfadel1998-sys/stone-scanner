@@ -9,7 +9,7 @@
 <body>
 <header>
   <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/" class="active">Search</a><a href="/new">✨ What's New</a><a href="/watchlist">★ Watchlist</a></nav>
+    <nav class="topnav"><a href="/" class="active">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/watchlist">★ Watchlist</a></nav>
   </div>
   <div class="stats">
     {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
@@ -63,14 +63,19 @@
   </select>
   <input type="number" name="min_length" value="{{ min_length }}" placeholder="min L" class="sizein" title="Minimum slab length" min="0" step="1">
   <input type="number" name="min_width" value="{{ min_width }}" placeholder="min W" class="sizein" title="Minimum slab width" min="0" step="1">
+  <select name="sort" title="Sort results">
+    {% for v, label in [('relevance','Best match'), ('slabs','Most slabs'), ('size','Biggest slabs'), ('new','Newest first')] %}
+    <option value="{{ v }}" {{ 'selected' if v == sort }}>{{ label }}</option>{% endfor %}
+  </select>
   <label class="newchk" title="Only newly-arrived materials"><input type="checkbox" name="new_only" value="1" {{ 'checked' if new_only }}> New</label>
+  <label class="newchk" title="Hide products with no slabs available"><input type="checkbox" name="in_stock" value="1" {{ 'checked' if in_stock }}> In stock</label>
   <input type="hidden" name="view" value="{{ view }}">
   <button type="submit">Search</button>
   <a class="reset" href="/">Reset</a>
   <button type="submit" formaction="/watchlist/add" formmethod="post" class="savebtn" title="Save this search to your watchlist">★ Save search</button>
 </form>
 
-{% set base = '/?q=' ~ (q|urlencode) ~ '&material_type=' ~ (material_type|urlencode) ~ '&color=' ~ (color|urlencode) ~ '&thickness=' ~ (thickness|urlencode) ~ '&supplier=' ~ (supplier|urlencode) ~ '&location=' ~ (location|urlencode) ~ '&min_length=' ~ min_length ~ '&min_width=' ~ min_width ~ '&new_only=' ~ new_only %}
+{% set base = '/?q=' ~ (q|urlencode) ~ '&material_type=' ~ (material_type|urlencode) ~ '&color=' ~ (color|urlencode) ~ '&thickness=' ~ (thickness|urlencode) ~ '&supplier=' ~ (supplier|urlencode) ~ '&location=' ~ (location|urlencode) ~ '&min_length=' ~ min_length ~ '&min_width=' ~ min_width ~ '&new_only=' ~ new_only ~ '&in_stock=' ~ in_stock ~ '&sort=' ~ sort %}
 
 <p class="resultcount">
   {{ total }} result{{ '' if total == 1 else 's' }}

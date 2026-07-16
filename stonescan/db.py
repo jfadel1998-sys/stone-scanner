@@ -291,6 +291,17 @@ def distinct_locations(conn: sqlite3.Connection) -> list[str]:
     return [r["location"] for r in rows]
 
 
+def location_counts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every stocking location with its slab/supplier totals, biggest first."""
+    return [dict(r) for r in conn.execute(
+        """SELECT location, COUNT(*) AS slabs,
+                  COUNT(DISTINCT supplier_id) AS suppliers,
+                  COUNT(DISTINCT supplier_id || '/' || item_id) AS products
+           FROM slabs WHERE location <> ''
+           GROUP BY location ORDER BY slabs DESC, location"""
+    ).fetchall()]
+
+
 def list_watchlist(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(
         "SELECT id, query, created_at FROM watchlist ORDER BY created_at DESC"

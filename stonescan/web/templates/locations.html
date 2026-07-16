@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Locations — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations" class="active">📍 Locations</a><a href="/watchlist">★ Watchlist</a></nav>
+  </div>
+  <div class="stats">{{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers</div>
+</header>
+
+<div class="material-head">
+  <h1>Browse by location</h1>
+  <p class="hintline muted">Every warehouse or yard where slabs are physically stocked. Pick one to search only the material held there.</p>
+</div>
+
+<div class="locgrid">
+  {% for l in locs %}
+  <a class="loccard" href="/?location={{ l.location | urlencode }}&in_stock=1&sort=slabs">
+    <b>📍 {{ l.location }}</b>
+    <span>{{ l.slabs }} slab{{ '' if l.slabs == 1 else 's' }} · {{ l.products }} product{{ '' if l.products == 1 else 's' }}</span>
+    <span class="muted">{{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
+  </a>
+  {% else %}
+  <p class="empty">No locations recorded yet — run a crawl with <code>--slabs</code> to collect them.</p>
+  {% endfor %}
+</div>
+
+<footer>Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.</footer>
+</body>
+</html>

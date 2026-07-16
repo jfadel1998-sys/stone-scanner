@@ -51,8 +51,17 @@ def _colors_matching(conn, base: str) -> list[str]:
     return out
 
 
+SORTS = {
+    "relevance": "m.material_key, m.item_name, supplier_name",
+    "slabs": "SUM(m.available_slabs) DESC, m.material_key",
+    "size": "MAX(m.avg_length) DESC, m.material_key",
+    "new": "MAX(m.new_arrival) DESC, m.material_key",
+}
+
+
 def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset,
-            location="", min_length=0.0, min_width=0.0, new_only=False):
+            location="", min_length=0.0, min_width=0.0, new_only=False,
+            sort="relevance", in_stock=False):
     """Free-text-aware search. The query box understands phrases like
     'blue marble slabs'; explicit dropdown filters take precedence."""
     parsed = smartsearch.parse_query(q)
@@ -106,10 +115,13 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     # Collapse a supplier's duplicate listings of the same product (one row per
     # physical slab, or re-entered batches) into a single line with a slab total.
     group_by = "m.supplier_id, m.name_norm, m.thickness, m.finish, m.product_form"
+    # available_slabs is summed across the group, so stock filters at HAVING time.
+    having = " HAVING SUM(m.available_slabs) > 0" if in_stock else ""
+    order_by = SORTS.get(sort, SORTS["relevance"])
 
     total = conn.execute(
         f"SELECT COUNT(*) c FROM (SELECT 1 FROM materials m JOIN suppliers s "
-        f"ON s.id=m.supplier_id WHERE {clause} GROUP BY {group_by})",
+        f"ON s.id=m.supplier_id WHERE {clause} GROUP BY {group_by}{having})",
         params,
     ).fetchone()["c"]
 
@@ -122,8 +134,8 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
                    MAX(m.locations) AS locations, MAX(m.image_url) AS image_url
             FROM materials m JOIN suppliers s ON s.id = m.supplier_id
             WHERE {clause}
-            GROUP BY {group_by}
-            ORDER BY m.material_key, m.item_name, supplier_name
+            GROUP BY {group_by}{having}
+            ORDER BY {order_by}
             LIMIT ? OFFSET ?""",
         (*params, limit, offset),
     ).fetchall()
@@ -150,11 +162,14 @@ def index(
     min_length: str = "",
     min_width: str = "",
     new_only: int = 0,
+    in_stock: int = 0,
+    sort: str = "relevance",
     view: str = "table",
     page: int = 1,
 ):
     conn = db.connect()
     view = view if view in ("table", "grid") else "table"
+    sort = sort if sort in SORTS else "relevance"
     limit = 60
     offset = max(page - 1, 0) * limit
     ml, mw = _to_float(min_length), _to_float(min_width)
@@ -162,6 +177,7 @@ def index(
         conn, q=q, material_type=material_type, color=color,
         thickness=thickness, supplier=supplier, location=location,
         min_length=ml, min_width=mw, new_only=bool(new_only),
+        sort=sort, in_stock=bool(in_stock),
         limit=limit, offset=offset,
     )
     ctx = {
@@ -180,6 +196,8 @@ def index(
         "min_length": min_length or "",
         "min_width": min_width or "",
         "new_only": new_only,
+        "in_stock": in_stock,
+        "sort": sort,
         "view": view,
         "types": _distinct(conn, "material_type"),
         "colors": _distinct(conn, "color"),
@@ -379,13 +397,16 @@ def api_refresh_status():
 def api_search(
     q: str = "", material_type: str = "", color: str = "", thickness: str = "",
     supplier: str = "", location: str = "", min_length: str = "", min_width: str = "",
-    new_only: int = 0, limit: int = Query(100, le=500), offset: int = 0,
+    new_only: int = 0, in_stock: int = 0, sort: str = "relevance",
+    limit: int = Query(100, le=500), offset: int = 0,
 ):
     conn = db.connect()
     total, rows, parsed = _search(
         conn, q=q, material_type=material_type, color=color, thickness=thickness,
         supplier=supplier, location=location, min_length=_to_float(min_length),
-        min_width=_to_float(min_width), new_only=bool(new_only), limit=limit, offset=offset,
+        min_width=_to_float(min_width), new_only=bool(new_only),
+        in_stock=bool(in_stock), sort=sort if sort in SORTS else "relevance",
+        limit=limit, offset=offset,
     )
     conn.close()
     return JSONResponse({"total": total, "count": len(rows), "results": rows,
@@ -435,6 +456,18 @@ def whats_new(request: Request, page: int = 1):
         "rows": rows, "total": total, "page": page, "pages": (total + limit - 1) // limit,
         "restock": restock, "stats": stats,
     })
+
+
+@app.get("/locations", response_class=HTMLResponse)
+def locations_page(request: Request):
+    """Browse by stocking location — each links into a location-filtered search."""
+    conn = db.connect()
+    locs = db.location_counts(conn)
+    stats = db.stats(conn)
+    conn.close()
+    return templates.TemplateResponse(
+        request, "locations.html", {"locs": locs, "stats": stats}
+    )
 
 
 @app.get("/watchlist", response_class=HTMLResponse)
