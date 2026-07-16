@@ -107,6 +107,37 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
     return ok, items, slabs
 
 
+async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1.5,
+                  headless: bool = True, db_path: str = "", with_slabs: bool = False,
+                  provider_limit: int = 0) -> None:
+    """Crawl a mixed supplier list, routing each entry to its provider.
+
+    Every caller that crawls "everything in suppliers.json" must come through here:
+    the list is no longer all Stone Profits, and feeding a UMI/SlabWare entry to the
+    Playwright crawler just produces a confusing "no items returned".
+    """
+    from . import providers
+
+    db_path = db_path or str(db.DEFAULT_DB)
+    sps = [e["host"] for e in entries
+           if providers.provider_of(e) == providers.STONEPROFITS]
+    other = [e for e in entries
+             if providers.provider_of(e) != providers.STONEPROFITS]
+
+    if sps:
+        print(f"Crawling {len(sps)} Stone Profits catalog(s)...\n")
+        await run(sps, concurrency=concurrency, delay=delay, headless=headless,
+                  db_path=db_path, with_slabs=with_slabs)
+    if other:
+        kinds = ", ".join(sorted({providers.provider_of(e) for e in other}))
+        print(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
+        ok, items, slabs = await run_providers(
+            other, delay=max(delay * 0.2, 0.2), db_path=db_path,
+            with_slabs=with_slabs, limit_items=provider_limit)
+        print(f"\n  {ok} supplier(s), {items} materials"
+              + (f", {slabs} slabs" if with_slabs else ""))
+
+
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
               db_path: str, with_slabs: bool = False) -> None:
     conn = db.init_db(db_path)
@@ -195,8 +226,6 @@ def main() -> None:
         added = discover.merge_discovered(found)
         print(f"  found {len(found)} candidates, added {added} new.\n")
 
-    from . import providers
-
     entries = discover.load_suppliers()
     if args.only:
         want = {h.strip().lower() for h in args.only.split(",") if h.strip()}
@@ -207,10 +236,6 @@ def main() -> None:
     if args.limit:
         entries = entries[: args.limit]
 
-    other = [e for e in entries if providers.provider_of(e) != providers.STONEPROFITS]
-    hosts = [e["host"] for e in entries
-             if providers.provider_of(e) == providers.STONEPROFITS]
-
     if args.stale_hours:
         from datetime import datetime, timedelta, timezone
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=args.stale_hours)).isoformat()
@@ -219,32 +244,21 @@ def main() -> None:
             "SELECT host FROM suppliers WHERE item_count > 0 AND last_crawled >= ?", (cutoff,)
         )}
         conn.close()
-        before = len(hosts)
-        hosts = [h for h in hosts if h not in fresh]
-        print(f"Incremental: skipping {before - len(hosts)} supplier(s) refreshed in the last {args.stale_hours:g}h.\n")
+        before = len(entries)
+        entries = [e for e in entries if e["host"] not in fresh]
+        print(f"Incremental: skipping {before - len(entries)} supplier(s) refreshed in the last {args.stale_hours:g}h.\n")
 
-    if hosts:
-        print(f"Crawling {len(hosts)} Stone Profits catalog(s)...\n")
-        asyncio.run(
-            run(
-                hosts,
-                concurrency=args.concurrency,
-                delay=args.delay,
-                headless=not args.show_browser,
-                db_path=args.db,
-                with_slabs=args.slabs,
-            )
+    asyncio.run(
+        run_all(
+            entries,
+            concurrency=args.concurrency,
+            delay=args.delay,
+            headless=not args.show_browser,
+            db_path=args.db,
+            with_slabs=args.slabs,
+            provider_limit=args.provider_limit,
         )
-
-    if other:
-        kinds = ", ".join(sorted({providers.provider_of(e) for e in other}))
-        print(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
-        ok, items, slabs = asyncio.run(
-            run_providers(other, delay=max(args.delay * 0.2, 0.2), db_path=args.db,
-                          with_slabs=args.slabs, limit_items=args.provider_limit)
-        )
-        print(f"\n  {ok} supplier(s), {items} materials"
-              + (f", {slabs} slabs" if args.slabs else ""))
+    )
 
 
 if __name__ == "__main__":

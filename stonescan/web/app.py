@@ -517,12 +517,13 @@ _refresh = {"running": False, "done": False, "summary": "", "started_at": None}
 
 def _run_refresh_job(with_slabs: bool) -> None:
     from .. import discover as disc
-    from ..ingest import run as ingest_run
+    from ..ingest import run_all
     _refresh.update(running=True, done=False, summary="Crawling catalogs…")
     try:
-        hosts = [s["host"] for s in disc.load_suppliers()]
-        asyncio.run(ingest_run(
-            hosts, concurrency=4, delay=1.0, headless=True,
+        # run_all, not run: suppliers.json is no longer all Stone Profits, and a
+        # UMI/SlabWare entry sent to the Playwright crawler just fails.
+        asyncio.run(run_all(
+            disc.load_suppliers(), concurrency=4, delay=1.0, headless=True,
             db_path=str(db.DEFAULT_DB), with_slabs=with_slabs,
         ))
         conn = db.connect()

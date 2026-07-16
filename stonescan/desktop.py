@@ -155,16 +155,18 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
     setup_env()
     import asyncio
     from stonescan import discover as disc
-    from stonescan.ingest import run as ingest_run
+    from stonescan.ingest import run_all
 
     if do_discover:
         print("Discovering public catalogs...")
         disc.merge_discovered(disc.discover_hosts())
-    hosts = [s["host"] for s in disc.load_suppliers()]
-    print(f"Refreshing {len(hosts)} catalog(s)"
+    entries = disc.load_suppliers()
+    print(f"Refreshing {len(entries)} catalog(s)"
           f"{' with slab galleries' if with_slabs else ''}...")
-    asyncio.run(ingest_run(
-        hosts, concurrency=4, delay=1.0, headless=True,
+    # run_all, not run: the list holds non-StoneProfits suppliers too, and each
+    # must reach its own provider rather than the Playwright crawler.
+    asyncio.run(run_all(
+        entries, concurrency=4, delay=1.0, headless=True,
         db_path=os.environ["STONESCAN_DB"], with_slabs=with_slabs,
     ))
 

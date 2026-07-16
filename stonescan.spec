@@ -22,6 +22,11 @@ hiddenimports = pw_hidden + wv_hidden + cl_hidden + pn_hidden + gn_hidden + [
     "anyio._backends._asyncio",
     "clr", "webview.platforms.winforms",
     "multipart", "python_multipart",  # FastAPI Form() parsing (sourcing lists)
+    # Providers are resolved by name at runtime (importlib), so PyInstaller's static
+    # analysis can't see them — without these, a refresh in the packaged app dies with
+    # ModuleNotFoundError on the first non-StoneProfits supplier.
+    "stonescan.providers.umi", "stonescan.providers.slabware",
+    "stonescan.providers.stonetrash", "stonescan.providers.slabcloud",
 ]
 
 datas = pw_datas + wv_datas + cl_datas + pn_datas + gn_datas + [
