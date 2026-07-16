@@ -618,14 +618,40 @@ def whats_new(request: Request, page: int = 1):
 
 @app.get("/locations", response_class=HTMLResponse)
 def locations_page(request: Request):
-    """Browse by stocking location — each links into a location-filtered search."""
+    """Browse by stocking location: a pin map plus the full list. Locations that
+    aren't places (internal warehouse names) are reported, never guessed at."""
     conn = db.connect()
     locs = db.location_counts(conn)
+    geo = db.location_geo(conn)
+
+    # Resolve anything new since the last visit (a fresh crawl adds locations).
+    missing = [l["location"] for l in locs if l["location"] not in geo]
+    if missing:
+        from .. import geocode as gc
+        for loc in missing:
+            db.save_location_geo(conn, loc, gc.resolve(loc))
+        geo = db.location_geo(conn)
+
+    pins, unmapped = [], []
+    for l in locs:
+        g = geo.get(l["location"]) or {}
+        if g.get("lat") is None:
+            unmapped.append(l)
+            continue
+        pins.append({**l, "lat": g["lat"], "lon": g["lon"],
+                     "label": g["label"], "source": g["source"],
+                     "approx": g["source"] == "ambiguous"})
     stats = db.stats(conn)
     conn.close()
-    return templates.TemplateResponse(
-        request, "locations.html", {"locs": locs, "stats": stats}
-    )
+    return templates.TemplateResponse(request, "locations.html", {
+        "locs": locs, "pins": pins, "unmapped": unmapped, "stats": stats,
+        "overrides_file": str(gcode_path()),
+    })
+
+
+def gcode_path():
+    from ..geocode import OVERRIDES_PATH
+    return OVERRIDES_PATH
 
 
 @app.get("/watchlist", response_class=HTMLResponse)

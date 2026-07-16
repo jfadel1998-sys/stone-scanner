@@ -15,6 +15,7 @@ browse. No logins, no private data. Rate-limited, identifiable crawler.
 .\.venv\Scripts\python.exe -m stonescan.ingest --slabs                    # crawl all suppliers (+ slab galleries)
 .\.venv\Scripts\python.exe -m stonescan.ingest --only host1,host2 --slabs # crawl specific suppliers
 .\.venv\Scripts\python.exe -m stonescan.discover                          # find more public catalogs
+.\.venv\Scripts\python.exe -m stonescan.geocode                           # resolve locations for the map (--recheck to redo)
 .\build_exe.ps1                                                           # build the standalone Windows app
 ```
 
@@ -33,10 +34,12 @@ build/packaging details.
 | `stonescan/ingest.py` | Orchestrator: crawl → normalize → store → history snapshot |
 | `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached) |
 | `stonescan/discover.py` | Passive-DNS + search discovery of public catalogs → suppliers.json |
+| `stonescan/geocode.py` | Offline location → lat/long for the pin map (+ `locations.json` overrides) |
 | `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling |
 | `stonescan/desktop.py` + `main.py` | Frozen-app launcher (native window, `--refresh` mode) |
 | `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist |
 | `suppliers.json` | Editable allow-list of catalogs to crawl |
+| `locations.json` | Editable map pins for locations the geocoder can't resolve |
 | `stonescan.spec` / `build_exe.ps1` | PyInstaller packaging |
 | `refresh.ps1` | Scheduled nightly refresh (installed as Windows task `StoneScannerRefresh`) |
 
@@ -62,6 +65,14 @@ build/packaging details.
 - Anything the user owns must key off `(supplier_id, item_id)` — `materials.id` is
   reassigned every crawl. Sourcing lists also snapshot name/photo so an item that
   leaves a catalog still renders (flagged "gone").
+
+- **Locations are not addresses.** `slabs.location` is free text: ~56 of 99 are real
+  cities, the rest are internal yard names (`KLZ`, `HG-NJ`) or towns below the city
+  dataset's ~15k-population floor. `geocode.py` resolves what it can **offline** and
+  leaves the rest unmapped — deliberately. Don't "improve" recall with the dataset's
+  `alternatenames`: that pins *Arca - Warehouse* to Arsk, **Russia**. A bare city name
+  (`Columbia`, `Charleston`) is flagged `ambiguous` and shown as approximate, since it
+  exists in several states.
 
 ## Data notes
 

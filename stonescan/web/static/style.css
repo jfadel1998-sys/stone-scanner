@@ -265,6 +265,15 @@ footer { padding: 20px 22px 40px; color: var(--muted); font-size: 12px; }
 .specs.canonspecs { grid-template-columns: repeat(4, 1fr); }
 @media (max-width: 900px) { .specs.canonspecs { grid-template-columns: repeat(2, 1fr); } }
 
+/* location pin map */
+.locmap { height: 460px; margin: 8px 22px 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--chip); z-index: 0; }
+.maplegend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 22px 6px; font-size: 12px; }
+.maplegend .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; margin-left: 6px; }
+.maplegend .dot.solid { background: #6a8f6f; border: 1.5px solid var(--accent); }
+.maplegend .dot.approx { background: #d98d6a; border: 1.5px dashed #b9552b; }
+.maplegend .mapoffline { margin-left: auto; opacity: .8; }
+.leaflet-popup-content { font: 13px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+
 /* browse-by-location page */
 .locgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; padding: 8px 22px 30px; }
 .loccard { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--panel); color: var(--ink); }

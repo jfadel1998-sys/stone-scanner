@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Locations — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -15,22 +16,88 @@
 </header>
 
 <div class="material-head">
-  <h1>Browse by location</h1>
-  <p class="hintline muted">Every warehouse or yard where slabs are physically stocked. Pick one to search only the material held there.</p>
+  <h1>Where the stone is</h1>
+  <p class="hintline muted">
+    {{ pins|length }} of {{ locs|length }} stocking locations are on the map — click a pin to search only what's held there.
+    Circle size tracks slab count.
+  </p>
 </div>
 
-<div class="locgrid">
-  {% for l in locs %}
-  <a class="loccard" href="/?location={{ l.location | urlencode }}&in_stock=1&sort=slabs">
-    <b>📍 {{ l.location }}</b>
-    <span>{{ l.slabs }} slab{{ '' if l.slabs == 1 else 's' }} · {{ l.products }} product{{ '' if l.products == 1 else 's' }}</span>
-    <span class="muted">{{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
-  </a>
-  {% else %}
-  <p class="empty">No locations recorded yet — run a crawl with <code>--slabs</code> to collect them.</p>
-  {% endfor %}
+<div id="map" class="locmap"></div>
+<p class="maplegend muted">
+  <span class="dot solid"></span> located
+  <span class="dot approx"></span> approximate — the catalog gives a bare city name that exists in several states
+  <span class="mapoffline">Map tiles load from OpenStreetMap; pins still work offline.</span>
+</p>
+
+{% if unmapped %}
+<div class="block">
+  <h2>Not on the map ({{ unmapped|length }})</h2>
+  <p class="hintline muted">These are mostly suppliers' internal warehouse names rather than places, plus a few towns too small for the bundled city dataset. Nothing is guessed — to pin one, add coordinates to <code>{{ overrides_file }}</code> and run <code>python -m stonescan.geocode --recheck</code>.</p>
+  <div class="locgrid">
+    {% for l in unmapped %}
+    <a class="loccard" href="/?location={{ l.location | urlencode }}&in_stock=1&sort=slabs">
+      <b>{{ l.location }}</b>
+      <span>{{ l.slabs }} slab{{ '' if l.slabs == 1 else 's' }} · {{ l.products }} product{{ '' if l.products == 1 else 's' }}</span>
+      <span class="muted">{{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="block">
+  <h2>All locations ({{ locs|length }})</h2>
+  <div class="locgrid">
+    {% for l in locs %}
+    <a class="loccard" href="/?location={{ l.location | urlencode }}&in_stock=1&sort=slabs">
+      <b>📍 {{ l.location }}</b>
+      <span>{{ l.slabs }} slab{{ '' if l.slabs == 1 else 's' }} · {{ l.products }} product{{ '' if l.products == 1 else 's' }}</span>
+      <span class="muted">{{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
+    </a>
+    {% else %}
+    <p class="empty">No locations recorded yet — run a crawl with <code>--slabs</code> to collect them.</p>
+    {% endfor %}
+  </div>
 </div>
 
 <footer>Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.</footer>
+
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script id="pindata" type="application/json">{{ pins | tojson }}</script>
+<script>
+(function () {
+  var pins = JSON.parse(document.getElementById('pindata').textContent);
+  var map = L.map('map', { scrollWheelZoom: false }).setView([39.5, -98.35], 4);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  var max = pins.reduce(function (m, p) { return Math.max(m, p.slabs); }, 1);
+  var bounds = [];
+  pins.forEach(function (p) {
+    // Area scales with slab count, so a 9000-slab yard doesn't swallow the map.
+    var r = 5 + 20 * Math.sqrt(p.slabs / max);
+    L.circleMarker([p.lat, p.lon], {
+      radius: r, weight: 1.5,
+      color: p.approx ? '#b9552b' : '#3a5a40',
+      fillColor: p.approx ? '#d98d6a' : '#6a8f6f',
+      fillOpacity: 0.55,
+      dashArray: p.approx ? '3,3' : null
+    }).addTo(map).bindPopup(
+      '<b>' + p.location + '</b><br>' +
+      (p.label && p.label !== p.location ? '<span style="color:#8a857d">' + p.label + '</span><br>' : '') +
+      p.slabs + ' slabs · ' + p.products + ' products · ' + p.suppliers + ' supplier(s)<br>' +
+      (p.approx ? '<i style="color:#b9552b">approximate — bare city name, could be another state</i><br>' : '') +
+      '<a href="/?location=' + encodeURIComponent(p.location) + '&in_stock=1&sort=slabs">Search this location →</a>'
+    );
+    bounds.push([p.lat, p.lon]);
+  });
+  if (bounds.length) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 6 });
+  map.on('click', function () { map.scrollWheelZoom.enable(); });
+  map.on('mouseout', function () { map.scrollWheelZoom.disable(); });
+})();
+</script>
 </body>
 </html>

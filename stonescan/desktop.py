@@ -74,6 +74,11 @@ def setup_env() -> Path:
     _seed(sup, bundle_dir() / "seed" / "suppliers.json", bundle_dir() / "suppliers.json")
     os.environ["STONESCAN_SUPPLIERS"] = str(sup)
 
+    # Map-pin overrides: user-editable, so it lives in the writable data dir too.
+    locs = data / "locations.json"
+    _seed(locs, bundle_dir() / "seed" / "locations.json", bundle_dir() / "locations.json")
+    os.environ["STONESCAN_LOCATIONS"] = str(locs)
+
     browsers = base / "browsers"
     if browsers.exists():
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers)

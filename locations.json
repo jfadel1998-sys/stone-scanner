@@ -1,0 +1,275 @@
+{
+  "_readme": [
+    "Hand-placed map coordinates for locations Stone Scanner could not resolve.",
+    "Most are internal warehouse names ('KLZ', 'BF') that are not places at all;",
+    "a few are real towns too small for the bundled city dataset (~15k people+),",
+    "e.g. Waite Park, Mechanicsburg PA, Manahawkin.",
+    "Fill in lat/lon in decimal degrees, then run: python -m stonescan.geocode --recheck",
+    "Keys match the catalog's location text, case-insensitively.",
+    "Anything left null stays unmapped and is listed on the /locations page.",
+    "Nothing here is guessed for you - a wrong pin is worse than a missing one."
+  ],
+  "_example": {
+    "lat": 32.7767,
+    "lon": -96.797,
+    "label": "Dallas, TX"
+  },
+  "Nature Of Marble": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 9000
+  },
+  "Ollin Surfaces": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 5300
+  },
+  "KLZ": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 4824
+  },
+  "Waite Park": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 2500
+  },
+  "Fabstone Tiles and Sinks": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 2149
+  },
+  "Arca - Warehouse": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 1129
+  },
+  "New Jersey": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 938
+  },
+  "M&M Marble": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 863
+  },
+  "ULTRA STONES  LLC": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 796
+  },
+  "Granite & Marble Depot, Inc": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 781
+  },
+  "HG-NJ": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 714
+  },
+  "StoneX": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 606
+  },
+  "STONE MALL": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 555
+  },
+  "granitedepot.us": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 519
+  },
+  "GS": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 481
+  },
+  "Bellaterra": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 444
+  },
+  "PR Marble": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 432
+  },
+  "BF": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 415
+  },
+  "https://builderstoneglobal.com/": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 409
+  },
+  "Starke": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 402
+  },
+  "Chambers": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 369
+  },
+  "SW-Michigan": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 357
+  },
+  "Fabstone - Our Slab Yard": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 349
+  },
+  "FWB": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 321
+  },
+  "Arca - Showroom": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 303
+  },
+  "HG-BK": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 301
+  },
+  "GRAMAR": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 266
+  },
+  "Meta": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 243
+  },
+  "ATL": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 207
+  },
+  "Dynamo Surfaces": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 168
+  },
+  "www.rsistone.com": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 168
+  },
+  "Mechanicsburg, PA": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 166
+  },
+  "CSW": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 145
+  },
+  "ES": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 120
+  },
+  "STONE FUSION SURFACES INC": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 107
+  },
+  "Devine": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 75
+  },
+  "Wholesale Granite Direct Granbury": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 49
+  },
+  "Four Stones": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 27
+  },
+  "Nash": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 22
+  },
+  "Arca - Virtual Warehouse": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 15
+  },
+  "Manahawkin": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 11
+  },
+  "RF": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 1
+  },
+  "ULTRA STONES MA LLC": {
+    "lat": null,
+    "lon": null,
+    "label": "",
+    "_slabs": 1
+  }
+}

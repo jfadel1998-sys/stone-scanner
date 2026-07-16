@@ -112,6 +112,18 @@ CREATE TABLE IF NOT EXISTS watchlist (
     created_at  TEXT
 );
 
+-- Resolved coordinates per distinct slab location. A row with NULL lat/lon means
+-- "we looked and it isn't a place" (an internal warehouse name), which is cached
+-- so the map doesn't retry it every load.
+CREATE TABLE IF NOT EXISTS location_geo (
+    location    TEXT PRIMARY KEY,
+    lat         REAL,
+    lon         REAL,
+    label       TEXT,
+    source      TEXT,          -- override | exact | state | parsed | ambiguous
+    updated_at  TEXT
+);
+
 -- Named sourcing lists: materials collected across suppliers for a job/client.
 CREATE TABLE IF NOT EXISTS lists (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -318,6 +330,26 @@ def distinct_locations(conn: sqlite3.Connection) -> list[str]:
         "SELECT DISTINCT location FROM slabs WHERE location <> '' ORDER BY location"
     ).fetchall()
     return [r["location"] for r in rows]
+
+
+def save_location_geo(conn: sqlite3.Connection, location: str, hit: dict | None) -> None:
+    """Cache a resolution. `hit` of None records a location that isn't a place."""
+    from datetime import datetime, timezone
+    conn.execute(
+        """INSERT INTO location_geo (location, lat, lon, label, source, updated_at)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(location) DO UPDATE SET
+             lat=excluded.lat, lon=excluded.lon, label=excluded.label,
+             source=excluded.source, updated_at=excluded.updated_at""",
+        (location, (hit or {}).get("lat"), (hit or {}).get("lon"),
+         (hit or {}).get("label"), (hit or {}).get("source"),
+         datetime.now(timezone.utc).isoformat(timespec="seconds")),
+    )
+    conn.commit()
+
+
+def location_geo(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    return {r["location"]: dict(r) for r in conn.execute("SELECT * FROM location_geo")}
 
 
 def location_counts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
