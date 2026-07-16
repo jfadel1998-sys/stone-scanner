@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quote requests — {{ meta.name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/lists" class="active">📋 Lists</a></nav>
+  </div>
+</header>
+
+<div class="material-head">
+  <a class="back" href="/list?id={{ meta.id }}">‹ Back to {{ meta.name }}</a>
+  <h1>Request quotes</h1>
+  <p class="hintline muted">One request per supplier, covering just the items on this list from them.
+     “Open email” hands the draft to your mail app — nothing is sent from here.</p>
+</div>
+
+{% for g in groups %}
+<div class="block">
+  <div class="rfqcard">
+    <div class="rfqhead">
+      <b>{{ g.supplier_name }}</b>
+      <span class="muted">{{ g['items']|length }} item{{ '' if g['items']|length == 1 else 's' }}
+        {% if g.phone %} · {{ g.phone }}{% endif %}</span>
+      {% if g.email %}
+        <a class="btn" href="mailto:{{ g.email }}?subject={{ g.subject|urlencode }}&body={{ g.body|urlencode }}">✉ Open email</a>
+      {% else %}
+        <a class="btn ghost" href="https://{{ g.supplier_host }}/" target="_blank" rel="noopener">No email on file — visit site ↗</a>
+      {% endif %}
+    </div>
+    <pre class="rfqbody">{{ g.body }}</pre>
+  </div>
+</div>
+{% else %}
+<p class="empty">This list is empty — add material to it first.</p>
+{% endfor %}
+
+<footer>Contact details come from each supplier's own public catalog page.</footer>
+</body>
+</html>

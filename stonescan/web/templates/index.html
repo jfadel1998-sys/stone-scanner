@@ -9,7 +9,7 @@
 <body>
 <header>
   <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/" class="active">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/watchlist">★ Watchlist</a></nav>
+    <nav class="topnav"><a href="/" class="active">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a></nav>
   </div>
   <div class="stats">
     {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
@@ -81,25 +81,45 @@
   {{ total }} result{{ '' if total == 1 else 's' }}
   {% if total > rows|length %}· showing {{ rows|length }} (page {{ page }} of {{ pages }}){% endif %}
   {% if interpreted %}<span class="interp">understood as:{% for c in interpreted %} <span class="ichip">{{ c }}</span>{% endfor %}</span>{% endif %}
+  {% if added == 1 %}<span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span>
+  {% elif added == 0 %}<span class="okchip warn">Already on that list</span>{% endif %}
   <span class="viewtoggle">
     <a href="{{ base }}&view=table&page={{ page }}" class="{{ 'on' if view != 'grid' }}">☰ Table</a>
     <a href="{{ base }}&view=grid&page={{ page }}" class="{{ 'on' if view == 'grid' }}">▦ Showroom</a>
   </span>
 </p>
 
+{% macro addform(r) -%}
+  {% if lists %}
+  <form class="addform" method="post" action="/lists/add">
+    <input type="hidden" name="material_id" value="{{ r.id }}">
+    <input type="hidden" name="back" value="{{ here }}">
+    <select name="list_id" title="Add to sourcing list">
+      {% for l in lists %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+    </select>
+    <button title="Add to this list">＋</button>
+  </form>
+  {% else %}
+  <a class="addnew" href="/lists" title="Create a sourcing list first">＋ list</a>
+  {% endif %}
+{%- endmacro %}
+
 {% if view == 'grid' %}
 <div class="cardgrid">
   {% for r in rows %}
-  <a class="matcard" href="/item?id={{ r.id }}">
-    {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">
-    {% else %}<span class="cardph">🪨</span>{% endif %}
-    <span class="cardmeta">
-      <b>{{ r.item_name }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
-      <span class="cardsup">{{ r.supplier_name }}</span>
-      <span class="cardspec">{{ [r.material_type, r.color, r.thickness]|select|join(' · ') }}</span>
-      {% if r.available_slabs %}<span class="cardslabs">{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}</span>{% endif %}
-    </span>
-  </a>
+  <div class="matcard">
+    <a class="matcard-link" href="/item?id={{ r.id }}">
+      {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">
+      {% else %}<span class="cardph">🪨</span>{% endif %}
+      <span class="cardmeta">
+        <b>{{ r.item_name }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
+        <span class="cardsup">{{ r.supplier_name }}</span>
+        <span class="cardspec">{{ [r.material_type, r.color, r.thickness]|select|join(' · ') }}</span>
+        {% if r.available_slabs %}<span class="cardslabs">{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}</span>{% endif %}
+      </span>
+    </a>
+    <div class="cardfoot">{{ addform(r) }}</div>
+  </div>
   {% else %}
   <p class="empty">No materials found. Try a broader search, or run a crawl first.</p>
   {% endfor %}
@@ -109,7 +129,7 @@
   <thead>
     <tr>
       <th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th>
-      <th class="num">Size</th><th>Supplier</th><th>Location</th><th class="num">Slabs</th><th></th>
+      <th class="num">Size</th><th>Supplier</th><th>Location</th><th class="num">Slabs</th><th></th><th></th>
     </tr>
   </thead>
   <tbody>
@@ -128,10 +148,11 @@
       <td>{{ r.supplier_name }}</td>
       <td class="muted loc">{{ (r.locations or '').split(',')[:2]|join(', ') }}</td>
       <td class="num">{{ r.available_slabs or '' }}</td>
-      <td><a class="compare" href="/material?key={{ r.material_key | urlencode }}">compare →</a></td>
+      <td><a class="compare" href="/material?key={{ r.material_key | urlencode }}">all suppliers →</a></td>
+      <td>{{ addform(r) }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="10" class="empty">No materials found. Try a broader search, or run a crawl first.</td></tr>
+    <tr><td colspan="11" class="empty">No materials found. Try a broader search, or run a crawl first.</td></tr>
   {% endfor %}
   </tbody>
 </table>

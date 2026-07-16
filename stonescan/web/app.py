@@ -14,7 +14,7 @@ import re
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -23,6 +23,16 @@ from .. import db, slabs, smartsearch
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Stone Scanner")
+
+
+@app.on_event("startup")
+def _ensure_schema() -> None:
+    """User-owned tables (watchlist, lists) must exist even if the shipped DB
+    snapshot predates them — connect() alone doesn't create anything."""
+    try:
+        db.init_db().close()
+    except Exception:  # noqa: BLE001 - a read-only DB shouldn't stop the UI opening
+        pass
 
 
 @app.on_event("shutdown")
@@ -190,6 +200,12 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     return total, [dict(r) for r in rows], parsed
 
 
+def _here(request: Request) -> str:
+    """This page as a path+query, minus the add-to-list feedback params."""
+    url = request.url.remove_query_params(["added", "list"])
+    return url.path + (f"?{url.query}" if url.query else "")
+
+
 def _to_float(v) -> float:
     """Parse a query value to float; blank/invalid -> 0 (form sends '' when empty)."""
     try:
@@ -214,6 +230,8 @@ def index(
     sort: str = "relevance",
     view: str = "table",
     page: int = 1,
+    added: int = -1,
+    list: int = 0,
 ):
     conn = db.connect()
     view = view if view in ("table", "grid") else "table"
@@ -247,6 +265,12 @@ def index(
         "in_stock": in_stock,
         "sort": sort,
         "view": view,
+        "lists": db.get_lists(conn),
+        "added": added,
+        "added_list": list,
+        # Where an add-to-list POST should send the user back to (path only, so the
+        # redirect stays on this host).
+        "here": _here(request),
         "types": _distinct(conn, "material_type"),
         "colors": _distinct(conn, "color"),
         "thicknesses": _distinct(conn, "thickness"),
@@ -367,7 +391,7 @@ def material(request: Request, key: str):
 
 
 @app.get("/item", response_class=HTMLResponse)
-def item(request: Request, id: int):
+def item(request: Request, id: int, added: int = -1, list: int = 0):
     """Detail view for one material at one supplier (StoneProfits-style drill-down)."""
     conn = db.connect()
     m = conn.execute(
@@ -429,11 +453,13 @@ def item(request: Request, id: int):
         (m["material_type"], m["material_key"], m["color"] or "\0",
          first_word, f"{first_word}%"),
     ).fetchall()
+    lists_avail = db.get_lists(conn)
     conn.close()
     return templates.TemplateResponse(
         request, "item.html",
         {"m": m, "others": [dict(o) for o in others],
-         "variants": [dict(v) for v in variants], "similar": [dict(x) for x in similar]},
+         "variants": [dict(v) for v in variants], "similar": [dict(x) for x in similar],
+         "lists": lists_avail, "added": added, "added_list": list},
     )
 
 
@@ -622,17 +648,153 @@ def watchlist(request: Request):
     return templates.TemplateResponse(request, "watchlist.html", {"items": items, "stats": stats})
 
 
+def _now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@app.get("/lists", response_class=HTMLResponse)
+def lists_page(request: Request):
+    conn = db.connect()
+    ctx = {"lists": db.get_lists(conn), "stats": db.stats(conn)}
+    conn.close()
+    return templates.TemplateResponse(request, "lists.html", ctx)
+
+
+@app.post("/lists/create")
+def lists_create(name: str = Form(""), material_id: int = Form(0)):
+    conn = db.connect()
+    lid = db.create_list(conn, name or "Untitled list", _now())
+    if material_id:
+        db.add_to_list(conn, lid, material_id, _now())
+    conn.close()
+    return RedirectResponse(f"/list?id={lid}", status_code=303)
+
+
+@app.post("/lists/add")
+def lists_add(material_id: int = Form(...), list_id: int = Form(...),
+              back: str = Form("/")):
+    """Add a material to a list from any result row; return where the user was."""
+    conn = db.connect()
+    added = db.add_to_list(conn, list_id, material_id, _now())
+    conn.close()
+    # `back` is submitted data: only ever bounce to a path on this app.
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/"
+    sep = "&" if "?" in back else "?"
+    return RedirectResponse(f"{back}{sep}added={1 if added else 0}&list={list_id}",
+                            status_code=303)
+
+
+@app.post("/lists/remove")
+def lists_remove(item_id: int = Form(...), list_id: int = Form(...)):
+    conn = db.connect()
+    db.remove_list_item(conn, item_id)
+    conn.close()
+    return RedirectResponse(f"/list?id={list_id}", status_code=303)
+
+
+@app.post("/lists/note")
+def lists_note(item_id: int = Form(...), list_id: int = Form(...), note: str = Form("")):
+    conn = db.connect()
+    db.set_item_note(conn, item_id, note)
+    conn.close()
+    return RedirectResponse(f"/list?id={list_id}", status_code=303)
+
+
+@app.post("/lists/delete")
+def lists_delete(list_id: int = Form(...)):
+    conn = db.connect()
+    db.delete_list(conn, list_id)
+    conn.close()
+    return RedirectResponse("/lists", status_code=303)
+
+
+def _group_by_supplier(items: list[dict]) -> list[dict]:
+    groups: dict[int, dict] = {}
+    for it in items:
+        g = groups.setdefault(it["supplier_id"], {
+            "supplier_id": it["supplier_id"], "supplier_name": it["supplier_name"],
+            "supplier_host": it["supplier_host"], "email": it["supplier_email"],
+            "phone": it["supplier_phone"], "items": [],
+        })
+        g["items"].append(it)
+    return sorted(groups.values(), key=lambda g: (g["supplier_name"] or "").lower())
+
+
+@app.get("/list", response_class=HTMLResponse)
+def list_view(request: Request, id: int, added: int = -1):
+    conn = db.connect()
+    meta = db.get_list(conn, id)
+    if not meta:
+        conn.close()
+        return HTMLResponse("<p style='padding:40px;font-family:sans-serif'>List not found. "
+                            "<a href='/lists'>All lists</a></p>", status_code=404)
+    items = db.get_list_items(conn, id)
+    ctx = {
+        "meta": meta, "items": items, "groups": _group_by_supplier(items),
+        "lists": db.get_lists(conn), "stats": db.stats(conn), "added": added,
+    }
+    conn.close()
+    return templates.TemplateResponse(request, "list.html", ctx)
+
+
+@app.get("/list/print", response_class=HTMLResponse)
+def list_print(request: Request, id: int):
+    """Print-optimized board: the browser's Print dialog saves it as a PDF to send
+    to a client. The desktop app has no server to host a shareable URL."""
+    conn = db.connect()
+    meta = db.get_list(conn, id)
+    if not meta:
+        conn.close()
+        return HTMLResponse("Not found", status_code=404)
+    items = db.get_list_items(conn, id)
+    conn.close()
+    return templates.TemplateResponse(request, "list_print.html", {
+        "meta": meta, "items": items, "printed": _now()[:10],
+    })
+
+
+@app.get("/list/rfq", response_class=HTMLResponse)
+def list_rfq(request: Request, id: int):
+    """One quote request per supplier: a prefilled mailto plus a printable sheet."""
+    conn = db.connect()
+    meta = db.get_list(conn, id)
+    if not meta:
+        conn.close()
+        return HTMLResponse("Not found", status_code=404)
+    items = db.get_list_items(conn, id)
+    conn.close()
+    groups = _group_by_supplier(items)
+    for g in groups:
+        lines = [f'- {i["item_name"]}'
+                 + (f' ({i["thickness"]})' if i["thickness"] else "")
+                 + (f' [{i["note"]}]' if i["note"] else "")
+                 for i in g["items"]]
+        body = (f'Hello {g["supplier_name"] or ""},\n\n'
+                f'We are sourcing material for a project and would like a quote and '
+                f'current availability on the following:\n\n' + "\n".join(lines)
+                + '\n\nPlease include price, slab dimensions and lead time.\n\nThank you.')
+        g["subject"] = f'Quote request — {meta["name"]}'
+        g["body"] = body
+    return templates.TemplateResponse(request, "list_rfq.html", {
+        "meta": meta, "groups": groups,
+    })
+
+
 @app.post("/watchlist/add")
-def watchlist_add(q: str = ""):
+def watchlist_add(q: str = Form("")):
+    # The Save-search button submits the filter form, so the query arrives as form
+    # data, not a query param.
     if q.strip():
         conn = db.connect()
-        db.add_watch(conn, q, __import__("datetime").datetime.utcnow().isoformat(timespec="seconds"))
+        db.add_watch(conn, q, _now())
         conn.close()
     return RedirectResponse("/watchlist", status_code=303)
 
 
 @app.post("/watchlist/remove")
-def watchlist_remove(id: int):
+def watchlist_remove(id: int = Form(...)):
     conn = db.connect()
     db.remove_watch(conn, id)
     conn.close()

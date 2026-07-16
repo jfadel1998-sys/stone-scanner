@@ -111,6 +111,35 @@ CREATE TABLE IF NOT EXISTS watchlist (
     query       TEXT NOT NULL UNIQUE,
     created_at  TEXT
 );
+
+-- Named sourcing lists: materials collected across suppliers for a job/client.
+CREATE TABLE IF NOT EXISTS lists (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    note        TEXT,
+    created_at  TEXT
+);
+
+-- A list entry keys off (supplier_id, item_id) — the only identity that survives
+-- a re-crawl, since materials.id is reassigned every time. The name/photo/spec
+-- snapshot keeps the list readable even if the item later leaves the catalog.
+CREATE TABLE IF NOT EXISTS list_items (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id      INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+    supplier_id  INTEGER,
+    item_id      TEXT,
+    supplier_host TEXT,
+    supplier_name TEXT,
+    item_name    TEXT,
+    material_key TEXT,
+    thickness    TEXT,
+    finish       TEXT,
+    image_url    TEXT,
+    note         TEXT,
+    added_at     TEXT,
+    UNIQUE(list_id, supplier_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_listitem_list ON list_items(list_id);
 """
 
 
@@ -300,6 +329,105 @@ def location_counts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
            FROM slabs WHERE location <> ''
            GROUP BY location ORDER BY slabs DESC, location"""
     ).fetchall()]
+
+
+def create_list(conn: sqlite3.Connection, name: str, created_at: str, note: str = "") -> int:
+    cur = conn.execute(
+        "INSERT INTO lists (name, note, created_at) VALUES (?, ?, ?)",
+        (name.strip() or "Untitled list", note, created_at),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_lists(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every list with its item count and a few thumbnails for the index page."""
+    rows = [dict(r) for r in conn.execute(
+        """SELECT l.id, l.name, l.note, l.created_at, COUNT(li.id) AS items,
+                  COUNT(DISTINCT li.supplier_id) AS suppliers
+           FROM lists l LEFT JOIN list_items li ON li.list_id = l.id
+           GROUP BY l.id ORDER BY l.created_at DESC, l.id DESC"""
+    )]
+    for r in rows:
+        r["thumbs"] = [x["image_url"] for x in conn.execute(
+            "SELECT image_url FROM list_items WHERE list_id = ? AND image_url <> '' LIMIT 5",
+            (r["id"],),
+        )]
+    return rows
+
+
+def get_list(conn: sqlite3.Connection, list_id: int) -> dict[str, Any] | None:
+    r = conn.execute("SELECT id, name, note, created_at FROM lists WHERE id = ?",
+                     (list_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def rename_list(conn: sqlite3.Connection, list_id: int, name: str) -> None:
+    conn.execute("UPDATE lists SET name = ? WHERE id = ?", (name.strip(), list_id))
+    conn.commit()
+
+
+def delete_list(conn: sqlite3.Connection, list_id: int) -> None:
+    conn.execute("DELETE FROM list_items WHERE list_id = ?", (list_id,))
+    conn.execute("DELETE FROM lists WHERE id = ?", (list_id,))
+    conn.commit()
+
+
+def add_to_list(conn: sqlite3.Connection, list_id: int, material_id: int,
+                added_at: str, note: str = "") -> bool:
+    """Snapshot a material into a list. Returns False if the material is gone or
+    already on the list."""
+    m = conn.execute(
+        """SELECT m.supplier_id, m.item_id, m.item_name, m.material_key, m.thickness,
+                  m.finish, m.image_url, s.host AS supplier_host,
+                  COALESCE(NULLIF(s.company,''), s.host) AS supplier_name
+           FROM materials m JOIN suppliers s ON s.id = m.supplier_id WHERE m.id = ?""",
+        (material_id,),
+    ).fetchone()
+    if not m:
+        return False
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO list_items
+             (list_id, supplier_id, item_id, supplier_host, supplier_name, item_name,
+              material_key, thickness, finish, image_url, note, added_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (list_id, m["supplier_id"], m["item_id"], m["supplier_host"], m["supplier_name"],
+         m["item_name"], m["material_key"], m["thickness"], m["finish"],
+         m["image_url"] or "", note, added_at),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def remove_list_item(conn: sqlite3.Connection, item_id: int) -> None:
+    conn.execute("DELETE FROM list_items WHERE id = ?", (item_id,))
+    conn.commit()
+
+
+def set_item_note(conn: sqlite3.Connection, item_id: int, note: str) -> None:
+    conn.execute("UPDATE list_items SET note = ? WHERE id = ?", (note, item_id))
+    conn.commit()
+
+
+def get_list_items(conn: sqlite3.Connection, list_id: int) -> list[dict[str, Any]]:
+    """List entries with live stock re-resolved from the current crawl. The join is
+    on (supplier_id, item_id) because materials.id changes every crawl; anything
+    that no longer resolves falls back to its stored snapshot and is flagged gone."""
+    rows = [dict(r) for r in conn.execute(
+        """SELECT li.*,
+                  (SELECT MIN(m.id) FROM materials m
+                    WHERE m.supplier_id = li.supplier_id AND m.item_id = li.item_id) AS live_id,
+                  (SELECT SUM(m.available_slabs) FROM materials m
+                    WHERE m.supplier_id = li.supplier_id AND m.item_id = li.item_id) AS live_slabs,
+                  (SELECT s.email FROM suppliers s WHERE s.id = li.supplier_id) AS supplier_email,
+                  (SELECT s.phone FROM suppliers s WHERE s.id = li.supplier_id) AS supplier_phone
+           FROM list_items li WHERE li.list_id = ?
+           ORDER BY li.supplier_name, li.item_name""",
+        (list_id,),
+    )]
+    for r in rows:
+        r["gone"] = r["live_id"] is None
+    return rows
 
 
 def list_watchlist(conn: sqlite3.Connection) -> list[dict[str, Any]]:

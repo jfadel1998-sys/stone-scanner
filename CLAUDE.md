@@ -35,7 +35,7 @@ build/packaging details.
 | `stonescan/discover.py` | Passive-DNS + search discovery of public catalogs → suppliers.json |
 | `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling |
 | `stonescan/desktop.py` + `main.py` | Frozen-app launcher (native window, `--refresh` mode) |
-| `stonescan/web/app.py` + `templates/` | FastAPI UI: search, item detail, compare, What's New, Watchlist |
+| `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist |
 | `suppliers.json` | Editable allow-list of catalogs to crawl |
 | `stonescan.spec` / `build_exe.ps1` | PyInstaller packaging |
 | `refresh.ps1` | Scheduled nightly refresh (installed as Windows task `StoneScannerRefresh`) |
@@ -54,6 +54,14 @@ build/packaging details.
 - Search results **group by product** (supplier+name+thickness+finish+form) because
   `SearchbyItemIdentifiers=on` returns one row per slab.
 - Query params that can arrive empty from forms (e.g. `min_length`) must tolerate `""`.
+- A **POSTed HTML form sends its fields in the body**, so those routes must declare
+  `Form(...)` params (needs `python-multipart`) — a plain `q: str = ""` reads the
+  *query string* and silently receives nothing. This is what broke ★ Save search.
+- `db.connect()` **does not create tables** (only `init_db()` runs the schema), so the
+  web app calls `init_db()` at startup for user tables (watchlist, lists).
+- Anything the user owns must key off `(supplier_id, item_id)` — `materials.id` is
+  reassigned every crawl. Sourcing lists also snapshot name/photo so an item that
+  leaves a catalog still renders (flagged "gone").
 
 ## Data notes
 

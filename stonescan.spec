@@ -20,6 +20,7 @@ hiddenimports = pw_hidden + wv_hidden + cl_hidden + pn_hidden + [
     "uvicorn.lifespan", "uvicorn.lifespan.on", "uvicorn.lifespan.off",
     "anyio._backends._asyncio",
     "clr", "webview.platforms.winforms",
+    "multipart", "python_multipart",  # FastAPI Form() parsing (sourcing lists)
 ]
 
 datas = pw_datas + wv_datas + cl_datas + pn_datas + [

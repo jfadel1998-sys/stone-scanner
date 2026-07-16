@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ meta.name }} — board</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body { background: #fff; }
+    .board { padding: 26px 30px; max-width: 1000px; margin: 0 auto; }
+    .boardhead { border-bottom: 2px solid var(--ink); padding-bottom: 10px; margin-bottom: 18px; }
+    .boardhead h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -.3px; }
+    .boardgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .boarditem { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; break-inside: avoid; }
+    .boarditem img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: var(--chip); }
+    .boardph { display: flex; align-items: center; justify-content: center; aspect-ratio: 4/3; background: var(--chip); font-size: 30px; opacity: .4; }
+    .boardmeta { padding: 8px 10px; }
+    .boardmeta b { display: block; font-size: 13px; }
+    .boardmeta span { display: block; font-size: 12px; color: var(--muted); }
+    .boardmeta .bnote { color: var(--ink); font-style: italic; margin-top: 4px; }
+    .printbar { padding: 12px 30px; background: var(--accent-soft); }
+    @media print {
+      .printbar { display: none; }
+      .boardgrid { grid-template-columns: repeat(3, 1fr); }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="printbar">
+  <button class="btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  <span class="muted" style="margin-left:10px;font-size:13px">Choose “Save as PDF” in the print dialog to get a file you can send to a client.</span>
+</div>
+
+<div class="board">
+  <div class="boardhead">
+    <h1>{{ meta.name }}</h1>
+    <span class="muted">{{ items|length }} material{{ '' if items|length == 1 else 's' }} · prepared {{ printed }}</span>
+  </div>
+
+  <div class="boardgrid">
+    {% for it in items %}
+    <div class="boarditem">
+      {% if it.image_url %}<img src="{{ it.image_url }}" alt="" onerror="this.remove()">
+      {% else %}<span class="boardph">🪨</span>{% endif %}
+      <div class="boardmeta">
+        <b>{{ it.item_name }}</b>
+        <span>{{ it.supplier_name }}{% if it.thickness %} · {{ it.thickness }}{% endif %}{% if it.finish %} · {{ it.finish }}{% endif %}</span>
+        {% if it.note %}<span class="bnote">{{ it.note }}</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+</body>
+</html>

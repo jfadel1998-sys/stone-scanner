@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sourcing lists — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists" class="active">📋 Lists</a><a href="/watchlist">★ Watchlist</a></nav>
+  </div>
+  <div class="stats">{{ stats.materials }} materials · {{ stats.suppliers }} suppliers</div>
+</header>
+
+<div class="material-head">
+  <h1>Sourcing lists</h1>
+  <p class="hintline muted">Collect materials from any supplier into a named list, then print it as a client board or send a quote request per supplier.</p>
+  <form class="newlist" method="post" action="/lists/create">
+    <input type="text" name="name" placeholder="New list name (e.g. Hudson St kitchen)" required>
+    <button type="submit">＋ Create list</button>
+  </form>
+</div>
+
+<div class="locgrid">
+  {% for l in lists %}
+  <div class="listcard">
+    <a href="/list?id={{ l.id }}">
+      <b>📋 {{ l.name }}</b>
+      <span class="muted">{{ l.items }} item{{ '' if l.items == 1 else 's' }} · {{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
+    </a>
+    <div class="listthumbs">
+      {% for t in l.thumbs %}<img loading="lazy" src="{{ t }}" alt="" onerror="this.remove()">{% endfor %}
+    </div>
+    <form method="post" action="/lists/delete" onsubmit="return confirm('Delete this list? The materials themselves are not affected.')">
+      <input type="hidden" name="list_id" value="{{ l.id }}">
+      <button class="rmbtn" title="Delete list">✕</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="empty">No lists yet. Create one above, then use the ＋ button on any search result to add material to it.</p>
+  {% endfor %}
+</div>
+
+<footer>Availability reflects each supplier's public catalog at last crawl.</footer>
+</body>
+</html>

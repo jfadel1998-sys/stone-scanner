@@ -60,7 +60,21 @@
     <div class="actions">
       <a class="btn" href="https://{{ m.supplier_host }}/{{ ('InventoryDetail/' ~ m.item_id) if m.item_id else '' }}" target="_blank" rel="noopener">View this on {{ m.supplier_name }}'s live catalog ↗</a>
       <a class="btn ghost" href="/material?key={{ m.material_key | urlencode }}">Compare all suppliers</a>
+      {% if lists %}
+      <form class="addform detailadd" method="post" action="/lists/add">
+        <input type="hidden" name="material_id" value="{{ m.id }}">
+        <input type="hidden" name="back" value="/item?id={{ m.id }}">
+        <select name="list_id" title="Add to sourcing list">
+          {% for l in lists %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+        </select>
+        <button title="Add to this list">＋ Add to list</button>
+      </form>
+      {% else %}
+      <a class="btn ghost" href="/lists">＋ Add to a sourcing list</a>
+      {% endif %}
     </div>
+    {% if added == 1 %}<p class="hintline"><span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span></p>
+    {% elif added == 0 %}<p class="hintline"><span class="okchip warn">Already on that list</span></p>{% endif %}
     <p class="stamp">Inventory reflects {{ m.supplier_name }}'s public catalog
        {% if m.supplier_updated %}as of {{ m.supplier_updated[:16].replace('T',' ') }} UTC{% endif %}.
        Availability changes as slabs are sold — open the live catalog for real-time stock.</p>

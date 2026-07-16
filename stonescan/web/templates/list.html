@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ meta.name }} — sourcing list · Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists" class="active">📋 Lists</a><a href="/watchlist">★ Watchlist</a></nav>
+  </div>
+  <div class="stats">{{ stats.materials }} materials · {{ stats.suppliers }} suppliers</div>
+</header>
+
+<div class="material-head">
+  <a class="back" href="/lists">‹ All lists</a>
+  <h1>{{ meta.name }}</h1>
+  <p class="muted">{{ items|length }} item{{ '' if items|length == 1 else 's' }} from
+     {{ groups|length }} supplier{{ '' if groups|length == 1 else 's' }}
+     {% if items|selectattr('gone')|list %} · <span class="gonechip">{{ items|selectattr('gone')|list|length }} no longer in catalog</span>{% endif %}</p>
+  <div class="actions">
+    <a class="btn" href="/list/print?id={{ meta.id }}" target="_blank">🖨 Print / Save as PDF</a>
+    <a class="btn ghost" href="/list/rfq?id={{ meta.id }}">✉ Request quotes</a>
+  </div>
+  {% if added == 0 %}<p class="hintline muted">That item was already on this list.</p>{% endif %}
+</div>
+
+{% for g in groups %}
+<div class="block">
+  <h2>{{ g.supplier_name }}
+    <span class="muted" style="text-transform:none;font-weight:400">
+      — {{ g['items']|length }} item{{ '' if g['items']|length == 1 else 's' }}
+      {% if g.email %} · <a href="mailto:{{ g.email }}">{{ g.email }}</a>{% endif %}
+      {% if g.phone %} · {{ g.phone }}{% endif %}
+    </span>
+  </h2>
+  <table class="materials">
+    <thead><tr><th></th><th>Material</th><th>Thk</th><th class="num">Slabs now</th><th>Note</th><th></th></tr></thead>
+    <tbody>
+    {% for it in g['items'] %}
+      <tr {% if it.gone %}class="gonerow"{% endif %}>
+        <td class="thumbcell">
+          {% if it.live_id %}<a href="/item?id={{ it.live_id }}">{% endif %}
+          {% if it.image_url %}<img class="thumb" loading="lazy" src="{{ it.image_url }}" alt="" onerror="this.classList.add('broken')">
+          {% else %}<span class="thumb noimg"></span>{% endif %}
+          {% if it.live_id %}</a>{% endif %}
+        </td>
+        <td class="name">
+          {% if it.live_id %}<a class="itemlink" href="/item?id={{ it.live_id }}">{{ it.item_name }}</a>
+          {% else %}{{ it.item_name }} <span class="gonechip" title="Not in the supplier's catalog at the last crawl">gone</span>{% endif %}
+          {% if it.finish %}<div class="muted" style="font-size:12px">{{ it.finish }}</div>{% endif %}
+        </td>
+        <td>{{ it.thickness }}</td>
+        <td class="num">{{ it.live_slabs if it.live_slabs else ('—' if it.gone else 0) }}</td>
+        <td>
+          <form class="noteform" method="post" action="/lists/note">
+            <input type="hidden" name="item_id" value="{{ it.id }}">
+            <input type="hidden" name="list_id" value="{{ meta.id }}">
+            <input type="text" name="note" value="{{ it.note or '' }}" placeholder="add a note…">
+            <button title="Save note">✓</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/lists/remove">
+            <input type="hidden" name="item_id" value="{{ it.id }}">
+            <input type="hidden" name="list_id" value="{{ meta.id }}">
+            <button class="rmbtn" title="Remove from list">✕</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">This list is empty. Search for material and use the ＋ button on any result to add it here.</p>
+{% endfor %}
+
+<footer>Availability reflects each supplier's public catalog at last crawl. Items are kept by supplier + catalog item id, so they survive a re-crawl.</footer>
+</body>
+</html>
