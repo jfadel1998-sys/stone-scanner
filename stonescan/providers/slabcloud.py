@@ -109,7 +109,11 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.3,
                         item_id=str(m.get("InventoryID") or m.get("SlabID") or ""),
                         crawled_at=crawled_at,
                         slab_no=str(s.get("InventoryID") or ""),
-                        location=(s.get("Rack") or "").strip(),
+                        # `Rack` is a spot inside one yard ("Rack 13"), not a place.
+                        # `location` drives the location filter and the pin map, so
+                        # racks are left out rather than dumped there — a SlabCloud
+                        # tenant is a single yard whose geography we aren't told.
+                        location="",
                         length=metres_to_inches(s.get("Length_Actual")),
                         width=metres_to_inches(s.get("Width_Actual")),
                         qty=1, uom="SF", barcode=str(s.get("Lot") or ""),

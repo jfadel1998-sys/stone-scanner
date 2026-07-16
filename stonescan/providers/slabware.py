@@ -141,7 +141,10 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.4,
                     out.slabs.append(slab_row(
                         item_id=str(bid), crawled_at=crawled_at,
                         slab_no=str(c.get("Numero") or c.get("Id") or ""),
-                        location=(c.get("Localizacao") or b.get("cavalete") or "").strip(),
+                        # Localizacao/cavalete are rack positions inside one yard
+                        # ("Suite 9"), not geography. `location` feeds the location
+                        # filter and pin map, so a rack must not masquerade as a place.
+                        location="",
                         length=_num(c.get("Length")), width=_num(c.get("Height")),
                         qty=1, uom="SF", barcode=str(c.get("Id") or ""),
                         image_url=_img(host, bid, (c.get("Foto") or "").strip()),
