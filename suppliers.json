@@ -86,10 +86,6 @@
       "name": "GSI"
     },
     {
-      "host": "inventory.tritonstone.com",
-      "name": "Triton Stone"
-    },
-    {
       "host": "agstones.stoneprofitsweb.com",
       "name": ""
     },
@@ -331,7 +327,11 @@
     },
     {
       "host": "tritonnashville.stoneprofitsweb.com",
-      "name": ""
+      "name": "Triton Stone Nashville"
+    },
+    {
+      "host": "riostones.stoneprofitsweb.com",
+      "name": "Rio Stones"
     }
   ]
 }
