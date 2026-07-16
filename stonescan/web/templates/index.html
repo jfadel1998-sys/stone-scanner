@@ -64,17 +64,42 @@
   <input type="number" name="min_length" value="{{ min_length }}" placeholder="min L" class="sizein" title="Minimum slab length" min="0" step="1">
   <input type="number" name="min_width" value="{{ min_width }}" placeholder="min W" class="sizein" title="Minimum slab width" min="0" step="1">
   <label class="newchk" title="Only newly-arrived materials"><input type="checkbox" name="new_only" value="1" {{ 'checked' if new_only }}> New</label>
+  <input type="hidden" name="view" value="{{ view }}">
   <button type="submit">Search</button>
   <a class="reset" href="/">Reset</a>
   <button type="submit" formaction="/watchlist/add" formmethod="post" class="savebtn" title="Save this search to your watchlist">★ Save search</button>
 </form>
 
+{% set base = '/?q=' ~ (q|urlencode) ~ '&material_type=' ~ (material_type|urlencode) ~ '&color=' ~ (color|urlencode) ~ '&thickness=' ~ (thickness|urlencode) ~ '&supplier=' ~ (supplier|urlencode) ~ '&location=' ~ (location|urlencode) ~ '&min_length=' ~ min_length ~ '&min_width=' ~ min_width ~ '&new_only=' ~ new_only %}
+
 <p class="resultcount">
   {{ total }} result{{ '' if total == 1 else 's' }}
   {% if total > rows|length %}· showing {{ rows|length }} (page {{ page }} of {{ pages }}){% endif %}
   {% if interpreted %}<span class="interp">understood as:{% for c in interpreted %} <span class="ichip">{{ c }}</span>{% endfor %}</span>{% endif %}
+  <span class="viewtoggle">
+    <a href="{{ base }}&view=table&page={{ page }}" class="{{ 'on' if view != 'grid' }}">☰ Table</a>
+    <a href="{{ base }}&view=grid&page={{ page }}" class="{{ 'on' if view == 'grid' }}">▦ Showroom</a>
+  </span>
 </p>
 
+{% if view == 'grid' %}
+<div class="cardgrid">
+  {% for r in rows %}
+  <a class="matcard" href="/item?id={{ r.id }}">
+    {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">
+    {% else %}<span class="cardph">🪨</span>{% endif %}
+    <span class="cardmeta">
+      <b>{{ r.item_name }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
+      <span class="cardsup">{{ r.supplier_name }}</span>
+      <span class="cardspec">{{ [r.material_type, r.color, r.thickness]|select|join(' · ') }}</span>
+      {% if r.available_slabs %}<span class="cardslabs">{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}</span>{% endif %}
+    </span>
+  </a>
+  {% else %}
+  <p class="empty">No materials found. Try a broader search, or run a crawl first.</p>
+  {% endfor %}
+</div>
+{% else %}
 <table class="materials">
   <thead>
     <tr>
@@ -105,13 +130,13 @@
   {% endfor %}
   </tbody>
 </table>
+{% endif %}
 
 {% if pages > 1 %}
 <nav class="pager">
-  {% set base = '/?q=' ~ (q|urlencode) ~ '&material_type=' ~ (material_type|urlencode) ~ '&color=' ~ (color|urlencode) ~ '&thickness=' ~ (thickness|urlencode) ~ '&supplier=' ~ (supplier|urlencode) ~ '&location=' ~ (location|urlencode) ~ '&min_length=' ~ min_length ~ '&min_width=' ~ min_width ~ '&new_only=' ~ new_only %}
-  {% if page > 1 %}<a href="{{ base }}&page={{ page-1 }}">‹ Prev</a>{% endif %}
+  {% if page > 1 %}<a href="{{ base }}&view={{ view }}&page={{ page-1 }}">‹ Prev</a>{% endif %}
   <span>Page {{ page }} / {{ pages }}</span>
-  {% if page < pages %}<a href="{{ base }}&page={{ page+1 }}">Next ›</a>{% endif %}
+  {% if page < pages %}<a href="{{ base }}&view={{ view }}&page={{ page+1 }}">Next ›</a>{% endif %}
 </nav>
 {% endif %}
 

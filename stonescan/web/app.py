@@ -150,9 +150,11 @@ def index(
     min_length: str = "",
     min_width: str = "",
     new_only: int = 0,
+    view: str = "table",
     page: int = 1,
 ):
     conn = db.connect()
+    view = view if view in ("table", "grid") else "table"
     limit = 60
     offset = max(page - 1, 0) * limit
     ml, mw = _to_float(min_length), _to_float(min_width)
@@ -178,6 +180,7 @@ def index(
         "min_length": min_length or "",
         "min_width": min_width or "",
         "new_only": new_only,
+        "view": view,
         "types": _distinct(conn, "material_type"),
         "colors": _distinct(conn, "color"),
         "thicknesses": _distinct(conn, "thickness"),
