@@ -10,6 +10,7 @@ Then open http://127.0.0.1:8000
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from pathlib import Path
 
@@ -41,7 +42,6 @@ def _distinct(conn, column: str) -> list[str]:
 def _colors_matching(conn, base: str) -> list[str]:
     """Distinct color values whose words include the base color (word-level, so
     'blue' matches 'Blue'/'Light Blue'/'Gray, White' but not 'Colored')."""
-    import re
     bases = {"gray", "grey"} if base in ("gray", "grey") else {base}
     out = []
     for r in conn.execute("SELECT DISTINCT color FROM materials WHERE color <> ''"):
@@ -49,6 +49,29 @@ def _colors_matching(conn, base: str) -> list[str]:
         if bases & words:
             out.append(r["color"])
     return out
+
+
+_NAME_WORDS: list[str] | None = None
+
+
+def _name_words(conn) -> list[str]:
+    """Every distinct word used in a material name, cached for the process.
+    SQLite has no fuzzy matching, so near-miss recall is done in Python."""
+    global _NAME_WORDS
+    if _NAME_WORDS is None:
+        words: set[str] = set()
+        for r in conn.execute("SELECT DISTINCT name_norm FROM materials WHERE name_norm <> ''"):
+            for w in re.split(r"[^A-Z0-9]+", r["name_norm"]):
+                if len(w) > 3 and not w.isdigit():
+                    words.add(w)
+        _NAME_WORDS = sorted(words)
+    return _NAME_WORDS
+
+
+def _close_words(conn, term: str) -> list[str]:
+    """Catalog words within a typo's distance of `term` ('calacata' -> CALACATTA)."""
+    import difflib
+    return difflib.get_close_matches(term.upper(), _name_words(conn), n=4, cutoff=0.82)
 
 
 SORTS = {
@@ -61,7 +84,7 @@ SORTS = {
 
 def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset,
             location="", min_length=0.0, min_width=0.0, new_only=False,
-            sort="relevance", in_stock=False):
+            sort="relevance", in_stock=False, fuzzy=True):
     """Free-text-aware search. The query box understands phrases like
     'blue marble slabs'; explicit dropdown filters take precedence."""
     parsed = smartsearch.parse_query(q)
@@ -107,10 +130,17 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     elif form == "remnant":
         where.append("(m.product_form LIKE '%REMNANT%' OR m.name_norm LIKE '%REMNANT%')")
 
-    for term in parsed["terms"]:
-        where.append("m.name_norm LIKE ?"); params.append(f"%{term.upper()}%")
+    def term_sql(terms_variants):
+        """AND together the name terms; each term may match any of its variants."""
+        sql, ps = [], []
+        for variants in terms_variants:
+            sql.append("(" + " OR ".join("m.name_norm LIKE ?" for _ in variants) + ")")
+            ps.extend(f"%{v.upper()}%" for v in variants)
+        return sql, ps
 
-    clause = " AND ".join(where)
+    base_where, base_params = list(where), list(params)
+    tw, tp = term_sql([[t] for t in parsed["terms"]])
+    where, params = base_where + tw, base_params + tp
 
     # Collapse a supplier's duplicate listings of the same product (one row per
     # physical slab, or re-entered batches) into a single line with a slab total.
@@ -119,11 +149,29 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     having = " HAVING SUM(m.available_slabs) > 0" if in_stock else ""
     order_by = SORTS.get(sort, SORTS["relevance"])
 
-    total = conn.execute(
-        f"SELECT COUNT(*) c FROM (SELECT 1 FROM materials m JOIN suppliers s "
-        f"ON s.id=m.supplier_id WHERE {clause} GROUP BY {group_by}{having})",
-        params,
-    ).fetchone()["c"]
+    def count(clause, ps):
+        return conn.execute(
+            f"SELECT COUNT(*) c FROM (SELECT 1 FROM materials m JOIN suppliers s "
+            f"ON s.id=m.supplier_id WHERE {clause} GROUP BY {group_by}{having})",
+            ps,
+        ).fetchone()["c"]
+
+    clause = " AND ".join(where)
+    total = count(clause, params)
+
+    # Near-miss recall: an unknown spelling matches nothing at all in SQL, so when
+    # a name query comes up (nearly) empty, retry OR-ing in close catalog words.
+    if fuzzy and parsed["terms"] and total < 5:
+        variants = [[t] + [w for w in _close_words(conn, t) if w.upper() != t.upper()]
+                    for t in parsed["terms"]]
+        if any(len(v) > 1 for v in variants):
+            tw, tp = term_sql(variants)
+            fclause = " AND ".join(base_where + tw)
+            fparams = base_params + tp
+            ftotal = count(fclause, fparams)
+            if ftotal > total:
+                clause, params, total = fclause, fparams, ftotal
+                parsed["fuzzy"] = sorted({w for v in variants for w in v[1:]})
 
     rows = conn.execute(
         f"""SELECT MIN(m.id) AS id, m.item_name, m.material_type, m.color, m.thickness,
@@ -217,21 +265,105 @@ def index(
 
 @app.get("/material", response_class=HTMLResponse)
 def material(request: Request, key: str):
-    """Comparison view: every supplier that carries this material."""
+    """Canonical page for a material: the whole market for it in one view —
+    photos, spec ranges, every supplier that carries it, and similar stones."""
     conn = db.connect()
-    rows = conn.execute(
-        """SELECT m.*, COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host
+    rows = [dict(r) for r in conn.execute(
+        """SELECT m.*, COALESCE(NULLIF(s.company,''), s.host) AS supplier_name,
+                  s.host AS supplier_host, s.phone AS supplier_phone, s.email AS supplier_email
            FROM materials m JOIN suppliers s ON s.id = m.supplier_id
            WHERE m.material_key = ?
            ORDER BY supplier_name, m.thickness""",
         (key,),
-    ).fetchall()
-    rows = [dict(r) for r in rows]
-    name = rows[0]["item_name"] if rows else key
+    )]
+    if not rows:
+        conn.close()
+        return HTMLResponse("<p style='padding:40px;font-family:sans-serif'>Unknown material. "
+                            "<a href='/'>Back to search</a></p>", status_code=404)
+
+    # The display name is the most common spelling suppliers use for it.
+    names: dict[str, int] = {}
+    for r in rows:
+        names[r["item_name"]] = names.get(r["item_name"], 0) + 1
+    name = max(names, key=lambda n: names[n])
+
+    # One block per supplier: their listings collapsed, best photo, stock, contact.
+    by_supplier: dict[str, dict] = {}
+    for r in rows:
+        s = by_supplier.setdefault(r["supplier_name"], {
+            "supplier_name": r["supplier_name"], "supplier_host": r["supplier_host"],
+            "phone": r["supplier_phone"], "email": r["supplier_email"],
+            "slabs": 0, "image_url": "", "id": r["id"], "item_id": r["item_id"],
+            "listings": [], "locations": set(),
+        })
+        s["slabs"] += r["available_slabs"] or 0
+        if not s["image_url"] and r["image_url"]:
+            s["image_url"], s["id"], s["item_id"] = r["image_url"], r["id"], r["item_id"]
+        for loc in (r["locations"] or "").split(","):
+            if loc.strip():
+                s["locations"].add(loc.strip())
+        s["listings"].append(r)
+    suppliers_list = sorted(by_supplier.values(), key=lambda s: (-s["slabs"], s["supplier_name"]))
+    for s in suppliers_list:
+        s["locations"] = sorted(s["locations"])
+
+    def uniq(field):
+        return sorted({(r[field] or "").strip() for r in rows if (r[field] or "").strip()})
+
+    def clean_colors():
+        """Colors aggregated over dozens of suppliers, some of whom paste a whole
+        product description into the color field — keep only real color words."""
+        out: set[str] = set()
+        for r in rows:
+            for part in (r["color"] or "").split(","):
+                part = part.strip()
+                if part and len(part) <= 18 and len(part.split()) <= 2 \
+                        and not re.search(r"\d", part):
+                    out.add(part.title())
+        return sorted(out)[:8]
+
+    def sorted_thicknesses():
+        """'1.2cm','2cm','10cm' sort numerically, not as strings."""
+        def cm(t):
+            m = re.match(r"([\d.]+)", t)
+            return float(m.group(1)) if m else 0.0
+        return sorted(uniq("thickness"), key=cm)
+
+    lengths = [r["avg_length"] for r in rows if r["avg_length"]]
+    widths = [r["avg_width"] for r in rows if r["avg_width"]]
+    facts = {
+        "types": uniq("material_type"), "colors": clean_colors(),
+        "finishes": uniq("finish"), "thicknesses": sorted_thicknesses(),
+        "origins": uniq("origin"), "forms": uniq("product_form"),
+        "slabs": sum(r["available_slabs"] or 0 for r in rows),
+        "suppliers": len(suppliers_list),
+        "listings": len(rows),
+        "size_range": (
+            f"{min(lengths):.0f}×{min(widths):.0f} – {max(lengths):.0f}×{max(widths):.0f}"
+            if lengths and widths else ""
+        ),
+        "new": any(r["new_arrival"] for r in rows),
+    }
+    photos = [r["image_url"] for r in rows if r["image_url"]][:8]
+
+    mtype = rows[0]["material_type"]
+    similar = [dict(x) for x in conn.execute(
+        """SELECT m.item_name, m.material_key, m.color, MAX(m.image_url) AS image_url,
+                  COUNT(DISTINCT m.supplier_id) AS suppliers, SUM(m.available_slabs) AS slabs
+           FROM materials m
+           WHERE m.material_type = ? AND m.material_key <> ? AND m.material_key <> ''
+                 AND (? = '' OR m.color = ?)
+           GROUP BY m.material_key
+           ORDER BY (MAX(m.image_url) = '' OR MAX(m.image_url) IS NULL),
+                    SUM(m.available_slabs) DESC
+           LIMIT 12""",
+        (mtype, key, rows[0]["color"] or "", rows[0]["color"] or ""),
+    )]
     conn.close()
-    return templates.TemplateResponse(
-        request, "material.html", {"rows": rows, "name": name, "key": key}
-    )
+    return templates.TemplateResponse(request, "material.html", {
+        "rows": rows, "name": name, "key": key, "suppliers_list": suppliers_list,
+        "facts": facts, "photos": photos, "similar": similar,
+    })
 
 
 @app.get("/item", response_class=HTMLResponse)

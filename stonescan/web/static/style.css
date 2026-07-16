@@ -199,6 +199,7 @@ footer { padding: 20px 22px 40px; color: var(--muted); font-size: 12px; }
 .simcard { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); display: block; color: var(--ink); }
 .simcard:hover { border-color: var(--accent); text-decoration: none; }
 .simcard img { width: 100%; aspect-ratio: 5/4; object-fit: cover; display: block; background: var(--chip); }
+.simcard img.broken { visibility: hidden; }
 .simcard .simph { display: flex; align-items: center; justify-content: center; aspect-ratio: 5/4; background: var(--chip); font-size: 28px; opacity: .4; }
 .simmeta { padding: 8px 10px; font-size: 13px; }
 .simmeta b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -215,6 +216,15 @@ footer { padding: 20px 22px 40px; color: var(--muted); font-size: 12px; }
 .pvthumb { width: 48px; height: 48px; border-radius: 6px; overflow: hidden; background: var(--chip); display: flex; align-items: center; justify-content: center; border: 1px solid var(--line); }
 .pvthumb img { width: 100%; height: 100%; object-fit: cover; }
 .hintline { padding: 0 0 8px; font-size: 13px; }
+
+/* canonical material page */
+.herostrip { display: flex; gap: 10px; overflow-x: auto; padding: 8px 22px 4px; }
+.herostrip img {
+  height: 190px; flex: 0 0 auto; border-radius: 10px; border: 1px solid var(--line);
+  object-fit: cover; background: var(--chip); min-width: 150px;
+}
+.specs.canonspecs { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .specs.canonspecs { grid-template-columns: repeat(2, 1fr); } }
 
 /* browse-by-location page */
 .locgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; padding: 8px 22px 30px; }

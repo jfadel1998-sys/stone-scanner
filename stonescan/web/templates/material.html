@@ -3,48 +3,104 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ name }} — suppliers · Stone Scanner</title>
+  <title>{{ name }} — every supplier · Stone Scanner</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header>
-  <div class="brand"><a href="/">🪨 Stone Scanner</a></div>
+  <div class="brand"><a href="/">🪨 Stone Scanner</a>
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/watchlist">★ Watchlist</a></nav>
+  </div>
 </header>
 
 <div class="material-head">
   <a class="back" href="/">‹ Back to search</a>
-  <h1>{{ name }}</h1>
-  <p class="muted">{{ rows|length }} listing{{ '' if rows|length == 1 else 's' }} across
-     {{ rows|map(attribute='supplier_name')|unique|list|length }} supplier(s)</p>
+  <h1>{{ name }}{% if facts.new %} <span class="new">NEW</span>{% endif %}</h1>
+  <p class="muted">
+    {{ facts.types|join(' / ') }}{% if facts.colors %} · {{ facts.colors|join(', ') }}{% endif %}
+    · carried by {{ facts.suppliers }} supplier{{ '' if facts.suppliers == 1 else 's' }}
+    · {{ facts.slabs }} slab{{ '' if facts.slabs == 1 else 's' }} in stock
+  </p>
 </div>
 
-<table class="materials">
-  <thead>
-    <tr>
-      <th></th><th>Supplier</th><th>Listed as</th><th>Type</th><th>Color</th>
-      <th>Thk</th><th>Finish</th><th class="num">Slabs</th><th class="num">Avg size</th><th></th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for r in rows %}
-    <tr>
-      <td class="thumbcell">
-        {% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">
-        {% else %}<span class="thumb noimg"></span>{% endif %}
-      </td>
-      <td class="name">{{ r.supplier_name }}</td>
-      <td><a class="itemlink" href="/item?id={{ r.id }}">{{ r.item_name }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</td>
-      <td>{{ r.material_type }}</td>
-      <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
-      <td>{{ r.thickness }}</td>
-      <td class="muted">{{ r.finish }}</td>
-      <td class="num">{{ r.available_slabs or '' }}</td>
-      <td class="num muted">{% if r.avg_length and r.avg_width %}{{ r.avg_length|int }}×{{ r.avg_width|int }}{% endif %}</td>
-      <td><a class="compare" href="https://{{ r.supplier_host }}/" target="_blank" rel="noopener">visit ↗</a></td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+{% if photos %}
+<div class="herostrip">
+  {% for p in photos %}<img loading="lazy" src="{{ p }}" alt="" onerror="this.remove()">{% endfor %}
+</div>
+{% endif %}
+
+<div class="block">
+  <h2>At a glance</h2>
+  <div class="specs canonspecs">
+    <div><span>Type</span>{{ facts.types|join(', ') or '—' }}</div>
+    <div><span>Color</span>{{ facts.colors|join(', ') or '—' }}</div>
+    <div><span>Thickness</span>{{ facts.thicknesses|join(', ') or '—' }}</div>
+    <div><span>Finish</span>{{ facts.finishes|join(', ') or '—' }}</div>
+    <div><span>Slab size range</span>{{ facts.size_range or '—' }}</div>
+    <div><span>Origin</span>{{ facts.origins|join(', ') or '—' }}</div>
+    <div><span>Form</span>{{ facts.forms|join(', ') or '—' }}</div>
+    <div><span>Listings</span>{{ facts.listings }} across {{ facts.suppliers }} supplier{{ '' if facts.suppliers == 1 else 's' }}</div>
+  </div>
+</div>
+
+<div class="block">
+  <h2>Where to buy it</h2>
+  <table class="materials">
+    <thead>
+      <tr><th></th><th>Supplier</th><th>Listed as</th><th>Thk</th><th class="num">Slabs</th>
+          <th>Location</th><th>Contact</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for s in suppliers_list %}
+      <tr>
+        <td class="thumbcell">
+          <a href="/item?id={{ s.id }}">
+          {% if s.image_url %}<img class="thumb" loading="lazy" src="{{ s.image_url }}" alt="" onerror="this.classList.add('broken')">
+          {% else %}<span class="thumb noimg"></span>{% endif %}</a>
+        </td>
+        <td class="name">{{ s.supplier_name }}</td>
+        <td>
+          {% for l in s.listings[:3] %}
+            <a class="itemlink" href="/item?id={{ l.id }}">{{ l.item_name }}</a>
+            <span class="muted">{{ l.thickness }}{% if l.finish %} · {{ l.finish }}{% endif %}</span><br>
+          {% endfor %}
+          {% if s.listings|length > 3 %}<span class="muted">+{{ s.listings|length - 3 }} more variant(s)</span>{% endif %}
+        </td>
+        <td class="muted">{{ s.listings|map(attribute='thickness')|select|unique|join(', ') }}</td>
+        <td class="num">{{ s.slabs or '—' }}</td>
+        <td class="muted loc">{{ s.locations[:2]|join(', ') }}</td>
+        <td class="muted">
+          {% if s.phone %}<div>{{ s.phone }}</div>{% endif %}
+          {% if s.email %}<div><a href="mailto:{{ s.email }}?subject={{ name|urlencode }}">{{ s.email }}</a></div>{% endif %}
+          {% if not s.phone and not s.email %}—{% endif %}
+        </td>
+        <td>
+          {% if s.item_id %}<a class="compare" href="https://{{ s.supplier_host }}/InventoryDetail/{{ s.item_id }}" target="_blank" rel="noopener">on their site ↗</a>
+          {% else %}<a class="compare" href="https://{{ s.supplier_host }}/" target="_blank" rel="noopener">visit ↗</a>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if similar %}
+<div class="block">
+  <h2>Similar materials</h2>
+  <div class="simgrid">
+    {% for x in similar %}
+    <a class="simcard" href="/material?key={{ x.material_key | urlencode }}">
+      {% if x.image_url %}<img loading="lazy" src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
+      {% else %}<span class="simph">🪨</span>{% endif %}
+      <span class="simmeta">
+        <b>{{ x.item_name }}</b>
+        <span>{{ x.suppliers }} supplier{{ '' if x.suppliers == 1 else 's' }}{% if x.slabs %} · {{ x.slabs }} slabs{% endif %}</span>
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 <footer>Availability and sizes reflect each supplier's public catalog at last crawl.</footer>
 </body>

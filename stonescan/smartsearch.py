@@ -64,6 +64,33 @@ _STOP = {
 
 _THICK_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(cm|mm)\b")
 
+# Common misspellings and trade shorthand -> the spelling suppliers actually use.
+# Applied to the raw query before parsing, so "calcutta gold" finds Calacatta Gold.
+ALIASES: dict[str, str] = {
+    "calcutta": "calacatta", "calacata": "calacatta", "calactta": "calacatta",
+    "calacutta": "calacatta", "calcatta": "calacatta", "calacatt": "calacatta",
+    "carrera": "carrara", "carara": "carrara",
+    "cararra": "carrara", "carrarra": "carrara",
+    "statuary": "statuario", "statuarrio": "statuario", "stautario": "statuario",
+    "taj": "taj mahal", "tajmahal": "taj mahal",
+    "cambrian": "cambria", "silstone": "silestone", "ceasarstone": "caesarstone",
+    "quartzsite": "quartzite", "quartsite": "quartzite",
+    "travertino": "travertine", "travertin": "travertine",
+    "blue de savoie": "bleu de savoie", "cremarfil": "crema marfil",
+    "marquinia": "marquina", "marqunia": "marquina",
+    "thasos": "thassos", "thassoss": "thassos", "imperador": "emperador",
+    "bottocino": "botticino", "botocino": "botticino",
+}
+
+
+def apply_aliases(q: str) -> str:
+    """Rewrite known misspellings/shorthand in a query to supplier spelling."""
+    text = q
+    for wrong, right in ALIASES.items():
+        text = re.sub(r"(?<![a-z])" + re.escape(wrong) + r"(?![a-z])",
+                      right, text, flags=re.I)
+    return text
+
 
 def _take(text: str, phrase: str) -> tuple[str, bool]:
     """Remove `phrase` (optionally plural) from text on word boundaries."""
@@ -80,7 +107,7 @@ def parse_query(q: str) -> dict:
                  "form": None, "terms": []}
     if not q:
         return out
-    text = " " + q.lower().strip() + " "
+    text = " " + apply_aliases(q.lower().strip()) + " "
 
     m = _THICK_RE.search(text)
     if m:
@@ -142,4 +169,6 @@ def summary(parsed: dict) -> list[str]:
         chips.append({"slab": "Slabs", "tile": "Tiles", "remnant": "Remnants"}[parsed["form"]])
     for t in parsed.get("terms", []):
         chips.append(f'"{t}"')
+    for w in parsed.get("fuzzy", []):
+        chips.append(f"or ~{w.title()}")
     return chips
