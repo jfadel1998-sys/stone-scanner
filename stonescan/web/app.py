@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import db, slabs, smartsearch
+from .. import db, geocode, slabs, smartsearch
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Stone Scanner")
@@ -84,17 +84,38 @@ def _close_words(conn, term: str) -> list[str]:
     return difflib.get_close_matches(term.upper(), _name_words(conn), n=4, cutoff=0.82)
 
 
+# Total in-stock area of a grouped product, in square feet (dims are inches).
+_SQFT = "SUM(m.available_slabs) * MAX(m.avg_length) * MAX(m.avg_width) / 144.0"
+
 SORTS = {
     "relevance": "m.material_key, m.item_name, supplier_name",
     "slabs": "SUM(m.available_slabs) DESC, m.material_key",
     "size": "MAX(m.avg_length) DESC, m.material_key",
     "new": "MAX(m.new_arrival) DESC, m.material_key",
+    "area": f"{_SQFT} DESC, m.material_key",
+    "distance": "miles ASC, SUM(m.available_slabs) DESC",  # only valid when near-active
 }
+
+
+def _register_nearest(conn, loc_miles: dict[str, float]):
+    """Expose a SQL function mapping a material's comma-joined `locations` string to
+    the distance of its nearest in-range stocking location (NULL if none)."""
+    def nearest(csv):
+        if not csv:
+            return None
+        best = None
+        for part in csv.split(","):
+            d = loc_miles.get(part.strip().lower())
+            if d is not None and (best is None or d < best):
+                best = d
+        return best
+    conn.create_function("nearest_miles", 1, nearest, deterministic=True)
 
 
 def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset,
             location="", min_length=0.0, min_width=0.0, new_only=False,
-            sort="relevance", in_stock=False, fuzzy=True):
+            sort="relevance", in_stock=False, fuzzy=True,
+            near=None, radius_mi=0.0, min_sqft=0.0):
     """Free-text-aware search. The query box understands phrases like
     'blue marble slabs'; explicit dropdown filters take precedence."""
     parsed = smartsearch.parse_query(q)
@@ -132,6 +153,13 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     if new_only:
         where.append("m.new_arrival = 1")
 
+    # Proximity: keep only material with a stocking location inside the radius.
+    near_active = bool(near) and radius_mi > 0
+    if near_active:
+        loc_miles = geocode.locations_within(conn, near[0], near[1], radius_mi)
+        _register_nearest(conn, loc_miles)
+        where.append("nearest_miles(m.locations) IS NOT NULL")
+
     form = parsed["form"]
     if form == "slab":
         where.append("m.product_form LIKE '%SLAB%'")
@@ -155,15 +183,24 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     # Collapse a supplier's duplicate listings of the same product (one row per
     # physical slab, or re-entered batches) into a single line with a slab total.
     group_by = "m.supplier_id, m.name_norm, m.thickness, m.finish, m.product_form"
-    # available_slabs is summed across the group, so stock filters at HAVING time.
-    having = " HAVING SUM(m.available_slabs) > 0" if in_stock else ""
+    # Aggregates (slab total, total area) are grouped, so filter them at HAVING time.
+    have = []
+    if in_stock or min_sqft:  # needing enough area implies needing stock
+        have.append("SUM(m.available_slabs) > 0")
+    if min_sqft:
+        have.append(f"{_SQFT} >= ?")
+    having = (" HAVING " + " AND ".join(have)) if have else ""
+    having_params = [min_sqft] if min_sqft else []
+
+    if sort == "distance" and not near_active:
+        sort = "relevance"  # distance is meaningless without an origin
     order_by = SORTS.get(sort, SORTS["relevance"])
 
     def count(clause, ps):
         return conn.execute(
             f"SELECT COUNT(*) c FROM (SELECT 1 FROM materials m JOIN suppliers s "
             f"ON s.id=m.supplier_id WHERE {clause} GROUP BY {group_by}{having})",
-            ps,
+            ps + having_params,
         ).fetchone()["c"]
 
     clause = " AND ".join(where)
@@ -183,21 +220,36 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
                 clause, params, total = fclause, fparams, ftotal
                 parsed["fuzzy"] = sorted({w for v in variants for w in v[1:]})
 
+    miles_col = ", nearest_miles(MAX(m.locations)) AS miles" if near_active else ""
     rows = conn.execute(
         f"""SELECT MIN(m.id) AS id, m.item_name, m.material_type, m.color, m.thickness,
                    m.product_form, m.material_key, MAX(m.new_arrival) AS new_arrival,
                    COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
                    SUM(m.available_slabs) AS available_slabs,
                    MAX(m.avg_length) AS avg_length, MAX(m.avg_width) AS avg_width,
-                   MAX(m.locations) AS locations, MAX(m.image_url) AS image_url
+                   {_SQFT} AS total_sqft,
+                   MAX(m.locations) AS locations, MAX(m.image_url) AS image_url{miles_col}
             FROM materials m JOIN suppliers s ON s.id = m.supplier_id
             WHERE {clause}
             GROUP BY {group_by}{having}
             ORDER BY {order_by}
             LIMIT ? OFFSET ?""",
-        (*params, limit, offset),
+        (*params, *having_params, limit, offset),
     ).fetchall()
     return total, [dict(r) for r in rows], parsed
+
+
+def _resolve_near(near: str):
+    """Resolve a typed origin ('Dallas', 'Charlotte NC') to (lat, lon), offline.
+    Returns ((lat, lon)|None, label). Same city dataset the map uses, so an origin
+    it can't place (a bare zip, a tiny town) comes back unresolved with a note."""
+    near = (near or "").strip()
+    if not near:
+        return None, ""
+    hit = geocode.resolve(near)
+    if hit:
+        return (hit["lat"], hit["lon"]), hit.get("label") or near
+    return None, near
 
 
 def _here(request: Request) -> str:
@@ -228,6 +280,9 @@ def index(
     new_only: int = 0,
     in_stock: int = 0,
     sort: str = "relevance",
+    near: str = "",
+    radius: str = "",
+    min_sqft: str = "",
     view: str = "table",
     page: int = 1,
     added: int = -1,
@@ -239,11 +294,15 @@ def index(
     limit = 60
     offset = max(page - 1, 0) * limit
     ml, mw = _to_float(min_length), _to_float(min_width)
+    radius_mi = _to_float(radius) or 150.0
+    origin, near_label = _resolve_near(near)
     total, rows, parsed = _search(
         conn, q=q, material_type=material_type, color=color,
         thickness=thickness, supplier=supplier, location=location,
         min_length=ml, min_width=mw, new_only=bool(new_only),
         sort=sort, in_stock=bool(in_stock),
+        near=origin, radius_mi=radius_mi if origin else 0.0,
+        min_sqft=_to_float(min_sqft),
         limit=limit, offset=offset,
     )
     ctx = {
@@ -264,6 +323,11 @@ def index(
         "new_only": new_only,
         "in_stock": in_stock,
         "sort": sort,
+        "near": near,
+        "near_label": near_label,
+        "near_ok": bool(origin),
+        "radius": radius or (str(int(radius_mi)) if near else ""),
+        "min_sqft": min_sqft or "",
         "view": view,
         "lists": db.get_lists(conn),
         "added": added,
@@ -562,18 +626,23 @@ def api_search(
     q: str = "", material_type: str = "", color: str = "", thickness: str = "",
     supplier: str = "", location: str = "", min_length: str = "", min_width: str = "",
     new_only: int = 0, in_stock: int = 0, sort: str = "relevance",
+    near: str = "", radius: str = "", min_sqft: str = "",
     limit: int = Query(100, le=500), offset: int = 0,
 ):
     conn = db.connect()
+    origin, near_label = _resolve_near(near)
     total, rows, parsed = _search(
         conn, q=q, material_type=material_type, color=color, thickness=thickness,
         supplier=supplier, location=location, min_length=_to_float(min_length),
         min_width=_to_float(min_width), new_only=bool(new_only),
         in_stock=bool(in_stock), sort=sort if sort in SORTS else "relevance",
-        limit=limit, offset=offset,
+        near=origin, radius_mi=(_to_float(radius) or 150.0) if origin else 0.0,
+        min_sqft=_to_float(min_sqft), limit=limit, offset=offset,
     )
     conn.close()
     return JSONResponse({"total": total, "count": len(rows), "results": rows,
+                         "near": near_label if origin else None,
+                         "near_unresolved": bool(near) and not origin,
                          "interpreted": smartsearch.summary(parsed) if q else []})
 
 

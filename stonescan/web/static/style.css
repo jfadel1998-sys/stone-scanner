@@ -217,6 +217,13 @@ footer { padding: 20px 22px 40px; color: var(--muted); font-size: 12px; }
 .pvthumb img { width: 100%; height: 100%; object-fit: cover; }
 .hintline { padding: 0 0 8px; font-size: 13px; }
 
+/* proximity + project-fit */
+.nearin { width: 120px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; background: #fff; }
+.radsel { padding: 9px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; }
+.milechip { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.sqft { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+.cardstats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+
 /* sourcing lists */
 .newlist { display: flex; gap: 8px; margin: 12px 0 4px; }
 .newlist input { flex: 0 1 340px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }

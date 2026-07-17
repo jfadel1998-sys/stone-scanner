@@ -63,8 +63,13 @@
   </select>
   <input type="number" name="min_length" value="{{ min_length }}" placeholder="min L" class="sizein" title="Minimum slab length" min="0" step="1">
   <input type="number" name="min_width" value="{{ min_width }}" placeholder="min W" class="sizein" title="Minimum slab width" min="0" step="1">
+  <input type="search" name="near" value="{{ near }}" placeholder="near (city)" class="nearin" title="Show only material stocked near a city, e.g. Dallas or Charlotte NC">
+  <select name="radius" title="Search radius" class="radsel">
+    {% for r in [50, 100, 150, 300, 500] %}<option value="{{ r }}" {{ 'selected' if radius|string == r|string }}>{{ r }} mi</option>{% endfor %}
+  </select>
+  <input type="number" name="min_sqft" value="{{ min_sqft }}" placeholder="min ft²" class="sizein" title="Only material with at least this much total in-stock area" min="0" step="10">
   <select name="sort" title="Sort results">
-    {% for v, label in [('relevance','Best match'), ('slabs','Most slabs'), ('size','Biggest slabs'), ('new','Newest first')] %}
+    {% for v, label in [('relevance','Best match'), ('slabs','Most slabs'), ('size','Biggest slabs'), ('area','Most area'), ('new','Newest first'), ('distance','Nearest')] %}
     <option value="{{ v }}" {{ 'selected' if v == sort }}>{{ label }}</option>{% endfor %}
   </select>
   <label class="newchk" title="Only newly-arrived materials"><input type="checkbox" name="new_only" value="1" {{ 'checked' if new_only }}> New</label>
@@ -75,11 +80,14 @@
   <button type="submit" formaction="/watchlist/add" formmethod="post" class="savebtn" title="Save this search to your watchlist">★ Save search</button>
 </form>
 
-{% set base = '/?q=' ~ (q|urlencode) ~ '&material_type=' ~ (material_type|urlencode) ~ '&color=' ~ (color|urlencode) ~ '&thickness=' ~ (thickness|urlencode) ~ '&supplier=' ~ (supplier|urlencode) ~ '&location=' ~ (location|urlencode) ~ '&min_length=' ~ min_length ~ '&min_width=' ~ min_width ~ '&new_only=' ~ new_only ~ '&in_stock=' ~ in_stock ~ '&sort=' ~ sort %}
+{% set base = '/?q=' ~ (q|urlencode) ~ '&material_type=' ~ (material_type|urlencode) ~ '&color=' ~ (color|urlencode) ~ '&thickness=' ~ (thickness|urlencode) ~ '&supplier=' ~ (supplier|urlencode) ~ '&location=' ~ (location|urlencode) ~ '&min_length=' ~ min_length ~ '&min_width=' ~ min_width ~ '&new_only=' ~ new_only ~ '&in_stock=' ~ in_stock ~ '&sort=' ~ sort ~ '&near=' ~ (near|urlencode) ~ '&radius=' ~ radius ~ '&min_sqft=' ~ min_sqft %}
 
 <p class="resultcount">
   {{ total }} result{{ '' if total == 1 else 's' }}
   {% if total > rows|length %}· showing {{ rows|length }} (page {{ page }} of {{ pages }}){% endif %}
+  {% if near_ok %}<span class="ichip">📍 within {{ radius }} mi of {{ near_label }}</span>
+  {% elif near %}<span class="okchip warn" title="Not in the offline city dataset — try a bigger city or add 'City ST'">couldn't place “{{ near }}”</span>{% endif %}
+  {% if min_sqft %}<span class="ichip">≥ {{ min_sqft }} ft²</span>{% endif %}
   {% if interpreted %}<span class="interp">understood as:{% for c in interpreted %} <span class="ichip">{{ c }}</span>{% endfor %}</span>{% endif %}
   {% if added == 1 %}<span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span>
   {% elif added == 0 %}<span class="okchip warn">Already on that list</span>{% endif %}
@@ -115,7 +123,10 @@
         <b>{{ r.item_name }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
         <span class="cardsup">{{ r.supplier_name }}</span>
         <span class="cardspec">{{ [r.material_type, r.color, r.thickness]|select|join(' · ') }}</span>
-        {% if r.available_slabs %}<span class="cardslabs">{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}</span>{% endif %}
+        <span class="cardstats">
+          {% if r.available_slabs %}<span class="cardslabs">{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}{% if r.total_sqft %} · {{ r.total_sqft|round|int }} ft²{% endif %}</span>{% endif %}
+          {% if near_ok and r.miles is not none %}<span class="milechip">📍 {{ r.miles|round|int }} mi</span>{% endif %}
+        </span>
       </span>
     </a>
     <div class="cardfoot">{{ addform(r) }}</div>
@@ -146,8 +157,8 @@
       <td>{{ r.thickness }}</td>
       <td class="num muted">{% if r.avg_length and r.avg_width %}{{ r.avg_length|int }}×{{ r.avg_width|int }}{% endif %}</td>
       <td>{{ r.supplier_name }}</td>
-      <td class="muted loc">{{ (r.locations or '').split(',')[:2]|join(', ') }}</td>
-      <td class="num">{{ r.available_slabs or '' }}</td>
+      <td class="muted loc">{{ (r.locations or '').split(',')[:2]|join(', ') }}{% if near_ok and r.miles is not none %} <span class="milechip">{{ r.miles|round|int }} mi</span>{% endif %}</td>
+      <td class="num">{{ r.available_slabs or '' }}{% if r.total_sqft %}<span class="sqft">{{ r.total_sqft|round|int }} ft²</span>{% endif %}</td>
       <td><a class="compare" href="/material?key={{ r.material_key | urlencode }}">all suppliers →</a></td>
       <td>{{ addform(r) }}</td>
     </tr>

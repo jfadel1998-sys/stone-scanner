@@ -22,12 +22,38 @@ API key and no network:
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from pathlib import Path
 from typing import Any
 
 from . import db
+
+EARTH_MI = 3958.8
+
+
+def haversine_mi(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two lat/long points, in miles."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return EARTH_MI * 2 * math.asin(math.sqrt(a))
+
+
+def locations_within(conn, lat: float, lon: float, radius_mi: float) -> dict[str, float]:
+    """Map each stored location within `radius_mi` of (lat, lon) to its distance.
+
+    Keys are lowercased so the caller can match against a slab's raw location text.
+    Only locations we've actually resolved to coordinates can be in range — the
+    rest (internal yard names) are simply never near anything."""
+    out: dict[str, float] = {}
+    for r in conn.execute("SELECT location, lat, lon FROM location_geo WHERE lat IS NOT NULL"):
+        d = haversine_mi(lat, lon, r["lat"], r["lon"])
+        if d <= radius_mi:
+            out[r["location"].strip().lower()] = round(d, 1)
+    return out
 
 # User-editable overrides, e.g. mapping an internal warehouse name to a place.
 # Env-overridable so the packaged app can point at its writable data dir (the
