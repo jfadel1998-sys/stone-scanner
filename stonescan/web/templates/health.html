@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Supplier health — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health" class="active">🩺 Health</a></nav>
+  </div>
+  <div class="stats">{{ stats.materials }} materials · {{ total }} suppliers</div>
+</header>
+
+<div class="material-head">
+  <h1>Supplier health</h1>
+  <p class="hintline muted">How each catalog fared on its last crawl. “Stale” means the last refresh failed but older data is still being served — worth investigating before it goes truly dark.</p>
+</div>
+
+<div class="healthbar">
+  <span class="hstat ok"><b>{{ counts.ok }}</b> healthy</span>
+  <span class="hstat stale"><b>{{ counts.stale }}</b> stale (errored, old data)</span>
+  <span class="hstat broken"><b>{{ counts.broken }}</b> broken (no data)</span>
+  <span class="hstat empty"><b>{{ counts.empty }}</b> empty</span>
+</div>
+
+<table class="materials healthtable">
+  <thead>
+    <tr><th>Status</th><th>Supplier</th><th>Platform</th><th class="num">Materials</th><th class="num">Slabs</th><th>Last crawl</th><th>Last error</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><span class="statuspill {{ r.status }}">{{ {'ok':'OK','stale':'STALE','broken':'BROKEN','empty':'EMPTY'}[r.status] }}</span></td>
+      <td class="name">{{ r.name }}<div class="muted hhost">{{ r.host }}</div></td>
+      <td class="muted">{{ r.provider }}</td>
+      <td class="num">{{ r.item_count or '—' }}</td>
+      <td class="num">{{ r.slab_count or '—' }}</td>
+      <td class="muted">
+        {% if r.age_hours is none %}never{% elif r.age_hours < 1 %}just now
+        {% elif r.age_hours < 48 %}{{ r.age_hours|round|int }}h ago
+        {% else %}{{ (r.age_hours / 24)|round|int }}d ago{% endif %}
+      </td>
+      <td class="muted herr">{{ (r.last_error or '')[:80] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<footer>“Stale” catalogs still show their previous data — a failed refresh doesn't erase what was already indexed. Re-run a crawl (or the Refresh button) to retry them.</footer>
+</body>
+</html>

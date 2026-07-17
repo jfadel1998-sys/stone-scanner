@@ -217,6 +217,22 @@ footer { padding: 20px 22px 40px; color: var(--muted); font-size: 12px; }
 .pvthumb img { width: 100%; height: 100%; object-fit: cover; }
 .hintline { padding: 0 0 8px; font-size: 13px; }
 
+/* supplier health */
+.healthbar { display: flex; gap: 10px; flex-wrap: wrap; padding: 8px 22px 4px; }
+.hstat { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; color: var(--muted); }
+.hstat b { font-size: 18px; color: var(--ink); margin-right: 4px; }
+.hstat.ok { border-color: #b9d3bd; background: #f0f6f1; }
+.hstat.stale { border-color: #e6cf9a; background: #fbf4e4; }
+.hstat.broken { border-color: #e2b4a3; background: #f7ece7; }
+.healthtable td { vertical-align: top; }
+.hhost { font-size: 11px; }
+.herr { font-family: ui-monospace, Consolas, monospace; font-size: 11px; max-width: 320px; }
+.statuspill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .03em; }
+.statuspill.ok { background: #3a5a40; color: #fff; }
+.statuspill.stale { background: #c99a3a; color: #fff; }
+.statuspill.broken { background: #b9552b; color: #fff; }
+.statuspill.empty { background: var(--chip); color: var(--muted); }
+
 /* proximity + project-fit */
 .nearin { width: 120px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; background: #fff; }
 .radsel { padding: 9px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; }

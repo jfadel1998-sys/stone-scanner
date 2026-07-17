@@ -332,6 +332,41 @@ def distinct_locations(conn: sqlite3.Connection) -> list[str]:
     return [r["location"] for r in rows]
 
 
+def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Per-supplier crawl state for the health page.
+
+    `status` separates the cases that matter operationally:
+      ok      — has data, last crawl clean
+      stale   — has data but the last refresh errored (old data still serving)
+      broken  — errored and no data at all
+      empty   — no error, but the catalog returned nothing (may be legitimately empty)
+    """
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    out = []
+    for r in conn.execute(
+        """SELECT host, COALESCE(NULLIF(company,''), host) AS name, item_count,
+                  slab_count, last_crawled, last_error
+           FROM suppliers ORDER BY name"""
+    ):
+        d = dict(r)
+        err = bool(d["last_error"])
+        has = (d["item_count"] or 0) > 0
+        d["status"] = ("ok" if not err else "stale") if has else ("broken" if err else "empty")
+        age_h = None
+        if d["last_crawled"]:
+            try:
+                t = datetime.fromisoformat(d["last_crawled"])
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=timezone.utc)
+                age_h = (now - t).total_seconds() / 3600
+            except ValueError:
+                pass
+        d["age_hours"] = age_h
+        out.append(d)
+    return out
+
+
 def save_location_geo(conn: sqlite3.Connection, location: str, hit: dict | None) -> None:
     """Cache a resolution. `hit` of None records a location that isn't a place."""
     from datetime import datetime, timezone

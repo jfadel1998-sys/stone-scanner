@@ -729,6 +729,27 @@ def gcode_path():
     return OVERRIDES_PATH
 
 
+@app.get("/health", response_class=HTMLResponse)
+def health(request: Request):
+    """Per-supplier crawl health: what's fresh, stale, broken, or empty."""
+    from .. import discover
+    conn = db.connect()
+    rows = db.supplier_health(conn)
+    provider_of = {s["host"]: (s.get("provider") or "stoneprofits")
+                   for s in discover.load_suppliers()}
+    for r in rows:
+        r["provider"] = provider_of.get(r["host"], "stoneprofits")
+    order = {"broken": 0, "stale": 1, "empty": 2, "ok": 3}
+    rows.sort(key=lambda r: (order[r["status"]], -(r["item_count"] or 0)))
+    counts = {k: sum(1 for r in rows if r["status"] == k)
+              for k in ("ok", "stale", "broken", "empty")}
+    stats = db.stats(conn)
+    conn.close()
+    return templates.TemplateResponse(request, "health.html", {
+        "rows": rows, "counts": counts, "stats": stats, "total": len(rows),
+    })
+
+
 @app.get("/watchlist", response_class=HTMLResponse)
 def watchlist(request: Request):
     """Saved searches with live match counts + how many are new arrivals."""
