@@ -408,6 +408,18 @@
       "slug": "graniteworks",
       "name": "Granite Works",
       "provider": "slabcloud"
+    },
+    {
+      "host": "bsi.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "granitecentral.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "qmg.stoneprofitsweb.com",
+      "name": ""
     }
   ]
 }
