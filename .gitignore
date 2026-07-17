@@ -13,7 +13,9 @@ dist/
 stonescan.db
 stonescan.db-journal
 stonescan.db-wal
-data/
+# The app's writable data dir (created next to the exe / project root at runtime).
+# Anchored to root so it does NOT swallow bundled source assets in stonescan/data/.
+/data/
 
 # Logs
 *.log

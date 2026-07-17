@@ -32,6 +32,7 @@ hiddenimports = pw_hidden + wv_hidden + cl_hidden + pn_hidden + gn_hidden + [
 datas = pw_datas + wv_datas + cl_datas + pn_datas + gn_datas + [
     ("stonescan/web/templates", "stonescan/web/templates"),
     ("stonescan/web/static", "stonescan/web/static"),
+    ("stonescan/data/us_zips.json.gz", "stonescan/data"),  # offline zip->coords for proximity
     ("suppliers.json", "seed"),
     ("locations.json", "seed"),
     ("stonescan.db", "seed"),

@@ -9,7 +9,7 @@
 <body>
 <header>
   <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/" class="active">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a></nav>
+    <nav class="topnav"><a href="/" class="active">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a></nav>
   </div>
   <div class="stats">
     {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
@@ -63,7 +63,7 @@
   </select>
   <input type="number" name="min_length" value="{{ min_length }}" placeholder="min L" class="sizein" title="Minimum slab length" min="0" step="1">
   <input type="number" name="min_width" value="{{ min_width }}" placeholder="min W" class="sizein" title="Minimum slab width" min="0" step="1">
-  <input type="search" name="near" value="{{ near }}" placeholder="near (city)" class="nearin" title="Show only material stocked near a city, e.g. Dallas or Charlotte NC">
+  <input type="search" name="near" value="{{ near }}" placeholder="near (city/zip)" class="nearin" title="Show only material stocked near a place — a city (Dallas, Charlotte NC) or a US zip (07030)">
   <select name="radius" title="Search radius" class="radsel">
     {% for r in [50, 100, 150, 300, 500] %}<option value="{{ r }}" {{ 'selected' if radius|string == r|string }}>{{ r }} mi</option>{% endfor %}
   </select>

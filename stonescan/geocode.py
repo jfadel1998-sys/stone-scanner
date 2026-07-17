@@ -67,6 +67,31 @@ _CACHE: dict[str, Any] = {}
 # "Dallas-AMARA", "HG-NJ").
 _SPLIT = re.compile(r"\s*[-–—/|]\s*|\s{2,}")
 _US_STATE_RE = re.compile(r"^(.*?),\s*([A-Za-z]{2})\.?$")
+_ZIP_RE = re.compile(r"^\s*(\d{5})(?:-\d{4})?\s*$")
+_ZIP_PATH = Path(__file__).resolve().parent / "data" / "us_zips.json.gz"
+
+
+def _zips() -> dict[str, list]:
+    """US zip -> [lat, lon, 'City, ST'], from the bundled centroid file (offline)."""
+    if "zips" not in _CACHE:
+        import gzip
+        try:
+            with gzip.open(_ZIP_PATH, "rt", encoding="utf-8") as f:
+                _CACHE["zips"] = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            _CACHE["zips"] = {}
+    return _CACHE["zips"]
+
+
+def resolve_zip(text: str) -> dict | None:
+    """Resolve a US 5-digit zip (or ZIP+4) to {lat, lon, label} from bundled data."""
+    m = _ZIP_RE.match(text or "")
+    if not m:
+        return None
+    z = _zips().get(m.group(1))
+    if not z:
+        return None
+    return {"lat": z[0], "lon": z[1], "label": z[2], "source": "zip"}
 
 
 def load_overrides() -> dict[str, dict]:
@@ -134,7 +159,7 @@ def _label(city: dict) -> str:
 def resolve(location: str) -> dict | None:
     """Resolve one location string to {lat, lon, label, source}, or None.
 
-    source: override | exact | state | parsed | ambiguous
+    source: override | zip | exact | state | parsed | ambiguous
     """
     raw = (location or "").strip()
     if not raw:
@@ -144,6 +169,11 @@ def resolve(location: str) -> dict | None:
     if ov:
         return {"lat": float(ov["lat"]), "lon": float(ov["lon"]),
                 "label": ov.get("label") or raw, "source": "override"}
+
+    # A US zip is unambiguous — resolve it before city-name matching.
+    zhit = resolve_zip(raw)
+    if zhit:
+        return zhit
 
     by_name = _cities()
 
