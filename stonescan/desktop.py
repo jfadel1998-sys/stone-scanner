@@ -168,6 +168,7 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
     asyncio.run(run_all(
         entries, concurrency=4, delay=1.0, headless=True,
         db_path=os.environ["STONESCAN_DB"], with_slabs=with_slabs,
+        retry_errored=True,  # give same-run transient failures a second chance
     ))
 
 

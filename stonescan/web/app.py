@@ -594,6 +594,7 @@ def _run_refresh_job(with_slabs: bool) -> None:
         asyncio.run(run_all(
             disc.load_suppliers(), concurrency=4, delay=1.0, headless=True,
             db_path=str(db.DEFAULT_DB), with_slabs=with_slabs,
+            retry_errored=True,  # give same-run transient failures a second chance
         ))
         conn = db.connect()
         s = db.stats(conn)

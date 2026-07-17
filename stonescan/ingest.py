@@ -107,23 +107,26 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
     return ok, items, slabs
 
 
-async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1.5,
-                  headless: bool = True, db_path: str = "", with_slabs: bool = False,
-                  provider_limit: int = 0) -> None:
-    """Crawl a mixed supplier list, routing each entry to its provider.
+def _errored_hosts(db_path: str, hosts: list[str]) -> set[str]:
+    """Which of `hosts` have a non-empty last_error after a crawl pass."""
+    conn = db.init_db(db_path)
+    ph = ",".join("?" for _ in hosts)
+    rows = conn.execute(
+        f"SELECT host FROM suppliers WHERE last_error IS NOT NULL AND last_error <> '' "
+        f"AND host IN ({ph})", hosts,
+    ).fetchall() if hosts else []
+    conn.close()
+    return {r["host"] for r in rows}
 
-    Every caller that crawls "everything in suppliers.json" must come through here:
-    the list is no longer all Stone Profits, and feeding a UMI/SlabWare entry to the
-    Playwright crawler just produces a confusing "no items returned".
-    """
+
+async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
+                         with_slabs, provider_limit) -> None:
+    """Crawl a mixed entry list once, routing each to Stone Profits or its provider."""
     from . import providers
-
-    db_path = db_path or str(db.DEFAULT_DB)
     sps = [e["host"] for e in entries
            if providers.provider_of(e) == providers.STONEPROFITS]
     other = [e for e in entries
              if providers.provider_of(e) != providers.STONEPROFITS]
-
     if sps:
         print(f"Crawling {len(sps)} Stone Profits catalog(s)...\n")
         await run(sps, concurrency=concurrency, delay=delay, headless=headless,
@@ -136,6 +139,37 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             with_slabs=with_slabs, limit_items=provider_limit)
         print(f"\n  {ok} supplier(s), {items} materials"
               + (f", {slabs} slabs" if with_slabs else ""))
+
+
+async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1.5,
+                  headless: bool = True, db_path: str = "", with_slabs: bool = False,
+                  provider_limit: int = 0, retry_errored: bool = False) -> None:
+    """Crawl a mixed supplier list, routing each entry to its provider.
+
+    Every caller that crawls "everything in suppliers.json" must come through here:
+    the list is no longer all Stone Profits, and feeding a UMI/SlabWare entry to the
+    Playwright crawler just produces a confusing "no items returned".
+
+    `retry_errored` gives anything that failed this run one more headless attempt,
+    which recovers the transient blips (a Cloudflare challenge, a flaky page load)
+    without re-crawling the whole list. Persistent failures just stay flagged.
+    """
+    db_path = db_path or str(db.DEFAULT_DB)
+    await _crawl_entries(entries, concurrency=concurrency, delay=delay,
+                         headless=headless, db_path=db_path, with_slabs=with_slabs,
+                         provider_limit=provider_limit)
+
+    if retry_errored:
+        failed = _errored_hosts(db_path, [e["host"] for e in entries])
+        retry = [e for e in entries if e["host"] in failed]
+        if retry:
+            print(f"\nRetrying {len(retry)} catalog(s) that errored this run...\n")
+            await _crawl_entries(retry, concurrency=concurrency, delay=delay,
+                                 headless=headless, db_path=db_path,
+                                 with_slabs=with_slabs, provider_limit=provider_limit)
+            still = _errored_hosts(db_path, [e["host"] for e in retry])
+            print(f"\n  retry recovered {len(retry) - len(still)} of {len(retry)}; "
+                  f"{len(still)} still failing.")
 
 
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
@@ -218,6 +252,11 @@ def main() -> None:
                     help="Also pre-fetch and cache each in-stock item's full slab gallery (slower).")
     ap.add_argument("--provider-limit", type=int, default=0,
                     help="Cap materials per non-StoneProfits supplier (0 = all; handy for smoke tests).")
+    ap.add_argument("--retry-errored", action="store_true",
+                    help="Crawl ONLY the suppliers whose last crawl errored (a cheap, targeted "
+                         "retry of the health page's failures; pair with --show-browser for Cloudflare).")
+    ap.add_argument("--retry", action="store_true",
+                    help="After the crawl, give anything that errored this run one more attempt.")
     args = ap.parse_args()
 
     if args.discover:
@@ -235,6 +274,19 @@ def main() -> None:
         entries += [{"host": h} for h in want if h not in known]
     if args.limit:
         entries = entries[: args.limit]
+
+    if args.retry_errored:
+        conn = db.init_db(args.db)
+        failed = {r["host"] for r in conn.execute(
+            "SELECT host FROM suppliers WHERE last_error IS NOT NULL AND last_error <> ''"
+        )}
+        conn.close()
+        before = len(entries)
+        entries = [e for e in entries if e["host"] in failed]
+        print(f"Retry mode: {len(entries)} of {before} supplier(s) had a last-crawl error.\n")
+        if not entries:
+            print("Nothing to retry — no errored suppliers.")
+            return
 
     if args.stale_hours:
         from datetime import datetime, timedelta, timezone
@@ -257,6 +309,7 @@ def main() -> None:
             db_path=args.db,
             with_slabs=args.slabs,
             provider_limit=args.provider_limit,
+            retry_errored=args.retry,
         )
     )
 
