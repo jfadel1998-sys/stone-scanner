@@ -273,5 +273,40 @@ class DiscoverExpansionTests(unittest.TestCase):
             importlib.reload(discover)
 
 
+class ProviderParseTests(unittest.TestCase):
+    def test_genericfeed_jsonld_and_price(self):
+        from stonescan.providers import genericfeed as gf
+        html = ('<script type="application/ld+json">'
+                '{"@graph":[{"@type":"Product","name":"Basalto Honed 1x1 Basalt Mosaics",'
+                '"sku":"MS90264","color":"Gray","material":"Basalt",'
+                '"offers":[{"@type":"Offer","priceSpecification":{"0":{"price":"9.19","priceCurrency":"USD"}}}]}]}'
+                '</script>')
+        prods = gf._products(html)
+        self.assertEqual(len(prods), 1)
+        self.assertEqual(prods[0]["name"], "Basalto Honed 1x1 Basalt Mosaics")
+        self.assertEqual(gf._price(prods[0]["offers"]), "$9.19")
+        self.assertEqual(gf._form("Calacatta Gold Slab"), "SLAB")
+        self.assertEqual(gf._form("Basalt Mosaics 12x12"), "MOSAIC")
+
+    def test_genericfeed_robots_and_disallow(self):
+        from stonescan.providers import genericfeed as gf
+        robots = ("User-agent: *\nDisallow: /cart\nDisallow: /*filter_*\n"
+                  "User-agent: BadBot\nDisallow: /\n"
+                  "Sitemap: https://x.com/sitemap_index.xml")
+        sitemaps, disallows = gf._robots(robots)
+        self.assertEqual(sitemaps, ["https://x.com/sitemap_index.xml"])
+        self.assertIn("/cart", disallows)
+        self.assertNotIn("/", disallows)  # BadBot's rule is not for us (User-agent: *)
+        self.assertTrue(gf._disallowed("/cart", disallows))
+        self.assertTrue(gf._disallowed("/shop/filter_color", disallows))
+        self.assertFalse(gf._disallowed("/product/calacatta", disallows))
+
+    def test_unbuilt_price(self):
+        from stonescan.providers import unbuilt
+        self.assertEqual(unbuilt._price(569.72), "$570")
+        self.assertEqual(unbuilt._price(None), "")
+        self.assertEqual(unbuilt._price(0), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -30,6 +30,8 @@ REGISTRY: dict[str, Callable[[], Callable[..., Awaitable[SupplierData]]]] = {
     "slabware": lambda: _load("slabware"),
     "stonetrash": lambda: _load("stonetrash"),
     "slabcloud": lambda: _load("slabcloud"),
+    "unbuilt": lambda: _load("unbuilt"),
+    "genericfeed": lambda: _load("genericfeed"),
 }
 
 
