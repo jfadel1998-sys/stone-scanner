@@ -35,13 +35,13 @@ build/packaging details.
 | Path | Purpose |
 |------|---------|
 | `stonescan/crawler.py` | Playwright crawler — per supplier: creds/contacts, getItemGallery, slab pre-fetch |
-| `stonescan/providers/` | Non-StoneProfits adapters (`umi`, `slabware`, `stonetrash`, `slabcloud`); all plain HTTP. `base.material_row()` is mandatory — it's what keeps `material_key` identical across platforms |
+| `stonescan/providers/` | Non-StoneProfits adapters (`umi`, `slabware`, `stonetrash`, `slabcloud`, `unbuilt`, `genericfeed`); all plain HTTP. `base.material_row()` is mandatory — it's what keeps `material_key` identical across platforms |
 | `stonescan/normalize.py` | Category classifier, cross-supplier `material_key`, color/thickness cleanup |
 | `stonescan/smartsearch.py` | Natural-language query parser ("blue marble slabs" → filters) |
 | `stonescan/db.py` | SQLite schema + all query/storage helpers (materials, slabs, history, watchlist) |
 | `stonescan/ingest.py` | Orchestrator: crawl → normalize → store → history snapshot |
 | `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached) |
-| `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) `probe_sps_vanity()` fingerprints distributor vanity catalogs at `inventory.<distributor>.com` (Pacific Shore, AG&M, Elements Room — drop-in on the default provider, invisible to the subdomain sweep). UMI/StoneTrash single sites stay hand-seeded |
+| `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) distributor **vanity / white-label** Stone Profits catalogs on the distributor's own domain (slabs.nsrstone.com, inventory.acegraniteusa.com, outlet.ckfco.com — drop-in on the default provider, any subdomain prefix, invisible to the subdomain sweep). `discover_sps_embeds()` finds them via urlscan (pages that load a Stone Profits resource → fingerprint-verify); `probe_sps_vanity()` fingerprints `<prefix>.<apex>` over a curated apex list. UMI/StoneTrash single sites stay hand-seeded |
 | `stonescan/geocode.py` | Offline location → lat/long for the pin map (+ `locations.json` overrides) |
 | `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling (also re-applies merges) |
 | `stonescan/dedupe.py` | Data-quality curation: type-conflict + spelling merge candidates, `apply_aliases` fold |
@@ -92,7 +92,14 @@ build/packaging details.
   every deploy (read it from `__NEXT_DATA__`); type comes from `materials_Tags`, since
   `taxonomy` can be just "Tile". **SlabCloud**: list returns one row PER SLAB with the
   count repeated (group by name or slabs inflate); names carry a leading TAB that must
-  be sent back verbatim.
+  be sent back verbatim; the API slug is a tenant's `company:"…"` value **incl. any
+  `_h_` prefix** (dropping it returns a smaller dataset). **Unbuilt** (Cosentino outlet):
+  general surplus marketplace, so query `/api/listings/?q=<brand>` per Cosentino line
+  (dekton/silestone/sensa/scalea) and keep only `category_path` containing "Slab";
+  `/api/listings/` is the one robots-allowed `/api/` path. **genericfeed**: the long-tail
+  provider — robots.txt → sitemap(s) → product pages → schema.org Product JSON-LD, one
+  page fetch per product (bounded by `max_products`), every URL checked against robots
+  `Disallow` before fetch. Product-level only (no live slab qty).
 - **Locations are not addresses.** `slabs.location` is free text: ~56 of 99 are real
   cities, the rest are internal yard names (`KLZ`, `HG-NJ`) or towns below the city
   dataset's ~15k-population floor. `geocode.py` resolves what it can **offline** and

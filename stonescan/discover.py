@@ -23,9 +23,13 @@ SlabCloud can't be DNS-swept (tenants are slugs on one shared origin), but it
 publishes a clients directory — `discover_slabcloud()` reads each tenant's public
 inventory page for its API slug and verifies the public API returns rows.
 
-Stone Profits also powers distributor "vanity" catalogs at `inventory.<distributor>`
-/ `liveinventory.<distributor>` (Triton, Pacific Shore, Francini, AG&M, …) that the
-`*.stoneprofitsweb.com` sweep never sees — `probe_sps_vanity()` fingerprints those.
+Stone Profits also powers distributor "vanity"/white-label catalogs on the
+distributor's OWN domain (e.g. slabs.nsrstone.com, inventory.acegraniteusa.com,
+outlet.ckfco.com) that the `*.stoneprofitsweb.com` sweep never sees. Two finders:
+`discover_sps_embeds()` (urlscan — any domain, any prefix: it lists pages that load a
+Stone Profits resource, then fingerprint-verifies each) and `probe_sps_vanity()`
+(fingerprints `<prefix>.<distributor>` across the common prefixes for a curated apex
+list). Both confirm the platform marker before adding, so false positives are dropped.
 
 UMI / StoneTrash are single sites — seeded by hand.
 
@@ -281,17 +285,26 @@ SPS_VANITY_CANDIDATES: list[str] = [
     "architecturalsurfaces.com", "francinicollection.com", "tritonstone.com",
     "cosmos-surfaces.com", "marbleandgranite.com", "dwyermarble.com",
     "stoneland.com", "walkerzanger.com", "antolini.com", "levantina.com",
+    # found via discover_sps_embeds (urlscan) — kept here so the probe re-confirms them
+    "nsrstone.com", "acegraniteusa.com", "arcadiastones.net", "ohmintl.com",
 ]
 
 
+# Vanity catalogs use varied subdomains, not just "inventory" (seen in the wild:
+# inventory, liveinventory, slabs, catalog, outlet, products, stone, browse).
+_SPS_VANITY_PREFIXES = ("inventory", "liveinventory", "slabs", "catalog",
+                        "outlet", "products", "stone", "browse")
+
+
 def probe_sps_vanity(apexes: list[str], verbose: bool = True) -> set[str]:
-    """Return the inventory.*/liveinventory.* hosts of `apexes` that serve a Stone
-    Profits catalog (fingerprinted in the page HTML)."""
+    """Return the <prefix>.<apex> hosts that serve a Stone Profits catalog
+    (fingerprinted in the page HTML), across the common vanity prefixes."""
     hits: set[str] = set()
     with httpx.Client(follow_redirects=True, headers=_UA, timeout=25) as client:
         for apex in apexes:
             apex = apex.strip().lower().removeprefix("www.")
-            for host in (f"inventory.{apex}", f"liveinventory.{apex}"):
+            for prefix in _SPS_VANITY_PREFIXES:
+                host = f"{prefix}.{apex}"
                 try:
                     r = client.get(f"https://{host}/")
                     if any(mk in r.text for mk in _SPS_MARKERS):
@@ -304,6 +317,41 @@ def probe_sps_vanity(apexes: list[str], verbose: bool = True) -> set[str]:
     return hits
 
 
+# urlscan indexes every domain touched in a scan, so pages that load a Stone Profits
+# resource (from *.stoneprofits.com / *.stoneprofitsweb.com) but live on their OWN
+# domain are vanity / white-label catalogs — findable regardless of subdomain prefix.
+_SPS_API_DOMAINS = ("stoneprofits.com", "stoneprofitsweb.com")
+
+
+def discover_sps_embeds(verbose: bool = True) -> set[str]:
+    """Find vanity/white-label Stone Profits catalogs via urlscan (any domain/prefix),
+    then fingerprint-verify each is a live catalog. Complements probe_sps_vanity's
+    prefix guessing — this needs no candidate apex list at all."""
+    candidates: set[str] = set()
+    hits: set[str] = set()
+    with httpx.Client(follow_redirects=True, headers=_UA, timeout=45) as client:
+        for apex in _SPS_API_DOMAINS:
+            try:
+                data = client.get("https://urlscan.io/api/v1/search/",
+                                  params={"q": f"domain:{apex}", "size": 10000}).json()
+            except Exception:  # noqa: BLE001
+                continue
+            for res in data.get("results", []):
+                pd = ((res.get("page") or {}).get("domain") or "").lower()
+                if pd and "stoneprofits" not in pd:
+                    candidates.add(pd)
+        for host in sorted(candidates):
+            try:
+                r = client.get(f"https://{host}/", timeout=20)
+                if any(mk in r.text for mk in _SPS_MARKERS):
+                    hits.add(host)
+                    if verbose:
+                        print(f"  + {host}  (Stone Profits)")
+            except Exception:  # noqa: BLE001
+                continue
+    return hits
+
+
 if __name__ == "__main__":
     print("Discovering public catalogs across "
           + ", ".join(p["base"] for p in PLATFORMS) + " ...")
@@ -313,8 +361,10 @@ if __name__ == "__main__":
     print("\nResolving SlabCloud tenants from the clients directory...")
     sc = discover_slabcloud()
     added += merge_slabcloud(sc)
-    print("\nFingerprinting distributor vanity domains for Stone Profits catalogs...")
-    vanity = probe_sps_vanity(SPS_VANITY_CANDIDATES)
+    print("\nFinding white-label Stone Profits catalogs via urlscan (any domain)...")
+    vanity = discover_sps_embeds()
+    print("Fingerprinting distributor vanity domains for Stone Profits catalogs...")
+    vanity |= probe_sps_vanity(SPS_VANITY_CANDIDATES)
     added += merge_discovered({h: None for h in vanity})
     print(f"\nAdded {added} new supplier(s) to suppliers.json "
           f"(now {len(load_suppliers())} total).")

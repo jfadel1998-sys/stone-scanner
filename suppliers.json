@@ -474,6 +474,42 @@
     {
       "host": "inventory.pacificshorestones.com",
       "name": ""
+    },
+    {
+      "host": "unbuilt.co",
+      "name": "Unbuilt (Cosentino outlet)",
+      "provider": "unbuilt"
+    },
+    {
+      "host": "www.marblesystems.com",
+      "name": "Marble Systems",
+      "provider": "genericfeed",
+      "product_pattern": "/product/",
+      "max_products": 800
+    },
+    {
+      "host": "inventory.acegraniteusa.com",
+      "name": ""
+    },
+    {
+      "host": "inventory.arcadiastones.net",
+      "name": ""
+    },
+    {
+      "host": "inventory.ckfco.com",
+      "name": ""
+    },
+    {
+      "host": "inventory.ohmintl.com",
+      "name": ""
+    },
+    {
+      "host": "outlet.ckfco.com",
+      "name": ""
+    },
+    {
+      "host": "slabs.nsrstone.com",
+      "name": ""
     }
   ]
 }
