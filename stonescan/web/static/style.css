@@ -329,6 +329,11 @@ footer { padding: 20px 22px 40px; color: var(--muted); font-size: 12px; }
 .cardslabs { display: inline-block; margin-top: 6px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 600; }
 .cardgrid .empty { grid-column: 1 / -1; }
 
+/* search by photo */
+.photo-head { display: flex; gap: 16px; align-items: center; padding: 10px 22px 0; }
+.query-img { width: 116px; height: 116px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); flex: 0 0 auto; }
+.matchchip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; }
+
 .materials tr.self { background: var(--accent-soft); }
 .here, .new { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; vertical-align: middle; }
 .here { background: var(--accent); color: #fff; }

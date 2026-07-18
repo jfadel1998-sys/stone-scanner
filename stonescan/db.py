@@ -134,6 +134,15 @@ CREATE TABLE IF NOT EXISTS merge_rejections (
     created_at  TEXT
 );
 
+-- Search-by-photo: one CLIP embedding per distinct catalog image. Keyed on the image
+-- URL so a re-crawl that keeps the same image reuses its vector (no re-embed). `vec`
+-- is a raw float32 blob; `imagesearch` reads it back with numpy.
+CREATE TABLE IF NOT EXISTS image_vectors (
+    image_url   TEXT PRIMARY KEY,
+    vec         BLOB NOT NULL,
+    updated_at  TEXT
+);
+
 -- Resolved coordinates per distinct slab location. A row with NULL lat/lon means
 -- "we looked and it isn't a place" (an internal warehouse name), which is cached
 -- so the map doesn't retry it every load.

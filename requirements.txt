@@ -5,3 +5,6 @@ jinja2>=3.1
 python-multipart>=0.0.9
 geonamescache>=2.0  # offline city coords for the location map
 httpx>=0.27
+onnxruntime>=1.17  # search-by-photo: run the CLIP image encoder on CPU
+pillow>=10.0       # search-by-photo: image decode/preprocess
+numpy>=1.24        # search-by-photo: vector math

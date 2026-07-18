@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search by photo — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/photo" class="active">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
+  </div>
+  <div class="stats">{{ index.indexed }} of {{ index.images_total }} images indexed</div>
+</header>
+
+<div class="material-head">
+  <h1>Search by photo</h1>
+  <p class="hintline muted">Upload a photo of a slab, a countertop, or an inspiration image — CLIP finds the catalog materials that <em>look</em> like it (pattern, veining, tone), across every supplier.</p>
+</div>
+
+{% if not model_ready %}
+<div class="block"><p class="okchip warn">The image-search model isn't installed in this build. Add <code>stonescan/models/clip/clip_vision.onnx</code> and rebuild.</p></div>
+{% endif %}
+
+<form class="filters" method="post" action="/photo" enctype="multipart/form-data">
+  <input type="file" name="photo" accept="image/*" required
+         style="flex:1 1 320px; padding:8px; border:1px solid var(--line); border-radius:8px; background:#fff;">
+  <select name="material_type" title="Restrict to one material type">
+    <option value="">Any type</option>
+    {% for t in types %}<option value="{{ t }}" {{ 'selected' if t == material_type }}>{{ t }}</option>{% endfor %}
+  </select>
+  <button type="submit" {{ 'disabled' if not model_ready }}>Find similar</button>
+</form>
+
+{% if queried %}
+  {% if error %}
+    <div class="block"><p class="okchip warn">{{ error }}</p></div>
+  {% else %}
+    <div class="photo-head">
+      {% if query_uri %}<img class="query-img" src="{{ query_uri }}" alt="your photo">{% endif %}
+      <div class="resultcount">{{ results|length }} visual match{{ '' if results|length == 1 else 'es' }}
+        {% if material_type %}· {{ material_type }}{% endif %}
+        {% if index.indexed < index.images_total %}<span class="muted">· searching {{ index.indexed }} indexed images (index still building)</span>{% endif %}
+      </div>
+    </div>
+    <div class="cardgrid">
+    {% for r in results %}
+      <a class="matcard" href="/item?id={{ r.id }}">
+        {% if r.image_url %}<img src="{{ r.image_url }}" loading="lazy" onerror="this.classList.add('broken')">{% else %}<div class="cardph">🪨</div>{% endif %}
+        <span class="cardmeta">
+          <b>{{ r.item_name }}</b>
+          <span class="cardsup">{{ r.supplier_name }}</span>
+          <span class="cardspec">{{ [r.material_type, r.color, r.thickness]|select|join(' · ') }}</span>
+          <span class="cardstats">
+            <span class="matchchip">{{ r.match }}% match</span>
+            {% if r.available_slabs %}<span class="cardslabs">{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}</span>{% endif %}
+            <a class="compare" href="/material?key={{ r.material_key | urlencode }}">all suppliers →</a>
+          </span>
+        </span>
+      </a>
+    {% else %}
+      <p class="empty">No visual matches{% if index.indexed == 0 %} — the image index is empty. Run <code>python -m stonescan.imagesearch --index</code>.{% endif %}.</p>
+    {% endfor %}
+    </div>
+  {% endif %}
+{% else %}
+  <div class="block"><p class="muted">Tip: a clear, well-lit photo of the stone surface works best. You can narrow to a material type before searching.</p></div>
+{% endif %}
+
+<footer>Matches are ranked by CLIP visual-embedding similarity over the indexed catalog images ({{ index.indexed }} of {{ index.images_total }} indexed). The index grows as more catalog photos are embedded.</footer>
+</body>
+</html>

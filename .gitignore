@@ -13,6 +13,9 @@ dist/
 stonescan.db
 stonescan.db-journal
 stonescan.db-wal
+
+# CLIP search-by-photo model (~81MB; fetch with `python -m stonescan.imagesearch --download-model`)
+stonescan/models/**/*.onnx
 # The app's writable data dir (created next to the exe / project root at runtime).
 # Anchored to root so it does NOT swallow bundled source assets in stonescan/data/.
 /data/

@@ -14,9 +14,12 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 pw_datas, pw_binaries, pw_hidden = collect_all("playwright")
 gn_datas, gn_binaries, gn_hidden = collect_all("geonamescache")  # offline city coords for the map
 wv_datas, wv_binaries, wv_hidden = collect_all("webview")       # pywebview (native window)
+ort_datas, ort_binaries, ort_hidden = collect_all("onnxruntime")  # CLIP image search (search-by-photo)
 
 # Cross-platform base collections (backend-agnostic).
-base_hidden = pw_hidden + wv_hidden + gn_hidden + [
+base_hidden = pw_hidden + wv_hidden + gn_hidden + ort_hidden + [
+    # search-by-photo (imagesearch.py imports these lazily, so name them explicitly)
+    "onnxruntime", "PIL", "PIL.Image", "numpy",
     "uvicorn.logging",
     "uvicorn.loops", "uvicorn.loops.auto", "uvicorn.loops.asyncio",
     "uvicorn.protocols", "uvicorn.protocols.http", "uvicorn.protocols.http.auto",
@@ -32,15 +35,16 @@ base_hidden = pw_hidden + wv_hidden + gn_hidden + [
     "stonescan.providers.umi", "stonescan.providers.slabware",
     "stonescan.providers.stonetrash", "stonescan.providers.slabcloud",
 ]
-base_datas = pw_datas + wv_datas + gn_datas + [
+base_datas = pw_datas + wv_datas + gn_datas + ort_datas + [
     ("stonescan/web/templates", "stonescan/web/templates"),
     ("stonescan/web/static", "stonescan/web/static"),
     ("stonescan/data/us_zips.json.gz", "stonescan/data"),  # offline zip->coords for proximity
+    ("stonescan/models/clip/clip_vision.onnx", "stonescan/models/clip"),  # search-by-photo model
     ("suppliers.json", "seed"),
     ("locations.json", "seed"),
     ("stonescan.db", "seed"),
 ]
-base_binaries = pw_binaries + wv_binaries + gn_binaries
+base_binaries = pw_binaries + wv_binaries + gn_binaries + ort_binaries
 
 if sys.platform == "win32":
     # .NET / WebView2 bridge — Windows only.

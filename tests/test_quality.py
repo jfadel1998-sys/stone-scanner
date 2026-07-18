@@ -308,5 +308,60 @@ class ProviderParseTests(unittest.TestCase):
         self.assertEqual(unbuilt._price(0), "")
 
 
+class ImageSearchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.conn = db.init_db(os.path.join(self.tmp, "t.db"))
+        _seed_suppliers(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_vec_roundtrip(self):
+        import numpy as np
+        from stonescan import imagesearch as ims
+        v = np.arange(ims.DIM, dtype=np.float32)
+        self.assertTrue(np.array_equal(ims._bytes_vec(ims._vec_bytes(v)), v))
+
+    def test_preprocess_shape(self):
+        from PIL import Image
+        from stonescan import imagesearch as ims
+        arr = ims._preprocess(Image.new("RGB", (100, 40), (120, 90, 60)))
+        self.assertEqual(arr.shape, (1, 3, 224, 224))
+        self.assertEqual(str(arr.dtype), "float32")
+
+    def test_search_ranks_by_cosine(self):
+        import numpy as np
+        from stonescan import imagesearch as ims
+        # three materials, three unit vectors; query is nearest to material B
+        vecs = {"http://a": [1, 0, 0], "http://b": [0, 1, 0], "http://c": [0, 0, 1]}
+        for i, (url, base) in enumerate(vecs.items(), 1):
+            v = np.zeros(ims.DIM, dtype=np.float32); v[:3] = base
+            self.conn.execute(
+                """INSERT INTO materials (supplier_id, item_id, item_name, name_norm,
+                     material_key, material_type, image_url, available_slabs)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (i, f"it{i}", f"Stone {url[-1].upper()}", "X", f"stone {url[-1]}|granite",
+                 "Granite", url, 1))
+            self.conn.execute("INSERT INTO image_vectors (image_url, vec) VALUES (?,?)",
+                              (url, ims._vec_bytes(v)))
+        self.conn.commit()
+        ims._invalidate_cache()
+        q = np.zeros(ims.DIM, dtype=np.float32); q[:3] = [0.1, 0.9, 0.0]
+        res = ims.search(self.conn, q, top_k=3)
+        self.assertEqual(res[0]["image_url"], "http://b")   # nearest wins
+        self.assertGreater(res[0]["score"], res[-1]["score"])
+
+    @unittest.skipUnless(__import__("stonescan.imagesearch", fromlist=["available"]).available(),
+                         "CLIP model not present")
+    def test_embed_is_unit_512(self):
+        import numpy as np
+        from PIL import Image
+        from stonescan import imagesearch as ims
+        v = ims.embed_image(Image.new("RGB", (64, 64), (200, 180, 150)))
+        self.assertEqual(v.shape, (ims.DIM,))
+        self.assertAlmostEqual(float(np.linalg.norm(v)), 1.0, places=3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

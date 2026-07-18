@@ -14,12 +14,12 @@ import re
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Query, Request
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import db, dedupe, geocode, slabs, smartsearch
+from .. import db, dedupe, geocode, imagesearch, slabs, smartsearch
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Stone Scanner")
@@ -660,6 +660,50 @@ def api_search(
                          "near": near_label if origin else None,
                          "near_unresolved": bool(near) and not origin,
                          "interpreted": smartsearch.summary(parsed) if q else []})
+
+
+@app.get("/photo", response_class=HTMLResponse)
+def photo_page(request: Request, material_type: str = ""):
+    """Search-by-photo: upload a stone photo, get visually-similar catalog materials."""
+    conn = db.connect()
+    ctx = {
+        "request": request, "results": [], "queried": False, "error": "", "query_uri": "",
+        "material_type": material_type, "model_ready": imagesearch.available(),
+        "index": imagesearch.index_stats(conn), "types": _distinct(conn, "material_type"),
+        "stats": db.stats(conn),
+    }
+    conn.close()
+    return templates.TemplateResponse(request, "photo.html", ctx)
+
+
+@app.post("/photo", response_class=HTMLResponse)
+async def photo_search(request: Request, photo: UploadFile = File(...),
+                       material_type: str = Form("")):
+    import base64
+    conn = db.connect()
+    results, error, query_uri = [], "", ""
+    if not imagesearch.available():
+        error = "The image-search model isn't installed in this build."
+    else:
+        try:
+            data = await photo.read()
+            query_uri = "data:{};base64,{}".format(
+                photo.content_type or "image/jpeg", base64.b64encode(data).decode())
+            qvec = await asyncio.to_thread(imagesearch.embed_bytes, data)  # CPU work off the loop
+            results = imagesearch.search(conn, qvec, top_k=60, material_type=material_type)
+            # CLIP cosine sits ~0.5–1.0; rescale to a friendlier 0–100 "match" for display.
+            for r in results:
+                r["match"] = max(0, min(100, round((r["score"] - 0.5) * 200)))
+        except Exception as e:  # noqa: BLE001 - never 500 the page over a bad upload
+            error = f"Couldn't read that image: {e}"
+    ctx = {
+        "request": request, "results": results, "queried": True, "error": error,
+        "query_uri": query_uri, "material_type": material_type,
+        "model_ready": imagesearch.available(), "index": imagesearch.index_stats(conn),
+        "types": _distinct(conn, "material_type"), "stats": db.stats(conn),
+    }
+    conn.close()
+    return templates.TemplateResponse(request, "photo.html", ctx)
 
 
 def _restock_since_last(conn) -> list[dict]:
