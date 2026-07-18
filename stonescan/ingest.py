@@ -171,6 +171,15 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             print(f"\n  retry recovered {len(retry) - len(still)} of {len(retry)}; "
                   f"{len(still)} still failing.")
 
+    # Re-apply curator-confirmed merges LAST: every crawl (and retry) recomputes
+    # material_key from scratch, so without this each /quality merge silently undoes.
+    conn = db.init_db(db_path)
+    folded = db.apply_aliases(conn)
+    n_aliases = db.quality_stats(conn)["aliases"]
+    conn.close()
+    if folded:
+        print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
+
 
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
               db_path: str, with_slabs: bool = False) -> None:
@@ -261,7 +270,7 @@ def main() -> None:
 
     if args.discover:
         print("Discovering public catalogs...")
-        found = discover.discover_hosts()
+        found = discover.discover_all()
         added = discover.merge_discovered(found)
         print(f"  found {len(found)} candidates, added {added} new.\n")
 

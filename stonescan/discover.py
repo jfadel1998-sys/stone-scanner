@@ -1,10 +1,11 @@
-"""Discover *public* Stone Profits catalogs as exhaustively as possible.
+"""Discover *public* catalogs as exhaustively as possible, across every platform
+whose tenants live on enumerable wildcard subdomains.
 
-Tenants can't be enumerated from certificate transparency (the platform serves a
+Tenants can't be listed from certificate transparency alone (platforms serve a
 single wildcard cert), so we aggregate subdomains that public internet-scanning
-and passive-DNS services have *already observed*, then let the crawler decide
-which ones actually expose a public catalog (private/login-gated tenants simply
-return no items and are skipped).
+and passive-DNS services have *already observed*, then let the crawler decide which
+ones actually expose a public catalog (private/login-gated tenants simply return no
+items and are skipped — the /discovery page surfaces those for triage).
 
 Sources (all free, no API key):
   * crt.sh                — certificate transparency
@@ -14,7 +15,16 @@ Sources (all free, no API key):
   * subdomain.center      — aggregated subdomains
   * DuckDuckGo (HTML)     — search fallback (indexed public catalogs)
 
-Discovered hosts are merged into suppliers.json; your manual entries are kept.
+Platforms we CAN enumerate this way (multi-tenant on real subdomains):
+  * Stone Profits  <tenant>.stoneprofitsweb.com   (provider: default)
+  * SlabWare       <tenant>.slabware.com          (provider: slabware)
+
+Platforms we deliberately DON'T sweep: SlabCloud tenants are slugs on one origin
+(their subdomains mostly don't resolve), and UMI / StoneTrash are single sites —
+none are subdomain-enumerable, so they stay seeded by hand in suppliers.json.
+
+Discovered hosts are merged into suppliers.json (tagged with their provider); your
+manual entries are kept.
 """
 
 from __future__ import annotations
@@ -27,60 +37,77 @@ from pathlib import Path
 import httpx
 
 SUPPLIERS_FILE = Path(os.environ.get("STONESCAN_SUPPLIERS") or (Path(__file__).resolve().parent.parent / "suppliers.json"))
-BASE_DOMAIN = "stoneprofitsweb.com"
-HOST_RE = re.compile(r"([a-z0-9][a-z0-9-]*\." + re.escape(BASE_DOMAIN) + r")", re.IGNORECASE)
-_SKIP = {"www." + BASE_DOMAIN, "pay." + BASE_DOMAIN, "www.pay." + BASE_DOMAIN, BASE_DOMAIN}
+
+# provider=None means Stone Profits (the default; written without a "provider" key).
+# `skip` are subdomain labels that are platform infrastructure, not tenants.
+PLATFORMS: list[dict] = [
+    {"base": "stoneprofitsweb.com", "provider": None,
+     "skip": {"www", "pay", "apps", "nwww"}},
+    {"base": "slabware.com", "provider": "slabware",
+     "skip": {"www", "app", "api", "admin", "portal", "static", "cdn", "mail", "blog"}},
+]
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; StoneScanner/0.1; +public-catalog indexer)"}
 
 
-def _hosts_in(text: str) -> set[str]:
-    return {m.group(1).lower() for m in HOST_RE.finditer(text or "")} - _SKIP
+def _host_re(base: str) -> re.Pattern:
+    # Trailing (?![a-z0-9.-]) so the base must END the host: without it,
+    # "x.slabware.company" (next char 'p') or "x.slabware.com.br" (next char '.')
+    # would each yield a spurious "x.slabware.com" for a different registrable domain.
+    return re.compile(r"([a-z0-9][a-z0-9-]*\." + re.escape(base) + r")(?![a-z0-9.-])",
+                      re.IGNORECASE)
 
 
-def _crtsh(client: httpx.Client) -> set[str]:
-    r = client.get(f"https://crt.sh/?q=%25.{BASE_DOMAIN}&output=json", timeout=30)
-    return _hosts_in(r.text)
+def _is_infra(label: str, skip: set[str]) -> bool:
+    """A subdomain label is platform infrastructure if it exactly matches a skip
+    token or is one of its dashed variants (so 'api' also drops 'api-exporter')."""
+    return any(label == s or label.startswith(s + "-") for s in skip)
 
 
-def _otx(client: httpx.Client) -> set[str]:
-    url = f"https://otx.alienvault.com/api/v1/indicators/domain/{BASE_DOMAIN}/passive_dns"
-    r = client.get(url, timeout=30)
-    return _hosts_in(r.text)
+def _hosts_in(text: str, base: str, skip: set[str]) -> set[str]:
+    hosts = {m.group(1).lower() for m in _host_re(base).finditer(text or "")}
+    # Drop the bare apex and any platform-infrastructure labels.
+    return {h for h in hosts if h != base and not _is_infra(h.split(".", 1)[0], skip)}
 
 
-def _urlscan(client: httpx.Client) -> set[str]:
-    url = f"https://urlscan.io/api/v1/search/?q=domain:{BASE_DOMAIN}&size=10000"
-    r = client.get(url, timeout=30)
-    return _hosts_in(r.text)
+# Each source returns the raw response text for a base domain; host extraction is
+# done uniformly by the caller so a new platform needs no per-source changes.
+def _crtsh(client: httpx.Client, base: str) -> str:
+    return client.get(f"https://crt.sh/?q=%25.{base}&output=json", timeout=30).text
 
 
-def _hackertarget(client: httpx.Client) -> set[str]:
-    r = client.get(f"https://api.hackertarget.com/hostsearch/?q={BASE_DOMAIN}", timeout=30)
-    return _hosts_in(r.text)
+def _otx(client: httpx.Client, base: str) -> str:
+    url = f"https://otx.alienvault.com/api/v1/indicators/domain/{base}/passive_dns"
+    return client.get(url, timeout=30).text
 
 
-def _subdomain_center(client: httpx.Client) -> set[str]:
-    r = client.get(f"https://api.subdomain.center/?domain={BASE_DOMAIN}", timeout=45)
-    return _hosts_in(r.text)
+def _urlscan(client: httpx.Client, base: str) -> str:
+    return client.get(f"https://urlscan.io/api/v1/search/?q=domain:{base}&size=10000", timeout=30).text
 
 
-_DDG_QUERIES = [
-    "site:stoneprofitsweb.com granite marble quartz",
-    "site:stoneprofitsweb.com slabs inventory",
-    '"stoneprofitsweb.com" quartzite supplier stone',
-]
+def _hackertarget(client: httpx.Client, base: str) -> str:
+    return client.get(f"https://api.hackertarget.com/hostsearch/?q={base}", timeout=30).text
 
 
-def _duckduckgo(client: httpx.Client) -> set[str]:
-    hosts: set[str] = set()
-    for q in _DDG_QUERIES:
+def _subdomain_center(client: httpx.Client, base: str) -> str:
+    return client.get(f"https://api.subdomain.center/?domain={base}", timeout=45).text
+
+
+def _duckduckgo(client: httpx.Client, base: str) -> str:
+    """Search fallback: concatenate a few indexed-catalog queries' HTML."""
+    queries = [
+        f"site:{base} granite marble quartz",
+        f"site:{base} slabs inventory",
+        f'"{base}" quartzite supplier stone',
+    ]
+    out = []
+    for q in queries:
         try:
-            r = client.post("https://html.duckduckgo.com/html/", data={"q": q}, headers=_UA, timeout=25)
-            hosts |= _hosts_in(r.text)
+            out.append(client.post("https://html.duckduckgo.com/html/",
+                                    data={"q": q}, headers=_UA, timeout=25).text)
         except Exception as e:  # noqa: BLE001
             print(f"    ddg '{q[:28]}...' failed: {e}")
-    return hosts
+    return "\n".join(out)
 
 
 _SOURCES = [
@@ -93,20 +120,36 @@ _SOURCES = [
 ]
 
 
-def discover_hosts(verbose: bool = True) -> set[str]:
+def discover_platform(platform: dict, verbose: bool = True) -> set[str]:
+    """All hosts observed for one platform's base domain."""
+    base, skip = platform["base"], platform["skip"]
     found: set[str] = set()
     with httpx.Client(follow_redirects=True, headers=_UA) as client:
         for name, fn in _SOURCES:
             try:
-                hosts = fn(client)
+                hosts = _hosts_in(fn(client, base), base, skip)
                 new = hosts - found
                 found |= hosts
                 if verbose:
-                    print(f"  {name:<18} {len(hosts):>4} hosts ({len(new)} new)")
+                    print(f"  [{base}] {name:<18} {len(hosts):>4} hosts ({len(new)} new)")
             except Exception as e:  # noqa: BLE001
                 if verbose:
-                    print(f"  {name:<18} failed: {e}")
+                    print(f"  [{base}] {name:<18} failed: {e}")
     return found
+
+
+def discover_all(verbose: bool = True) -> dict[str, str | None]:
+    """Sweep every enumerable platform. Returns {host: provider_or_None}."""
+    out: dict[str, str | None] = {}
+    for platform in PLATFORMS:
+        for host in discover_platform(platform, verbose=verbose):
+            out[host] = platform["provider"]
+    return out
+
+
+# Back-compat: the original single-platform Stone Profits sweep.
+def discover_hosts(verbose: bool = True) -> set[str]:
+    return discover_platform(PLATFORMS[0], verbose=verbose)
 
 
 def load_suppliers() -> list[dict]:
@@ -114,24 +157,36 @@ def load_suppliers() -> list[dict]:
     return data.get("suppliers", [])
 
 
-def merge_discovered(hosts: set[str]) -> int:
+def merge_discovered(hosts: dict[str, str | None] | set[str]) -> int:
+    """Add newly-discovered hosts to suppliers.json, tagged with their provider.
+
+    Accepts either a {host: provider} map (from discover_all) or a bare set of
+    Stone Profits hosts (from the legacy discover_hosts), for back-compat.
+    """
+    if isinstance(hosts, set):
+        hosts = {h: None for h in hosts}
     data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
     existing = {s["host"].lower() for s in data.get("suppliers", [])}
     added = 0
-    for h in sorted(hosts):
-        if h.lower() not in existing:
-            data["suppliers"].append({"host": h, "name": ""})
-            existing.add(h.lower())
-            added += 1
+    for host, provider in sorted(hosts.items()):
+        if host.lower() in existing:
+            continue
+        entry: dict = {"host": host, "name": ""}
+        if provider:
+            entry["provider"] = provider
+        data["suppliers"].append(entry)
+        existing.add(host.lower())
+        added += 1
     if added:
         SUPPLIERS_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return added
 
 
 if __name__ == "__main__":
-    print(f"Discovering public catalogs on *.{BASE_DOMAIN} ...")
-    hosts = discover_hosts()
-    print(f"\nTotal distinct hosts discovered: {len(hosts)}")
-    added = merge_discovered(hosts)
+    print("Discovering public catalogs across "
+          + ", ".join(p["base"] for p in PLATFORMS) + " ...")
+    found = discover_all()
+    print(f"\nTotal distinct hosts discovered: {len(found)}")
+    added = merge_discovered(found)
     print(f"Added {added} new supplier(s) to suppliers.json "
           f"(now {len(load_suppliers())} total).")

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Discovery — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery" class="active">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
+  </div>
+  <div class="stats">{{ total }} candidates · {{ counts.live }} live</div>
+</header>
+
+<div class="material-head">
+  <h1>Discovery triage</h1>
+  <p class="hintline muted">Every catalog in <code>suppliers.json</code> by what a crawl actually found. Discovery casts a wide net (<code>python -m stonescan.discover</code> sweeps <b>Stone Profits</b> and <b>SlabWare</b> subdomains); this page is where you tell the keepers from the private/dead ones.</p>
+</div>
+
+<div class="healthbar">
+  <span class="hstat"><b>{{ counts.unprobed }}</b> unprobed</span>
+  <span class="hstat ok"><b>{{ counts.live }}</b> live catalogs</span>
+  <span class="hstat"><b>{{ counts.empty }}</b> empty (private/dead)</span>
+  <span class="hstat broken"><b>{{ counts.broken }}</b> errored</span>
+</div>
+
+<div class="block">
+  <h2>By platform</h2>
+  <table class="materials" style="width:auto; min-width:min(560px, calc(100% - 44px));">
+    <thead><tr><th>Platform</th><th class="num">Candidates</th><th class="num">Live</th><th class="num">Materials</th></tr></thead>
+    <tbody>
+    {% for p in by_provider %}
+      <tr><td class="name">{{ p.provider }}</td><td class="num">{{ p.total }}</td><td class="num">{{ p.live }}</td><td class="num">{{ p.materials }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if cats.unprobed %}
+<div class="block">
+  <h2>Unprobed candidates <span class="qbadge">{{ counts.unprobed }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Newly discovered, never crawled. Probe them to see which expose a public catalog:</p>
+  <pre class="rfqbody" style="margin:0 0 10px; white-space:pre-wrap;">python -m stonescan.ingest --only {{ unprobed_hosts }} --slabs</pre>
+  <table class="materials healthtable">
+    <thead><tr><th>Host</th><th>Platform</th></tr></thead>
+    <tbody>
+    {% for r in cats.unprobed %}
+      <tr><td class="name">{{ r.host }}</td><td class="muted">{{ r.provider }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if cats.empty %}
+<div class="block">
+  <h2>Empty — private or dead <span class="qbadge">{{ counts.empty }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Crawled cleanly but returned no items — almost always a login-gated tenant or a retired catalog. Candidates to prune from <code>suppliers.json</code>.</p>
+  <table class="materials healthtable">
+    <thead><tr><th>Host</th><th>Platform</th><th>Last crawl</th></tr></thead>
+    <tbody>
+    {% for r in cats.empty %}
+      <tr><td class="name">{{ r.host }}</td><td class="muted">{{ r.provider }}</td><td class="muted">{{ (r.last_crawled or '—')[:10] }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if cats.broken %}
+<div class="block">
+  <h2>Errored <span class="qbadge">{{ counts.broken }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Failed on the last crawl (Cloudflare, a moved <code>buildId</code>, a network blip). Retry with <code>--retry-errored</code>; see <a href="/health">Health</a> for details.</p>
+  <table class="materials healthtable">
+    <thead><tr><th>Host</th><th>Platform</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for r in cats.broken %}
+      <tr><td class="name">{{ r.host }}</td><td class="muted">{{ r.provider }}</td><td class="muted herr">{{ r.error[:80] }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="block">
+  <h2>Live catalogs <span class="qbadge">{{ counts.live }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Publicly published and indexed. Full operational detail on the <a href="/health">Health</a> page.</p>
+  <div class="locgrid" style="padding:0;">
+  {% for r in cats.live[:60] %}
+    <div class="loccard"><b>{{ r.name or r.host }}</b><span>{{ r.items }} materials · {{ r.slabs }} slabs</span><span class="muted">{{ r.provider }}</span></div>
+  {% endfor %}
+  </div>
+  {% if counts.live > 60 %}<p class="muted" style="padding:8px 0;">…and {{ counts.live - 60 }} more.</p>{% endif %}
+</div>
+
+<footer>Discovery is deliberately wide: it adds every observed subdomain as a candidate, then a crawl reveals which are real public catalogs. Nothing here is auto-pruned — pruning <code>suppliers.json</code> stays a human decision.</footer>
+</body>
+</html>

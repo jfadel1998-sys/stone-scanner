@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data quality — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality" class="active">🧹 Quality</a></nav>
+  </div>
+  <div class="stats">{{ qs.materials }} materials · {{ qs.unique_materials }} unique</div>
+</header>
+
+<div class="material-head">
+  <h1>Data quality</h1>
+  <p class="hintline muted">The catalog only compares across suppliers as well as its grouping is clean. Below: where the same stone is still split apart, and what's left to tidy. Confirmed merges survive every re-crawl.</p>
+</div>
+
+<div class="inv-box" style="padding:0 22px;">
+  <div class="inv-stat"><b>{{ qs.unique_materials }}</b><span>unique materials</span></div>
+  <div class="inv-stat"><b>{{ n_conflicts }}</b><span>type conflicts</span></div>
+  <div class="inv-stat"><b>{{ n_fuzzy }}</b><span>spelling variants</span></div>
+  <div class="inv-stat"><b>{{ qs.other }}</b><span>in “Other”</span></div>
+  <div class="inv-stat"><b>{{ qs.no_color }}</b><span>no colour</span></div>
+  <div class="inv-stat"><b>{{ qs.aliases }}</b><span>merges applied</span></div>
+</div>
+
+<div class="qgrid">
+  <div class="qcard">
+    <div class="qcard-head">
+      <h2>Type conflicts <span class="qbadge">{{ n_conflicts }}</span></h2>
+      <a class="btn" href="/quality/merge?kind=conflict">Review →</a>
+    </div>
+    <p class="muted qdesc">The same stone sold under different material types by different suppliers ("Taj Mahal" as quartzite <em>and</em> granite) never groups together. These are the highest-impact merges.</p>
+    {% for c in conflict_preview %}
+      <div class="qprev">
+        {% if c.image_url %}<img class="qthumb" src="{{ c.image_url }}" loading="lazy" onerror="this.classList.add('noimg')">{% else %}<span class="qthumb noimg"></span>{% endif %}
+        <div class="qprev-body">
+          <b>{{ c.display }}</b>
+          <div class="qchips">
+            {% for m in c.members %}<span class="qchip {{ 'canon' if m.mk == c.canonical_key }}">{{ m.mt or 'Other' }} ×{{ m.suppliers }}</span>{% endfor %}
+          </div>
+        </div>
+      </div>
+    {% else %}<p class="muted">Nothing left to review — every conflict is resolved. 🎉</p>{% endfor %}
+  </div>
+
+  <div class="qcard">
+    <div class="qcard-head">
+      <h2>Spelling variants <span class="qbadge">{{ n_fuzzy }}</span></h2>
+      <a class="btn" href="/quality/merge?kind=fuzzy">Review →</a>
+    </div>
+    <p class="muted qdesc">Different spellings of one name ("Calacata Gold" vs "Calacatta Gold") that the normalizer didn't already fold together.</p>
+    {% for c in fuzzy_preview %}
+      <div class="qprev">
+        {% if c.image_url %}<img class="qthumb" src="{{ c.image_url }}" loading="lazy" onerror="this.classList.add('noimg')">{% else %}<span class="qthumb noimg"></span>{% endif %}
+        <div class="qprev-body">
+          <b>{{ c.display }}</b>
+          <div class="qchips">
+            {% set seen = [] %}
+            {% for m in c.members %}{% if m.base not in seen %}<span class="qchip">{{ m.base }}</span>{% set _ = seen.append(m.base) %}{% endif %}{% endfor %}
+          </div>
+        </div>
+      </div>
+    {% else %}<p class="muted">No spelling variants outstanding.</p>{% endfor %}
+  </div>
+</div>
+
+<div class="block">
+  <h2>Classifier audit</h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">{{ qs.other }} materials landed in “Other” and {{ qs.accessory }} in “Accessory”. Browse them to spot real stones the classifier missed. <a href="/quality/types">Open the type audit →</a></p>
+</div>
+
+{% if aliases %}
+<div class="block">
+  <h2>Confirmed merges ({{ qs.aliases }})</h2>
+  <table class="materials" style="width:calc(100% - 44px);">
+    <thead><tr><th>Folded away</th><th>Into</th><th>Type</th><th></th></tr></thead>
+    <tbody>
+    {% for a in aliases %}
+      <tr>
+        <td class="muted">{{ a.alias_key }}</td>
+        <td class="name">{{ a.canonical_key }}</td>
+        <td>{{ a.canonical_type or '—' }}</td>
+        <td>
+          <form method="post" action="/quality/alias/remove" onsubmit="return confirm('Undo this merge? It reverses on the next crawl.')">
+            <input type="hidden" name="alias_key" value="{{ a.alias_key }}">
+            <button class="rmbtn" title="Undo merge">✕</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<footer>Merges are stored as aliases keyed on the computed material_key, so they re-apply automatically after every crawl. “Not the same” decisions are remembered too — a rejected cluster won't be proposed again.</footer>
+</body>
+</html>

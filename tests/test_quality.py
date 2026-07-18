@@ -1,0 +1,236 @@
+"""Tests for the data-quality / merge / discovery feature (#3).
+
+Self-contained: builds a synthetic materials DB in a temp file, so it needs no
+crawl and no shipped stonescan.db. Run from the project root with the project venv
+(needs httpx for the discover import):
+
+    python -m unittest tests.test_quality           # or: python -m pytest tests/
+
+Each test crafts the exact rows that exercise one behavior, so a failure points at a
+specific regression rather than "something in the pipeline".
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from stonescan import db, dedupe, discover  # noqa: E402
+from stonescan import normalize as nz  # noqa: E402
+
+
+def _seed_suppliers(conn, upto=60):
+    """materials.supplier_id has a FK to suppliers(id); create rows to satisfy it."""
+    for i in range(1, upto + 1):
+        conn.execute("INSERT OR IGNORE INTO suppliers (id, host) VALUES (?, ?)",
+                     (i, f"s{i}.example.com"))
+    conn.commit()
+
+
+def _insert(conn, supplier_id, name, mtype, slabs=1, item_id=None, image=""):
+    """Insert one synthetic material row (only the columns the engine reads)."""
+    conn.execute(
+        """INSERT INTO materials
+             (supplier_id, item_id, item_name, name_norm, material_key, material_type,
+              available_slabs, image_url)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (supplier_id, item_id or f"{supplier_id}-{name}", name, name.upper(),
+         nz.material_key(name, mtype), mtype, slabs, image),
+    )
+
+
+def _add_key(conn, key, mtype, n_suppliers, base_supplier=1):
+    """Insert n rows for a material_key under distinct supplier_ids (so COUNT(DISTINCT
+    supplier_id) == n_suppliers). Name is derived from the key's base."""
+    base = key.rsplit("|", 1)[0]
+    for i in range(n_suppliers):
+        conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key, material_type,
+                  available_slabs, image_url)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (base_supplier + i, f"{base_supplier+i}-{key}", base.title(), base.upper(),
+             key, mtype, 1, ""),
+        )
+
+
+class AliasApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _count(self, key):
+        return self.conn.execute(
+            "SELECT COUNT(*) c FROM materials WHERE material_key=?", (key,)).fetchone()["c"]
+
+    def test_apply_is_idempotent(self):
+        _add_key(self.conn, "taj mahal|granite", "Granite", 2)
+        db.add_alias(self.conn, "taj mahal|granite", "taj mahal|quartzite", "Quartzite")
+        _add_key(self.conn, "taj mahal|quartzite", "Quartzite", 3)
+        first = db.apply_aliases(self.conn)
+        self.assertEqual(first, 2)
+        self.assertEqual(self._count("taj mahal|granite"), 0)
+        self.assertEqual(self._count("taj mahal|quartzite"), 5)
+        self.assertEqual(db.apply_aliases(self.conn), 0)  # nothing left to fold
+
+    def test_chain_converges_forward_order(self):
+        # add a->b THEN b->c  (canonical becomes an alias after the fact)
+        _add_key(self.conn, "a|granite", "Granite", 2)
+        _add_key(self.conn, "b|granite", "Granite", 2)
+        _add_key(self.conn, "c|granite", "Granite", 2)
+        db.add_alias(self.conn, "a|granite", "b|granite")
+        db.add_alias(self.conn, "b|granite", "c|granite")
+        db.apply_aliases(self.conn)
+        self.assertEqual(self._count("a|granite"), 0)
+        self.assertEqual(self._count("b|granite"), 0)
+        self.assertEqual(self._count("c|granite"), 6)
+
+    def test_chain_converges_reverse_order(self):
+        # add b->c FIRST, then a->b : a must resolve straight to terminal c
+        _add_key(self.conn, "a|granite", "Granite", 2)
+        _add_key(self.conn, "b|granite", "Granite", 2)
+        _add_key(self.conn, "c|granite", "Granite", 2)
+        db.add_alias(self.conn, "b|granite", "c|granite")
+        db.add_alias(self.conn, "a|granite", "b|granite")
+        aliases = {a["alias_key"]: a["canonical_key"] for a in db.list_aliases(self.conn)}
+        self.assertEqual(aliases["a|granite"], "c|granite")  # normalized to terminal
+        db.apply_aliases(self.conn)
+        self.assertEqual(self._count("c|granite"), 6)
+
+    def test_self_alias_ignored(self):
+        _add_key(self.conn, "x|granite", "Granite", 1)
+        db.add_alias(self.conn, "x|granite", "x|granite")
+        self.assertEqual(len(db.list_aliases(self.conn)), 0)
+
+    def test_rejection_roundtrip(self):
+        db.add_rejection(self.conn, "conflict:taj mahal")
+        self.assertIn("conflict:taj mahal", db.rejections(self.conn))
+        db.add_rejection(self.conn, "conflict:taj mahal")  # idempotent
+        self.assertEqual(len(db.rejections(self.conn)), 1)
+
+
+class ClusterTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.conn = db.init_db(os.path.join(self.tmp, "t.db"))
+        _seed_suppliers(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_conflict_cluster_prefers_strong_type(self):
+        # A big weak 'Other' bucket and a smaller strong 'Granite' one.
+        _add_key(self.conn, "azul|other", "Other", 9)
+        _add_key(self.conn, "azul|granite", "Granite", 2)
+        cl = next(c for c in dedupe.conflict_clusters(self.conn) if c["base"] == "azul")
+        self.assertEqual(cl["canonical_key"], "azul|granite")   # strong type wins canonical
+        self.assertEqual(cl["canonical_type"], "Granite")
+
+    def test_rejected_conflict_not_proposed(self):
+        _add_key(self.conn, "azul|other", "Other", 3)
+        _add_key(self.conn, "azul|granite", "Granite", 2)
+        db.add_rejection(self.conn, "conflict:azul")
+        self.assertFalse(any(c["base"] == "azul" for c in dedupe.conflict_clusters(self.conn)))
+
+    def test_fuzzy_cluster_and_stable_sig(self):
+        _add_key(self.conn, "calacata gold|marble", "Marble", 2)
+        _add_key(self.conn, "calacatta gold|marble", "Marble", 3)
+        cl = next(iter(dedupe.fuzzy_clusters(self.conn)))
+        self.assertEqual(cl["canonical_key"], "calacatta gold|marble")  # most-stocked spelling
+        # sig keyed on stable (type, normalized-name), not the volatile member key set
+        self.assertEqual(cl["sig"], "fuzzy:marble:calacattagold")
+
+    def test_auto_conflicts_gate_measures_canonical_not_biggest(self):
+        # Weak 'Other'(9) is biggest, strong 'Granite'(2) is canonical. The OLD gate
+        # (biggest >= 4*rest -> 9>=8) fired wrongly; the fixed gate measures the
+        # canonical (2 >= 4*9 -> false) and must REFUSE.
+        _add_key(self.conn, "azul|other", "Other", 9)
+        _add_key(self.conn, "azul|granite", "Granite", 2)
+        self.assertEqual(dedupe.auto_conflicts(self.conn, dominance=4.0), 0)
+        self.assertEqual(db.quality_stats(self.conn)["aliases"], 0)
+
+    def test_auto_conflicts_merges_true_landslide(self):
+        _add_key(self.conn, "taj|quartzite", "Quartzite", 8)
+        _add_key(self.conn, "taj|granite", "Granite", 1)
+        merged = dedupe.auto_conflicts(self.conn, dominance=4.0)
+        self.assertEqual(merged, 1)
+        # auto path must actually fold the rows, not just record the alias
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) c FROM materials WHERE material_key='taj|granite'").fetchone()["c"], 0)
+
+
+class NormalizeTests(unittest.TestCase):
+    def test_derive_color_multiword_first(self):
+        self.assertEqual(nz.derive_color_from_name("Off White Marble"), "Off White")
+        self.assertEqual(nz.derive_color_from_name("Blue Bahia"), "Blue")
+        self.assertEqual(nz.derive_color_from_name("Absolute Black"), "Black")
+
+    def test_derive_color_none(self):
+        self.assertEqual(nz.derive_color_from_name("Taj Mahal"), "")
+
+    def test_color_only_fallback(self):
+        # structured Color present -> used; blank -> derived from name
+        row = nz.normalize_item({"ItemName": "Fusion Blue", "Color": ""}, "h", "t")
+        self.assertEqual(row["color"], "Blue")
+        row2 = nz.normalize_item({"ItemName": "Fusion Blue", "Color": "Grey"}, "h", "t")
+        self.assertEqual(row2["color"], "Grey")
+
+    def test_accessory_wordboundary(self):
+        acc = "Accessory / Non-Slab"
+        self.assertEqual(nz.canonical_type("", "", "STONE 5X2 36 GRIT"), acc)
+        self.assertEqual(nz.canonical_type("", "", "ACETONE 1 GALLON"), acc)
+        self.assertEqual(nz.canonical_type("", "", "BACKER 4 VELCRO STIFF"), acc)
+        # a real stone whose name merely contains the letters must NOT be an accessory
+        self.assertNotEqual(nz.canonical_type("", "", "Gritstone 3cm"), acc)
+
+
+class DiscoverTests(unittest.TestCase):
+    def test_host_boundary_rejects_lookalike_domains(self):
+        skip = discover.PLATFORMS[1]["skip"]
+        got = discover._hosts_in(
+            "real.slabware.com x.slabware.company y.slabware.com.br api-eua.slabware.com",
+            "slabware.com", skip)
+        self.assertEqual(got, {"real.slabware.com"})
+
+    def test_infra_prefix_filter(self):
+        skip = discover.PLATFORMS[1]["skip"]
+        got = discover._hosts_in("api.slabware.com api-x.slabware.com artstone.slabware.com",
+                                 "slabware.com", skip)
+        self.assertEqual(got, {"artstone.slabware.com"})
+
+    def test_merge_tags_provider(self):
+        tmp = tempfile.mkdtemp()
+        supfile = os.path.join(tmp, "suppliers.json")
+        Path(supfile).write_text(json.dumps({"suppliers": [{"host": "existing.slabware.com"}]}))
+        os.environ["STONESCAN_SUPPLIERS"] = supfile
+        import importlib
+        importlib.reload(discover)
+        try:
+            added = discover.merge_discovered({
+                "new.slabware.com": "slabware",
+                "newsps.stoneprofitsweb.com": None,
+                "existing.slabware.com": "slabware",  # dup -> skipped
+            })
+            self.assertEqual(added, 2)
+            entries = {e["host"]: e for e in discover.load_suppliers()}
+            self.assertEqual(entries["new.slabware.com"].get("provider"), "slabware")
+            self.assertNotIn("provider", entries["newsps.stoneprofitsweb.com"])  # SPS default
+            json.loads(Path(supfile).read_text())  # still valid JSON
+        finally:
+            os.environ.pop("STONESCAN_SUPPLIERS", None)
+            importlib.reload(discover)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

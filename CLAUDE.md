@@ -21,6 +21,8 @@ Aria is a commercial ask, not a code change.
 .\.venv\Scripts\python.exe -m stonescan.ingest --only host1,host2 --slabs # crawl specific suppliers
 .\.venv\Scripts\python.exe -m stonescan.discover                          # find more public catalogs
 .\.venv\Scripts\python.exe -m stonescan.geocode                           # resolve locations for the map (--recheck to redo)
+.\.venv\Scripts\python.exe -m stonescan.dedupe                            # report merge candidates (--auto-conflicts to bulk-merge landslides)
+.\.venv\Scripts\python.exe -m unittest tests.test_quality                 # unit tests for the merge/quality/discovery logic
 .\build_exe.ps1                                                           # build the standalone Windows app
 ```
 
@@ -39,11 +41,12 @@ build/packaging details.
 | `stonescan/db.py` | SQLite schema + all query/storage helpers (materials, slabs, history, watchlist) |
 | `stonescan/ingest.py` | Orchestrator: crawl → normalize → store → history snapshot |
 | `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached) |
-| `stonescan/discover.py` | Passive-DNS + search discovery of public catalogs → suppliers.json |
+| `stonescan/discover.py` | Passive-DNS + search discovery of public catalogs → suppliers.json. Multi-platform: sweeps Stone Profits **and** SlabWare subdomains (both multi-tenant on real wildcard subdomains); SlabCloud/UMI/StoneTrash aren't subdomain-enumerable so stay hand-seeded |
 | `stonescan/geocode.py` | Offline location → lat/long for the pin map (+ `locations.json` overrides) |
-| `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling |
+| `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling (also re-applies merges) |
+| `stonescan/dedupe.py` | Data-quality curation: type-conflict + spelling merge candidates, `apply_aliases` fold |
 | `stonescan/desktop.py` + `main.py` | Frozen-app launcher (native window, `--refresh` mode) |
-| `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist |
+| `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist, Health, Discovery (candidate triage), Quality (merge review + type audit) |
 | `suppliers.json` | Editable allow-list of catalogs to crawl |
 | `locations.json` | Editable map pins for locations the geocoder can't resolve |
 | `stonescan.spec` / `build_exe.ps1` | PyInstaller packaging |
@@ -68,6 +71,13 @@ build/packaging details.
   *query string* and silently receives nothing. This is what broke ★ Save search.
 - `db.connect()` **does not create tables** (only `init_db()` runs the schema), so the
   web app calls `init_db()` at startup for user tables (watchlist, lists).
+- **Merges (Quality page) are keyed on the computed `material_key`, not a row id** —
+  a crawl/reclassify recomputes `material_key` from scratch and would silently undo
+  every merge, so `db.apply_aliases()` must run **last** in `ingest.run_all` and at the
+  end of `reclassify` to re-fold them. Same-name-different-type ("Taj Mahal" as
+  quartzite vs granite) is the biggest source of split materials; `dedupe.py` surfaces
+  those as the primary merge queue. Rejections ("not the same") are remembered by
+  signature so a cluster isn't re-proposed.
 - Anything the user owns must key off `(supplier_id, item_id)` — `materials.id` is
   reassigned every crawl. Sourcing lists also snapshot name/photo so an item that
   leaves a catalog still renders (flagged "gone").

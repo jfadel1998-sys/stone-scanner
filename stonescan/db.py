@@ -112,6 +112,28 @@ CREATE TABLE IF NOT EXISTS watchlist (
     created_at  TEXT
 );
 
+-- Curator-confirmed merges: a computed material_key (alias_key) is rewritten to a
+-- canonical one so the same stone offered under a different spelling — or under a
+-- different material_type across suppliers ("Taj Mahal" as granite vs quartzite) —
+-- collapses into ONE canonical material. Keyed on the *computed* key (not a row id,
+-- which is reassigned every crawl), so a merge survives re-crawls: apply_aliases()
+-- re-collapses the freshly-normalized rows after each ingest/reclassify.
+CREATE TABLE IF NOT EXISTS material_aliases (
+    alias_key       TEXT PRIMARY KEY,   -- the material_key to fold away
+    canonical_key   TEXT NOT NULL,      -- the material_key to fold it into
+    canonical_type  TEXT,               -- if set, also override material_type on folded rows
+    note            TEXT,
+    created_at      TEXT
+);
+
+-- Pairs/clusters a curator marked "not the same", so the candidate generator stops
+-- proposing them. `sig` is a stable signature ("conflict:<base>" for a type-conflict
+-- cluster, "fuzzy:<keyA>||<keyB>" for a near-duplicate pair).
+CREATE TABLE IF NOT EXISTS merge_rejections (
+    sig         TEXT PRIMARY KEY,
+    created_at  TEXT
+);
+
 -- Resolved coordinates per distinct slab location. A row with NULL lat/lon means
 -- "we looked and it isn't a place" (an internal warehouse name), which is cached
 -- so the map doesn't retry it every load.
@@ -514,6 +536,119 @@ def add_watch(conn: sqlite3.Connection, query: str, created_at: str) -> None:
 def remove_watch(conn: sqlite3.Connection, watch_id: int) -> None:
     conn.execute("DELETE FROM watchlist WHERE id = ?", (watch_id,))
     conn.commit()
+
+
+# --- Data quality: cross-supplier material_key merges -------------------------
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def apply_aliases(conn: sqlite3.Connection) -> int:
+    """Fold every aliased material_key into its canonical one, in place.
+
+    Idempotent and safe to run after any crawl/reclassify: once folded, an
+    alias_key matches no rows on the next pass, and a fresh crawl that re-derives
+    the same alias_key simply gets re-folded. Returns the number of rows rewritten.
+
+    Runs to a fixpoint so an accidental a->b->c chain resolves regardless of the row
+    order in the alias table (add_alias normalizes to terminals, so this is usually a
+    single effective pass; the loop is defense in depth, capped against a cycle).
+    """
+    rows = conn.execute(
+        "SELECT alias_key, canonical_key, canonical_type FROM material_aliases"
+    ).fetchall()
+    total = 0
+    for _ in range(10):
+        changed = 0
+        for a in rows:
+            cur = conn.execute(
+                "UPDATE materials SET material_key = ?, "
+                "material_type = COALESCE(?, material_type) WHERE material_key = ?",
+                (a["canonical_key"], a["canonical_type"], a["alias_key"]),
+            )
+            changed += cur.rowcount
+        total += changed
+        if not changed:
+            break
+    conn.commit()
+    return total
+
+
+def add_alias(conn: sqlite3.Connection, alias_key: str, canonical_key: str,
+              canonical_type: str | None = None, note: str = "") -> None:
+    """Record (or update) a merge. Does NOT rewrite materials — call apply_aliases()
+    for that (the web route, ingest, reclassify and auto_conflicts all do)."""
+    if not alias_key or not canonical_key or alias_key == canonical_key:
+        return
+    # Resolve the target to a terminal canonical, so we never store a->b while b->c
+    # exists (which would make apply_aliases order-dependent). Guard against a cycle.
+    seen = {canonical_key}
+    row = conn.execute("SELECT canonical_key FROM material_aliases WHERE alias_key = ?",
+                       (canonical_key,)).fetchone()
+    while row and row["canonical_key"] not in seen:
+        canonical_key = row["canonical_key"]
+        seen.add(canonical_key)
+        row = conn.execute("SELECT canonical_key FROM material_aliases WHERE alias_key = ?",
+                           (canonical_key,)).fetchone()
+    if alias_key == canonical_key:
+        return
+    conn.execute(
+        """INSERT INTO material_aliases (alias_key, canonical_key, canonical_type, note, created_at)
+           VALUES (?,?,?,?,?)
+           ON CONFLICT(alias_key) DO UPDATE SET
+             canonical_key = excluded.canonical_key,
+             canonical_type = excluded.canonical_type, note = excluded.note""",
+        (alias_key, canonical_key, canonical_type, note, _now_iso()),
+    )
+    # Repoint any existing alias that folded INTO this now-folded key, so chains
+    # collapse to a single terminal canonical (a -> b, then b -> c  ==>  a -> c).
+    conn.execute(
+        "UPDATE material_aliases SET canonical_key = ? WHERE canonical_key = ?",
+        (canonical_key, alias_key),
+    )
+    conn.commit()
+
+
+def remove_alias(conn: sqlite3.Connection, alias_key: str) -> None:
+    conn.execute("DELETE FROM material_aliases WHERE alias_key = ?", (alias_key,))
+    conn.commit()
+
+
+def list_aliases(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [dict(r) for r in conn.execute(
+        "SELECT alias_key, canonical_key, canonical_type, note, created_at "
+        "FROM material_aliases ORDER BY created_at DESC, alias_key"
+    ).fetchall()]
+
+
+def add_rejection(conn: sqlite3.Connection, sig: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO merge_rejections (sig, created_at) VALUES (?, ?)",
+        (sig, _now_iso()),
+    )
+    conn.commit()
+
+
+def rejections(conn: sqlite3.Connection) -> set[str]:
+    return {r["sig"] for r in conn.execute("SELECT sig FROM merge_rejections")}
+
+
+def quality_stats(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Headline data-quality counts for the dashboard."""
+    q = lambda sql: conn.execute(sql).fetchone()["c"]  # noqa: E731
+    return {
+        "materials": q("SELECT COUNT(*) c FROM materials"),
+        "unique_materials": q("SELECT COUNT(DISTINCT material_key) c "
+                              "FROM materials WHERE material_key <> ''"),
+        "other": q("SELECT COUNT(*) c FROM materials WHERE material_type = 'Other'"),
+        "accessory": q("SELECT COUNT(*) c FROM materials "
+                       "WHERE material_type = 'Accessory / Non-Slab'"),
+        "no_color": q("SELECT COUNT(*) c FROM materials WHERE color = '' OR color IS NULL"),
+        "aliases": q("SELECT COUNT(*) c FROM material_aliases"),
+        "rejections": q("SELECT COUNT(*) c FROM merge_rejections"),
+    }
 
 
 if __name__ == "__main__":

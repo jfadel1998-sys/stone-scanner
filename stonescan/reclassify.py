@@ -10,7 +10,7 @@ so you don't have to re-crawl.
 from __future__ import annotations
 
 from . import db
-from .normalize import canonical_type, clean_color, material_key
+from .normalize import canonical_type, clean_color, derive_color_from_name, material_key
 
 
 def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
@@ -23,12 +23,19 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     for r in rows:
         mtype = canonical_type(r["category"], r["subcategory"], r["item_name"])
         key = material_key(r["item_name"], mtype)
-        updates.append((mtype, key, clean_color(r["color"]), r["id"]))
+        color = clean_color(r["color"]) or derive_color_from_name(r["item_name"])
+        updates.append((mtype, key, color, r["id"]))
     conn.executemany(
         "UPDATE materials SET material_type = ?, material_key = ?, color = ? WHERE id = ?",
         updates,
     )
     conn.commit()
+
+    # Re-fold any curator-confirmed merges: reclassify recomputes material_key from
+    # scratch, which would otherwise undo every merge until the next crawl.
+    folded = db.apply_aliases(conn)
+    if folded:
+        print(f"Re-applied {folded} row(s) from {db.quality_stats(conn)['aliases']} confirmed merge(s).")
 
     s = db.stats(conn)
     print(f"Done. {s['materials']} materials, {s['unique_materials']} unique.")

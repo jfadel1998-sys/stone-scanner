@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Type audit — Stone Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🪨 Stone Scanner
+    <nav class="topnav"><a href="/">Search</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality" class="active">🧹 Quality</a></nav>
+  </div>
+  <div class="stats"><a href="/quality">← Data quality</a></div>
+</header>
+
+<div class="material-head">
+  <h1>Type audit</h1>
+  <p class="hintline muted">How every material fell out of the classifier. The <b>Other</b> bucket is where real stones the rules missed hide — each is a candidate for a new rule in <code>normalize.py</code>. Click any name to see it in search.</p>
+</div>
+
+<div class="qtwocol">
+  <div class="block">
+    <h2>By type</h2>
+    <table class="materials qtypetable">
+      <thead><tr><th>Type</th><th class="num">Materials</th></tr></thead>
+      <tbody>
+      {% for t in by_type %}
+        <tr>
+          <td class="name"><a href="/?material_type={{ t.material_type | urlencode }}">{{ t.material_type }}</a></td>
+          <td class="num">{{ t.n }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="block">
+    <h2>“Other” — unclassified <span class="qbadge">{{ qs.other }}</span></h2>
+    <p class="muted qdesc" style="margin:0 0 8px;">Most common first. Real stones here should get a keyword in the classifier; junk should get an accessory rule.</p>
+    <div class="othgrid">
+    {% for r in other %}
+      <a class="othcard" href="/item?id={{ r.id }}">
+        {% if r.image_url %}<img src="{{ r.image_url }}" loading="lazy" onerror="this.style.visibility='hidden'">{% else %}<span class="othph">🪨</span>{% endif %}
+        <span class="othmeta"><b>{{ r.item_name }}</b><span class="muted">{{ r.n }}× · {{ r.suppliers }} supplier(s)</span></span>
+      </a>
+    {% else %}<p class="muted">The Other bucket is empty.</p>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="block">
+  <h2>“Accessory / Non-Slab” <span class="qbadge">{{ qs.accessory }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Tools, care products and hardware filtered out of the material search. A real stone caught here means an over-broad accessory rule.</p>
+  <div class="othgrid">
+  {% for r in accessory %}
+    <a class="othcard" href="/item?id={{ r.id }}">
+      {% if r.image_url %}<img src="{{ r.image_url }}" loading="lazy" onerror="this.style.visibility='hidden'">{% else %}<span class="othph">🧰</span>{% endif %}
+      <span class="othmeta"><b>{{ r.item_name }}</b><span class="muted">{{ r.n }}× · {{ r.suppliers }} supplier(s)</span></span>
+    </a>
+  {% else %}<p class="muted">No accessories flagged.</p>{% endfor %}
+  </div>
+</div>
+
+<footer>Type and colour are re-derivable without a re-crawl: edit the rules in <code>normalize.py</code>, then run <code>python -m stonescan.reclassify</code>.</footer>
+</body>
+</html>

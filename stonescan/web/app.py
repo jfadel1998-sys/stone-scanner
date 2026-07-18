@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import db, geocode, slabs, smartsearch
+from .. import db, dedupe, geocode, slabs, smartsearch
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Stone Scanner")
@@ -748,6 +748,171 @@ def health(request: Request):
     conn.close()
     return templates.TemplateResponse(request, "health.html", {
         "rows": rows, "counts": counts, "stats": stats, "total": len(rows),
+    })
+
+
+_MERGE_PER_PAGE = 30
+_ALIAS_DELIM = "||"  # material_keys hold single pipes, never a double — safe joiner
+
+
+def _cluster_vm(c: dict) -> dict:
+    """Add the derived fields the merge template needs (the alias_keys to fold)."""
+    aliases = [m["mk"] for m in c["members"] if m["mk"] != c["canonical_key"]]
+    return {**c, "alias_keys": _ALIAS_DELIM.join(aliases), "n_fold": len(aliases)}
+
+
+@app.get("/quality", response_class=HTMLResponse)
+def quality(request: Request):
+    """Data-quality hub: how clean the cross-supplier grouping is, and what's left to
+    curate — type conflicts, spelling variants, the Other bucket, missing colours."""
+    conn = db.connect()
+    qs = db.quality_stats(conn)
+    conflicts = dedupe.conflict_clusters(conn, limit=100000)
+    fuzzy = dedupe.fuzzy_clusters(conn, limit=100000)
+    ctx = {
+        "request": request,
+        "qs": qs,
+        "n_conflicts": len(conflicts),
+        "n_fuzzy": len(fuzzy),
+        "conflict_preview": [_cluster_vm(c) for c in conflicts[:4]],
+        "fuzzy_preview": [_cluster_vm(c) for c in fuzzy[:4]],
+        "aliases": db.list_aliases(conn)[:12],
+        "stats": db.stats(conn),
+    }
+    conn.close()
+    return templates.TemplateResponse(request, "quality.html", ctx)
+
+
+@app.get("/quality/merge", response_class=HTMLResponse)
+def quality_merge(request: Request, kind: str = "conflict", page: int = 1, merged: int = -1):
+    """Review queue: confirm or reject candidate merges, one cluster at a time."""
+    kind = kind if kind in ("conflict", "fuzzy") else "conflict"
+    conn = db.connect()
+    gen = dedupe.conflict_clusters if kind == "conflict" else dedupe.fuzzy_clusters
+    clusters = gen(conn, limit=100000)
+    total = len(clusters)
+    page = max(page, 1)
+    start = (page - 1) * _MERGE_PER_PAGE
+    view = [_cluster_vm(c) for c in clusters[start:start + _MERGE_PER_PAGE]]
+    conn.close()
+    return templates.TemplateResponse(request, "quality_merge.html", {
+        "request": request, "kind": kind, "clusters": view, "total": total,
+        "page": page, "pages": (total + _MERGE_PER_PAGE - 1) // _MERGE_PER_PAGE,
+        "merged": merged,
+    })
+
+
+def _merge_redirect(kind: str, page: int, merged: int) -> RedirectResponse:
+    return RedirectResponse(f"/quality/merge?kind={kind}&page={page}&merged={merged}",
+                            status_code=303)
+
+
+@app.post("/quality/merge/apply")
+def quality_merge_apply(
+    canonical_key: str = Form(...), alias_keys: str = Form(""),
+    canonical_type: str = Form(""), kind: str = Form("conflict"), page: int = Form(1),
+):
+    """Fold a cluster's members into its canonical key (and re-apply so it takes
+    effect immediately, before the next crawl)."""
+    conn = db.connect()
+    folded = 0
+    for ak in [k for k in alias_keys.split(_ALIAS_DELIM) if k]:
+        db.add_alias(conn, ak, canonical_key, canonical_type or None, note="curated")
+        folded += 1
+    db.apply_aliases(conn)
+    conn.close()
+    return _merge_redirect(kind if kind in ("conflict", "fuzzy") else "conflict", page, folded)
+
+
+@app.post("/quality/merge/reject")
+def quality_merge_reject(sig: str = Form(...), kind: str = Form("conflict"),
+                         page: int = Form(1)):
+    """Mark a cluster 'not the same' so it stops being proposed."""
+    conn = db.connect()
+    db.add_rejection(conn, sig)
+    conn.close()
+    return _merge_redirect(kind if kind in ("conflict", "fuzzy") else "conflict", page, 0)
+
+
+@app.post("/quality/alias/remove")
+def quality_alias_remove(alias_key: str = Form(...)):
+    """Undo a confirmed merge. The fold is only reversed on the next crawl/reclassify
+    (we can't un-rewrite the rows in place), so note that in the UI."""
+    conn = db.connect()
+    db.remove_alias(conn, alias_key)
+    conn.close()
+    return RedirectResponse("/quality", status_code=303)
+
+
+@app.get("/quality/types", response_class=HTMLResponse)
+def quality_types(request: Request):
+    """Classifier audit: type distribution plus the Other/Accessory buckets — the
+    worklist for spotting real stones the rules missed (add them to normalize.py)."""
+    conn = db.connect()
+    stats = db.stats(conn)
+    ctx = {
+        "request": request,
+        "stats": stats,
+        "by_type": stats["by_type"],
+        "other": dedupe.other_samples(conn, "Other", limit=80),
+        "accessory": dedupe.other_samples(conn, "Accessory / Non-Slab", limit=40),
+        "qs": db.quality_stats(conn),
+    }
+    conn.close()
+    return templates.TemplateResponse(request, "quality_types.html", ctx)
+
+
+@app.get("/discovery", response_class=HTMLResponse)
+def discovery(request: Request):
+    """Triage the discovery pipeline: which suppliers.json candidates are live public
+    catalogs, which came back empty (private/login-gated), which errored, and which
+    haven't been probed yet. Turns fire-and-forget discovery into a curation queue."""
+    from .. import discover
+    conn = db.connect()
+    entries = discover.load_suppliers()
+    rows = {r["host"]: dict(r) for r in conn.execute(
+        "SELECT host, company, item_count, slab_count, last_crawled, last_error FROM suppliers")}
+    cats: dict[str, list] = {"unprobed": [], "empty": [], "broken": [], "live": []}
+    by_provider: dict[str, dict] = {}
+    for e in entries:
+        r = rows.get(e["host"])
+        rec = {
+            "host": e["host"],
+            "name": e.get("name") or (r or {}).get("company") or "",
+            "provider": e.get("provider") or "stoneprofits",
+            "items": (r or {}).get("item_count") or 0,
+            "slabs": (r or {}).get("slab_count") or 0,
+            "last_crawled": (r or {}).get("last_crawled"),
+            "error": (r or {}).get("last_error") or "",
+        }
+        if r is None:
+            rec["status"] = "unprobed"
+        elif rec["items"] > 0:
+            rec["status"] = "live"
+        elif rec["error"]:
+            rec["status"] = "broken"
+        else:
+            rec["status"] = "empty"
+        cats[rec["status"]].append(rec)
+        p = by_provider.setdefault(rec["provider"],
+                                   {"provider": rec["provider"], "total": 0, "live": 0, "materials": 0})
+        p["total"] += 1
+        p["materials"] += rec["items"]
+        if rec["status"] == "live":
+            p["live"] += 1
+    cats["live"].sort(key=lambda r: -r["items"])
+    for k in ("unprobed", "empty", "broken"):
+        cats[k].sort(key=lambda r: r["host"])
+    stats = db.stats(conn)
+    conn.close()
+    return templates.TemplateResponse(request, "discovery.html", {
+        "request": request,
+        "cats": cats,
+        "counts": {k: len(v) for k, v in cats.items()},
+        "by_provider": sorted(by_provider.values(), key=lambda p: -p["total"]),
+        "total": len(entries),
+        "unprobed_hosts": ",".join(r["host"] for r in cats["unprobed"]),
+        "stats": stats,
     })
 
 

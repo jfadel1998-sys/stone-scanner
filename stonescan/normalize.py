@@ -16,6 +16,16 @@ import re
 from typing import Any
 from urllib.parse import quote
 
+from .smartsearch import COLOR_WORDS
+
+# Colour words a stone name may carry ("Blue Bahia", "White Ice"), longest-first so
+# "light blue" is matched before "blue". Used only as a fallback when the supplier
+# left the structured Color field blank (~1/3 of rows).
+_NAME_COLOR_RE = re.compile(
+    r"(?<![a-z])(" + "|".join(re.escape(c) for c in COLOR_WORDS) + r")(?![a-z])",
+    re.IGNORECASE,
+)
+
 # Ordered classifier rules. First matching needle (substring) wins, so the list
 # runs MOST-SPECIFIC first (e.g. "quartzite" before "quartz", brand/engineered
 # lines before the generic stone they resemble). Applied to a haystack built from
@@ -59,7 +69,17 @@ _ACCESSORY_RULES = [
     "maintenance", "sealer", "adhesive", "epoxy", "cabinet", "wall panel", "hardware",
     "stainless steel", "blanco", "kohler", "silgranit", "pvc", "spc tile", "lvt",
     "cleaning product", "stone care", "sample kit", "brochure", "display",
+    # Multi-word fabrication tools that were landing in "Other" (see /quality) — safe
+    # as substrings because the phrases don't occur inside real stone names.
+    "core drill", "drill bit", "razor blade", "steel rod", "polishing pad",
 ]
+
+# Single-word fabrication consumables, matched on WORD BOUNDARIES so a stone whose
+# name merely *contains* the letters isn't swept into the non-slab bucket — e.g.
+# "gritstone" (a real sandstone) must not match "grit", nor "..." a substring of a
+# trade name. These catch "36 GRIT", "1 GALLON", "BACKER 4 VELCRO", etc.
+_ACCESSORY_WORDS = {"grit", "velcro", "acetone", "abrasive", "backer", "sanding", "gallon"}
+_ACCESSORY_WORD_RE = re.compile(r"\b(" + "|".join(_ACCESSORY_WORDS) + r")\b", re.IGNORECASE)
 
 _THICKNESS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*cm", re.IGNORECASE)
 # Qualifiers to strip from a name when building the cross-supplier match key.
@@ -101,6 +121,8 @@ def canonical_type(category: str, subcategory: str, name: str = "") -> str:
     for acc in _ACCESSORY_RULES:
         if acc in hay or acc in nm:
             return "Accessory / Non-Slab"
+    if _ACCESSORY_WORD_RE.search(hay) or _ACCESSORY_WORD_RE.search(nm):
+        return "Accessory / Non-Slab"
 
     label = _match_rules(hay) or _match_rules(nm)
     if label:
@@ -117,6 +139,13 @@ def clean_color(raw: Any) -> str:
     if not c or c.replace(".", "").isdigit():
         return ""
     return c.title()
+
+
+def derive_color_from_name(name: str) -> str:
+    """Best-effort colour read from the item name, for rows with no Color field.
+    'Blue Bahia' -> 'Blue', 'Off White Marble' -> 'Off White'. Empty if none found."""
+    m = _NAME_COLOR_RE.search(name or "")
+    return m.group(1).title() if m else ""
 
 
 def drop_if_numeric(raw: Any) -> str:
@@ -224,7 +253,7 @@ def normalize_item(
         "material_type": mtype,
         "category": category,
         "subcategory": subcategory,
-        "color": clean_color(item.get("Color")),
+        "color": clean_color(item.get("Color")) or derive_color_from_name(name),
         "finish": drop_if_numeric(item.get("Finish")),
         "thickness": thickness,
         "product_form": _text(_pick(item, "ProductFormValue", "type")),
