@@ -130,6 +130,37 @@ ever missing, the app falls back to opening the system browser.)
 
 `READ ME FIRST.txt` inside the folder has end-user instructions.
 
+## Building the standalone macOS app
+
+PyInstaller **cannot cross-compile** — a macOS build must be produced **on a Mac**
+(the Windows build above cannot output a Mac binary). The spec is cross-platform;
+run the Mac build script there:
+
+```bash
+# on the Mac, in the repo root:
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt pywebview pyinstaller
+python -m playwright install chromium          # matching Chromium into ~/Library/Caches/ms-playwright
+# stonescan.db must exist in the repo root (copy a snapshot, or run a crawl first)
+./build_mac.sh                                  # -> dist/StoneScanner/ (onedir) + bundled Chromium
+```
+
+This yields **`dist/StoneScanner/`** with `StoneScanner.command` (double-click) and
+`READ ME FIRST (macOS).txt`. On macOS the native window uses Cocoa/WKWebView (via
+PyObjC) instead of WebView2; no .NET is involved. Three things to know:
+
+- **Architecture is per-build.** Playwright's bundled Chromium is single-arch, so
+  there's no universal folder: build **on Apple Silicon** for an `arm64` app, **on
+  Intel** for `x86_64` (which also runs on Apple Silicon via Rosetta 2). Ship two
+  folders to cover both.
+- **Gatekeeper.** The build is ad-hoc signed, not Apple-notarized. First launch on
+  another Mac may be blocked — right-click → Open, or `xattr -dr com.apple.quarantine
+  <folder>`. `build_mac.sh` strips quarantine from the freshly built folder for you.
+- **USB filesystem.** The app tree has symlinks and needs exec bits, which
+  **exFAT/FAT32 sticks drop**. Keep it on an APFS/HFS+ (Mac-formatted) drive, or copy
+  the folder to the internal disk before running. A single exFAT stick can't hold
+  both a working Windows `.exe` folder and a working Mac app folder.
+
 ## Project layout
 
 | File | Purpose |

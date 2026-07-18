@@ -1,17 +1,22 @@
-# PyInstaller spec for the Stone Scanner desktop app (onedir).
-# Build:  .\.venv\Scripts\pyinstaller.exe stonescan.spec --noconfirm
-# Chromium is NOT bundled here; it is copied into dist/StoneScanner/browsers
-# by build_exe.ps1 and located at runtime via PLAYWRIGHT_BROWSERS_PATH.
+# PyInstaller spec for the Stone Scanner desktop app (onedir). Cross-platform:
+#   Windows:  .\.venv\Scripts\pyinstaller.exe stonescan.spec --noconfirm   (then build_exe.ps1)
+#   macOS:    ./.venv/bin/pyinstaller stonescan.spec --noconfirm           (then build_mac.sh)
+# Chromium is NOT bundled here; it is copied into dist/StoneScanner/browsers by the
+# platform build script and located at runtime via PLAYWRIGHT_BROWSERS_PATH.
+#
+# The native window uses different backends per OS: WebView2 via pythonnet/.NET on
+# Windows, Cocoa/WKWebView via PyObjC on macOS. Those deps are gated by sys.platform
+# so the same spec builds on both (and neither package need be installed on the other).
 
-from PyInstaller.utils.hooks import collect_all
+import sys
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 pw_datas, pw_binaries, pw_hidden = collect_all("playwright")
 gn_datas, gn_binaries, gn_hidden = collect_all("geonamescache")  # offline city coords for the map
 wv_datas, wv_binaries, wv_hidden = collect_all("webview")       # pywebview (native window)
-cl_datas, cl_binaries, cl_hidden = collect_all("clr_loader")    # .NET loader
-pn_datas, pn_binaries, pn_hidden = collect_all("pythonnet")     # Python.NET (WebView2 bridge)
 
-hiddenimports = pw_hidden + wv_hidden + cl_hidden + pn_hidden + gn_hidden + [
+# Cross-platform base collections (backend-agnostic).
+base_hidden = pw_hidden + wv_hidden + gn_hidden + [
     "uvicorn.logging",
     "uvicorn.loops", "uvicorn.loops.auto", "uvicorn.loops.asyncio",
     "uvicorn.protocols", "uvicorn.protocols.http", "uvicorn.protocols.http.auto",
@@ -20,7 +25,6 @@ hiddenimports = pw_hidden + wv_hidden + cl_hidden + pn_hidden + gn_hidden + [
     "uvicorn.protocols.websockets.websockets_impl",
     "uvicorn.lifespan", "uvicorn.lifespan.on", "uvicorn.lifespan.off",
     "anyio._backends._asyncio",
-    "clr", "webview.platforms.winforms",
     "multipart", "python_multipart",  # FastAPI Form() parsing (sourcing lists)
     # Providers are resolved by name at runtime (importlib), so PyInstaller's static
     # analysis can't see them — without these, a refresh in the packaged app dies with
@@ -28,8 +32,7 @@ hiddenimports = pw_hidden + wv_hidden + cl_hidden + pn_hidden + gn_hidden + [
     "stonescan.providers.umi", "stonescan.providers.slabware",
     "stonescan.providers.stonetrash", "stonescan.providers.slabcloud",
 ]
-
-datas = pw_datas + wv_datas + cl_datas + pn_datas + gn_datas + [
+base_datas = pw_datas + wv_datas + gn_datas + [
     ("stonescan/web/templates", "stonescan/web/templates"),
     ("stonescan/web/static", "stonescan/web/static"),
     ("stonescan/data/us_zips.json.gz", "stonescan/data"),  # offline zip->coords for proximity
@@ -37,7 +40,30 @@ datas = pw_datas + wv_datas + cl_datas + pn_datas + gn_datas + [
     ("locations.json", "seed"),
     ("stonescan.db", "seed"),
 ]
-binaries = pw_binaries + wv_binaries + cl_binaries + pn_binaries + gn_binaries
+base_binaries = pw_binaries + wv_binaries + gn_binaries
+
+if sys.platform == "win32":
+    # .NET / WebView2 bridge — Windows only.
+    cl_datas, cl_binaries, cl_hidden = collect_all("clr_loader")
+    pn_datas, pn_binaries, pn_hidden = collect_all("pythonnet")
+    hiddenimports = base_hidden + cl_hidden + pn_hidden + ["clr", "webview.platforms.winforms"]
+    datas = base_datas + cl_datas + pn_datas
+    binaries = base_binaries + cl_binaries + pn_binaries
+elif sys.platform == "darwin":
+    # Cocoa / WKWebView backend via PyObjC — macOS only. collect_submodules covers
+    # pyobjc's lazily-generated framework modules that static analysis misses (the
+    # classic "webview backend not found" failure in a frozen mac app).
+    extra_hidden = ["webview.platforms.cocoa"]
+    for _fw in ("objc", "Foundation", "AppKit", "WebKit", "Quartz", "Security", "PyObjCTools"):
+        try:  # skip any framework not installed as a separate submodule package
+            extra_hidden += collect_submodules(_fw)
+        except Exception:
+            pass
+    hiddenimports = base_hidden + extra_hidden
+    datas = base_datas
+    binaries = base_binaries
+else:  # linux / other — server + system-browser fallback only
+    hiddenimports, datas, binaries = base_hidden, base_datas, base_binaries
 
 a = Analysis(
     ["main.py"],
