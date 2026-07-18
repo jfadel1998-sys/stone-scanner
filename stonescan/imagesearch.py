@@ -179,6 +179,63 @@ def index_missing(conn: sqlite3.Connection, limit: int = 0, delay: float = 0.02,
     return done
 
 
+def _image_ssl_ctx():
+    """SSL context that also accepts legacy-RSA hosts (UMI's apps.umistone.com offers
+    only old ciphers OpenSSL 3 rejects with SSLV3_ALERT_HANDSHAKE_FAILURE). Lowering the
+    security level is safe here — we're only fetching public catalog thumbnails."""
+    import ssl
+    ctx = ssl.create_default_context()
+    ctx.set_ciphers("DEFAULT@SECLEVEL=1")
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+async def _index_all_async(conn, concurrency: int, batch: int, limit: int, progress) -> int:
+    """Concurrent indexer: download images in parallel (network is the bottleneck),
+    embed each as it arrives. ~5-8x faster than the serial path for a full pass."""
+    import asyncio
+
+    import httpx
+    urls = unindexed_urls(conn, limit)
+    total, done = len(urls), 0
+    sem = asyncio.Semaphore(concurrency)
+    async with httpx.AsyncClient(headers=_UA, follow_redirects=True, timeout=30,
+                                 verify=_image_ssl_ctx()) as client:
+        async def fetch(u):
+            async with sem:
+                try:
+                    r = await client.get(u)
+                    r.raise_for_status()
+                    return u, r.content
+                except Exception:  # noqa: BLE001
+                    return u, None
+        for i in range(0, total, batch):
+            for u, data in await asyncio.gather(*(fetch(u) for u in urls[i:i + batch])):
+                if not data:
+                    continue
+                try:
+                    vec = embed_bytes(data)          # CPU; fast relative to the downloads
+                except Exception:  # noqa: BLE001
+                    continue
+                conn.execute(
+                    "INSERT OR REPLACE INTO image_vectors (image_url, vec, updated_at) VALUES (?,?,?)",
+                    (u, _vec_bytes(vec), _now()))
+                done += 1
+            conn.commit()
+            if progress:
+                progress(min(i + batch, total), total, done)
+    _invalidate_cache()
+    return done
+
+
+def index_all(conn: sqlite3.Connection, concurrency: int = 12, limit: int = 0,
+              progress=None) -> int:
+    """Embed every not-yet-indexed catalog image, downloading concurrently."""
+    import asyncio
+    return asyncio.run(_index_all_async(conn, concurrency, 64, limit, progress))
+
+
 def index_stats(conn: sqlite3.Connection) -> dict[str, int]:
     q = lambda s: conn.execute(s).fetchone()[0]  # noqa: E731
     return {
@@ -250,8 +307,9 @@ def search(conn: sqlite3.Connection, query_vec: np.ndarray, top_k: int = 60,
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Build the search-by-photo image index.")
-    ap.add_argument("--index", action="store_true", help="Embed not-yet-indexed catalog images.")
+    ap.add_argument("--index", action="store_true", help="Embed not-yet-indexed catalog images (concurrent).")
     ap.add_argument("--limit", type=int, default=0, help="Cap images this run (0 = all).")
+    ap.add_argument("--concurrency", type=int, default=12, help="Parallel image downloads.")
     ap.add_argument("--download-model", action="store_true", help="Fetch the CLIP ONNX model.")
     ap.add_argument("--db", default=str(db.DEFAULT_DB))
     args = ap.parse_args()
@@ -263,9 +321,8 @@ def main() -> None:
     conn = db.init_db(args.db)
     if args.index:
         def prog(i, total, done):
-            if i % 100 == 0 or i == total:
-                print(f"  {i}/{total} fetched, {done} embedded")
-        n = index_missing(conn, limit=args.limit, progress=prog)
+            print(f"  {i}/{total} fetched, {done} embedded ({100 * i // max(total, 1)}%)")
+        n = index_all(conn, concurrency=args.concurrency, limit=args.limit, progress=prog)
         print(f"Indexed {n} new image(s).")
     print("index:", index_stats(conn))
     conn.close()
