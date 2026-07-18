@@ -232,5 +232,46 @@ class DiscoverTests(unittest.TestCase):
             importlib.reload(discover)
 
 
+class DiscoverExpansionTests(unittest.TestCase):
+    def test_apex_name(self):
+        self.assertEqual(discover._apex_name("https://www.marioandson.com/inventory/"), "Marioandson")
+        self.assertEqual(discover._apex_name("http://5280stone.com/inventory/"), "5280Stone")
+
+    def test_slabcloud_company_slug_extraction(self):
+        # the verbatim company value is the API slug (incl. any _h_ prefix)
+        html = 'x IT_SPA({il:false,columns_override:false,company:"_h_marioandson",filter:{}}) y'
+        m = discover._SC_COMPANY.search(html)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "_h_marioandson")
+
+    def test_sps_vanity_markers(self):
+        # a page carrying any Stone Profits marker fingerprints as SPS
+        page = '<script src="https://acme.stoneprofitsweb.com/acme/app.js"></script>'
+        self.assertTrue(any(mk in page for mk in discover._SPS_MARKERS))
+        self.assertFalse(any(mk in "<html>plain site</html>" for mk in discover._SPS_MARKERS))
+
+    def test_merge_slabcloud_dedupes_host_and_slug(self):
+        tmp = tempfile.mkdtemp()
+        supfile = os.path.join(tmp, "suppliers.json")
+        Path(supfile).write_text(json.dumps({"suppliers": [
+            {"host": "owstone.slabcloud.com", "slug": "owstone", "provider": "slabcloud"}]}))
+        os.environ["STONESCAN_SUPPLIERS"] = supfile
+        import importlib
+        importlib.reload(discover)
+        try:
+            added = discover.merge_slabcloud([
+                {"host": "mountaingranite.slabcloud.com", "slug": "mountaingranite", "name": "Mountaingranite", "provider": "slabcloud"},
+                {"host": "owstone.slabcloud.com", "slug": "owstone", "name": "x", "provider": "slabcloud"},  # dup host
+                {"host": "other.slabcloud.com", "slug": "owstone", "name": "y", "provider": "slabcloud"},    # dup slug
+            ])
+            self.assertEqual(added, 1)
+            entries = {e["host"]: e for e in discover.load_suppliers()}
+            self.assertEqual(entries["mountaingranite.slabcloud.com"]["provider"], "slabcloud")
+            self.assertNotIn("other.slabcloud.com", entries)  # slug already present
+        finally:
+            os.environ.pop("STONESCAN_SUPPLIERS", None)
+            importlib.reload(discover)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -420,6 +420,60 @@
     {
       "host": "qmg.stoneprofitsweb.com",
       "name": ""
+    },
+    {
+      "host": "marioandson.slabcloud.com",
+      "slug": "_h_marioandson",
+      "name": "Marioandson",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "gcuinc.slabcloud.com",
+      "slug": "_h_gcuinc",
+      "name": "Granitecountertopsunlimited",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "mettescabinetcorner.slabcloud.com",
+      "slug": "mettescabinetcorner",
+      "name": "Mettescabinetcorner",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "stonecountertopoutlet.slabcloud.com",
+      "slug": "stonecountertopoutlet",
+      "name": "Stonecountertopoutlet",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "zsoltgranite.slabcloud.com",
+      "slug": "zsoltgranite",
+      "name": "Zsoltgranitecorporation",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "mountaingranite.slabcloud.com",
+      "slug": "mountaingranite",
+      "name": "Mountaingranite",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "tithoftile.slabcloud.com",
+      "slug": "tithoftile",
+      "name": "Tithoftile",
+      "provider": "slabcloud"
+    },
+    {
+      "host": "inventory.agmimports.com",
+      "name": ""
+    },
+    {
+      "host": "inventory.elementsroom.com",
+      "name": ""
+    },
+    {
+      "host": "inventory.pacificshorestones.com",
+      "name": ""
     }
   ]
 }

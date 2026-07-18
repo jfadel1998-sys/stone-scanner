@@ -69,9 +69,19 @@ async def _read_creds(page) -> dict[str, Any]:
             // Primary + reliable in headless: the static footer/header custom files
             // hold the contact info even when the footer hasn't rendered.
             if (!c.phone || !c.email) {
-                const sub = location.hostname.split('.')[0];
-                for (const path of ['/custom/' + sub + '/CustomTop.html',
-                                    '/custom/' + sub + '/CustomBottom.html']) {
+                // The custom footer/header files live under the Stone Profits WEBNAME.
+                // On a normal <webname>.stoneprofitsweb.com host that equals the hostname
+                // label; on a distributor vanity host (inventory.<x>.com) it does NOT, so
+                // also recover the webname from a platform script src.
+                const subs = [location.hostname.split('.')[0]];
+                for (const s of document.scripts) {
+                    const m = (s.src || '').match(/stoneprofitsweb\\.com\\/([^\\/]+)\\//i);
+                    if (m && subs.indexOf(m[1]) < 0) subs.push(m[1]);
+                }
+                const paths = [];
+                for (const sub of subs) paths.push('/custom/' + sub + '/CustomTop.html',
+                                                   '/custom/' + sub + '/CustomBottom.html');
+                for (const path of paths) {
                     try {
                         const r = await fetch(path);
                         if (!r.ok) continue;

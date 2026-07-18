@@ -41,7 +41,7 @@ build/packaging details.
 | `stonescan/db.py` | SQLite schema + all query/storage helpers (materials, slabs, history, watchlist) |
 | `stonescan/ingest.py` | Orchestrator: crawl → normalize → store → history snapshot |
 | `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached) |
-| `stonescan/discover.py` | Passive-DNS + search discovery of public catalogs → suppliers.json. Multi-platform: sweeps Stone Profits **and** SlabWare subdomains (both multi-tenant on real wildcard subdomains); SlabCloud/UMI/StoneTrash aren't subdomain-enumerable so stay hand-seeded |
+| `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) `probe_sps_vanity()` fingerprints distributor vanity catalogs at `inventory.<distributor>.com` (Pacific Shore, AG&M, Elements Room — drop-in on the default provider, invisible to the subdomain sweep). UMI/StoneTrash single sites stay hand-seeded |
 | `stonescan/geocode.py` | Offline location → lat/long for the pin map (+ `locations.json` overrides) |
 | `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling (also re-applies merges) |
 | `stonescan/dedupe.py` | Data-quality curation: type-conflict + spelling merge candidates, `apply_aliases` fold |
@@ -49,7 +49,7 @@ build/packaging details.
 | `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist, Health, Discovery (candidate triage), Quality (merge review + type audit) |
 | `suppliers.json` | Editable allow-list of catalogs to crawl |
 | `locations.json` | Editable map pins for locations the geocoder can't resolve |
-| `stonescan.spec` / `build_exe.ps1` | PyInstaller packaging |
+| `stonescan.spec` / `build_exe.ps1` / `build_mac.sh` | PyInstaller packaging. Spec is platform-aware (WebView2/.NET deps gated to Windows, Cocoa/PyObjC to macOS); `build_exe.ps1` (Windows) and `build_mac.sh` (macOS) each build onedir + copy that OS's Chromium. **No cross-compile** — build each OS on that OS. |
 | `refresh.ps1` | Scheduled nightly refresh (installed as Windows task `StoneScannerRefresh`) |
 
 ## Gotchas (learned the hard way — see user memory for depth)
