@@ -71,7 +71,8 @@ def _store(conn, data, *, with_slabs: bool) -> tuple[int, int]:
 
 
 async def run_providers(entries: list[dict], *, delay: float, db_path: str,
-                        with_slabs: bool = False, limit_items: int = 0) -> tuple[int, int, int]:
+                        with_slabs: bool = False, limit_items: int = 0,
+                        progress=None) -> tuple[int, int, int]:
     """Crawl every non-StoneProfits supplier entry, one provider at a time."""
     from . import providers
 
@@ -80,29 +81,38 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
     for entry in entries:
         name = providers.provider_of(entry)
         label = entry.get("name") or entry.get("host")
+        n = 0
         try:
             crawl = providers.get(name)
             data = await crawl(entry, with_slabs=with_slabs, delay=delay,
                                limit=limit_items)
         except Exception as e:  # noqa: BLE001 - a broken provider must not kill the run
             print(f"  [err]  {label:<34} {name}: {e}")
+            if progress:
+                progress(label, 0)
             continue
         if not data.ok:
             db.upsert_supplier(conn, host=data.host, last_crawled=utc_now_iso(),
                                last_error=data.error or "no items returned")
             print(f"  [skip] {label:<34} {data.error}")
+            if progress:
+                progress(label, 0)
             continue
         try:
             n, ns = _store(conn, data, with_slabs=with_slabs)
         except Exception as e:  # noqa: BLE001
             db.upsert_supplier(conn, host=data.host, last_error=f"store failed: {e}")
             print(f"  [err]  {label:<34} store failed: {e}")
+            if progress:
+                progress(label, 0)
             continue
         items += n
         slabs += ns
         ok += 1
         note = f" (+{ns} slabs)" if with_slabs else ""
         print(f"  [ok]   {label:<34} {n:>5} materials{note}  [{name}]")
+        if progress:
+            progress(label, n)
     conn.close()
     return ok, items, slabs
 
@@ -120,7 +130,7 @@ def _errored_hosts(db_path: str, hosts: list[str]) -> set[str]:
 
 
 async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
-                         with_slabs, provider_limit) -> None:
+                         with_slabs, provider_limit, progress=None) -> None:
     """Crawl a mixed entry list once, routing each to Stone Profits or its provider."""
     from . import providers
     sps = [e["host"] for e in entries
@@ -130,20 +140,21 @@ async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
     if sps:
         print(f"Crawling {len(sps)} Stone Profits catalog(s)...\n")
         await run(sps, concurrency=concurrency, delay=delay, headless=headless,
-                  db_path=db_path, with_slabs=with_slabs)
+                  db_path=db_path, with_slabs=with_slabs, progress=progress)
     if other:
         kinds = ", ".join(sorted({providers.provider_of(e) for e in other}))
         print(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
         ok, items, slabs = await run_providers(
             other, delay=max(delay * 0.2, 0.2), db_path=db_path,
-            with_slabs=with_slabs, limit_items=provider_limit)
+            with_slabs=with_slabs, limit_items=provider_limit, progress=progress)
         print(f"\n  {ok} supplier(s), {items} materials"
               + (f", {slabs} slabs" if with_slabs else ""))
 
 
 async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1.5,
                   headless: bool = True, db_path: str = "", with_slabs: bool = False,
-                  provider_limit: int = 0, retry_errored: bool = False) -> None:
+                  provider_limit: int = 0, retry_errored: bool = False,
+                  progress=None) -> None:
     """Crawl a mixed supplier list, routing each entry to its provider.
 
     Every caller that crawls "everything in suppliers.json" must come through here:
@@ -157,7 +168,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
     db_path = db_path or str(db.DEFAULT_DB)
     await _crawl_entries(entries, concurrency=concurrency, delay=delay,
                          headless=headless, db_path=db_path, with_slabs=with_slabs,
-                         provider_limit=provider_limit)
+                         provider_limit=provider_limit, progress=progress)
 
     if retry_errored:
         failed = _errored_hosts(db_path, [e["host"] for e in entries])
@@ -166,7 +177,8 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             print(f"\nRetrying {len(retry)} catalog(s) that errored this run...\n")
             await _crawl_entries(retry, concurrency=concurrency, delay=delay,
                                  headless=headless, db_path=db_path,
-                                 with_slabs=with_slabs, provider_limit=provider_limit)
+                                 with_slabs=with_slabs, provider_limit=provider_limit,
+                                 progress=progress)
             still = _errored_hosts(db_path, [e["host"] for e in retry])
             print(f"\n  retry recovered {len(retry) - len(still)} of {len(retry)}; "
                   f"{len(still)} still failing.")
@@ -182,7 +194,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
 
 
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
-              db_path: str, with_slabs: bool = False) -> None:
+              db_path: str, with_slabs: bool = False, progress=None) -> None:
     conn = db.init_db(db_path)
     total_items = 0
     total_slabs = 0
@@ -191,6 +203,7 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
     async for result in crawl_hosts(
         hosts, concurrency=concurrency, delay_s=delay, headless=headless, with_slabs=with_slabs
     ):
+        n = 0
         supplier_id = db.upsert_supplier(
             conn,
             host=result.host,
@@ -232,6 +245,8 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                 print(f"  [err]  {result.host:<34} store failed: {e}")
         else:
             print(f"  [skip] {result.host:<34} {result.error}")
+        if progress:
+            progress(result.company or result.host, n)
 
     print("\n" + "=" * 60)
     s = db.stats(conn)

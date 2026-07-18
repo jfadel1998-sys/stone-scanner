@@ -14,7 +14,7 @@
   <div class="stats">
     {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
     {% if stats.last_updated %}<span class="fresh" title="Data reflects each supplier's public catalog at last crawl">· updated {{ stats.last_updated[:16].replace('T',' ') }} UTC</span>{% endif %}
-    <button id="refreshBtn" class="refreshbtn" title="Re-crawl all supplier catalogs (can take a while)">↻ Refresh</button>
+    <button id="refreshBtn" class="refreshbtn" title="Re-crawl all catalogs (materials only; runs in the background). Shift-click for a deep refresh that also pre-caches slab galleries + locations.">↻ Refresh</button>
     <span id="refreshMsg" class="refreshmsg"></span>
   </div>
 </header>
@@ -23,19 +23,23 @@
   var btn=document.getElementById('refreshBtn'), msg=document.getElementById('refreshMsg'), timer=null;
   function poll(){
     fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){
-      if(s.running){ btn.disabled=true; msg.textContent='⏳ '+(s.summary||'Refreshing…')+' (this can take many minutes)'; }
+      if(s.running){ btn.disabled=true; msg.textContent='⏳ '+(s.summary||'Refreshing…'); }
       else { clearInterval(timer); btn.disabled=false;
         if(s.done){ msg.textContent='✓ '+(s.summary||'Done')+' — reload to see changes.'; }
       }
     }).catch(function(){});
   }
-  btn && btn.addEventListener('click', function(){
-    if(!confirm('Re-crawl every supplier catalog now? This can take many minutes but runs in the background.')) return;
+  btn && btn.addEventListener('click', function(ev){
+    var deep = ev.shiftKey;
+    var m = deep
+      ? 'Deep refresh: re-crawl all catalogs AND pre-cache every slab gallery + locations. Much slower (can take hours). Continue?'
+      : 'Re-crawl all catalogs now (materials & prices only — slab photos load on demand). Runs in the background with live progress; the full list takes a while. Continue?';
+    if(!confirm(m)) return;
     btn.disabled=true; msg.textContent='⏳ Starting…';
-    fetch('/api/refresh', {method:'POST'}).then(function(){ timer=setInterval(poll, 4000); poll(); });
+    fetch('/api/refresh'+(deep?'?slabs=1':''), {method:'POST'}).then(function(){ timer=setInterval(poll, 3000); poll(); });
   });
   // resume polling if a refresh is already running (e.g. after navigating)
-  fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){ if(s.running){ timer=setInterval(poll,4000); poll(); } });
+  fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){ if(s.running){ timer=setInterval(poll,3000); poll(); } });
 })();
 </script>
 

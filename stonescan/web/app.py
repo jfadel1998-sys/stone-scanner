@@ -581,20 +581,33 @@ async def api_slabs(id: int):
         return JSONResponse({"slabs": [], "error": str(e)})
 
 
-_refresh = {"running": False, "done": False, "summary": "", "started_at": None}
+_refresh = {"running": False, "done": False, "summary": "", "done_count": 0, "total": 0}
 
 
 def _run_refresh_job(with_slabs: bool) -> None:
     from .. import discover as disc
     from ..ingest import run_all
-    _refresh.update(running=True, done=False, summary="Crawling catalogs…")
+    entries = disc.load_suppliers()
+    _refresh.update(running=True, done=False, summary="Starting…",
+                    done_count=0, total=len(entries), materials=0)
+
+    def progress(label: str, n: int) -> None:
+        _refresh["done_count"] += 1
+        _refresh["materials"] += max(n, 0)
+        shown = min(_refresh["done_count"], _refresh["total"])
+        _refresh["summary"] = (f"Crawled {shown}/{_refresh['total']} catalogs · "
+                               f"{_refresh['materials']} materials · now: {label[:30]}")
+
     try:
         # run_all, not run: suppliers.json is no longer all Stone Profits, and a
         # UMI/SlabWare entry sent to the Playwright crawler just fails.
+        # Materials only by default — slab galleries load on demand (see /api/slabs),
+        # so prefetching every gallery would turn a click into a multi-hour job now
+        # that the catalog is ~130k materials. `with_slabs` is the opt-in deep refresh.
         asyncio.run(run_all(
-            disc.load_suppliers(), concurrency=4, delay=1.0, headless=True,
+            entries, concurrency=4, delay=1.0, headless=True,
             db_path=str(db.DEFAULT_DB), with_slabs=with_slabs,
-            retry_errored=True,  # give same-run transient failures a second chance
+            retry_errored=True, progress=progress,
         ))
         conn = db.connect()
         s = db.stats(conn)
@@ -609,8 +622,10 @@ def _run_refresh_job(with_slabs: bool) -> None:
 
 
 @app.post("/api/refresh")
-def api_refresh(slabs: bool = True):
-    """Kick off a full re-crawl in the background (used by the UI's Refresh button)."""
+def api_refresh(slabs: bool = False):
+    """Kick off a full re-crawl in the background (the UI's Refresh button). Defaults
+    to materials only (fast); pass ?slabs=1 for a deep refresh that also pre-caches
+    slab galleries + locations (much slower — used by the nightly task)."""
     if _refresh["running"]:
         return JSONResponse({"running": True, "summary": _refresh["summary"]})
     threading.Thread(target=_run_refresh_job, args=(slabs,), daemon=True).start()
