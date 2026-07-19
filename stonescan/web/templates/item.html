@@ -2,7 +2,7 @@
 {% block title %}{{ m.item_name }} — {{ m.supplier_name }} · Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats"><a class="back" href="javascript:history.back()">‹ Back to results</a></div>
+<div class="stats"><a class="back" href="/" onclick="if(history.length>1){history.back();return false}">‹ Back to results</a></div>
 {% endblock %}
 
 {% block content %}

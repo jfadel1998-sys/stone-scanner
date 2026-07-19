@@ -377,13 +377,13 @@ def index(
     near: str = "",
     radius: str = "",
     min_sqft: str = "",
-    view: str = "table",
+    view: str = "grid",
     page: int = 1,
     added: int = -1,
     list: int = 0,
 ):
     conn = db.connect()
-    view = view if view in ("table", "grid") else "table"
+    view = view if view in ("table", "grid") else "grid"
     sort = sort if sort in SORTS else "relevance"
     limit = 60
     offset = max(page - 1, 0) * limit

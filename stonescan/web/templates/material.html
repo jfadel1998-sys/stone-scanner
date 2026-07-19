@@ -3,7 +3,7 @@
 
 {% block content %}
 <div class="material-head">
-  <a class="back" href="/">‹ Back to search</a>
+  <a class="back" href="/" onclick="if(history.length>1){history.back();return false}">‹ Back to search</a>
   <h1>{{ name }}{% if facts.new %} <span class="new">NEW</span>{% endif %}</h1>
   <p class="muted">
     {{ facts.types|join(' / ') }}{% if facts.colors %} · {{ facts.colors|join(', ') }}{% endif %}
