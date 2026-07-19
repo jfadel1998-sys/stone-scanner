@@ -119,6 +119,15 @@ _TILE_SF = (f"SUM(CASE WHEN {_IS_TILE} AND UPPER(COALESCE(m.uom,'')) = 'SF' "
             "THEN COALESCE(m.available_slabs,0) ELSE 0 END)")
 _HAS_TILE = f"MAX(CASE WHEN {_IS_TILE} THEN 1 ELSE 0 END)"
 
+# Card image: prefer a real product photo over a SlabCloud thumbnail. SlabCloud tenants
+# reuse a shared "coming soon" graphic (in many byte-variants) for un-photographed slabs,
+# so whenever a material also has a Stone Profits photo, that real photo should win; the
+# SlabCloud thumb is used only when it's the material's sole image.
+_CARD_IMG = ("COALESCE("
+             "MAX(CASE WHEN COALESCE(m.image_url,'') <> '' "
+             "AND m.image_url NOT LIKE '%slabcloud.com/slabs/%' THEN m.image_url END), "
+             "MAX(m.image_url))")
+
 # Total in-stock SLAB area. Sum each slab listing's own slabs×length×width BEFORE
 # aggregating (a group spans suppliers/variants, so MAX(length)×MAX(width) would
 # cross-multiply dims from different slabs); tiles contribute no slab area.
@@ -278,7 +287,7 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
                    {_SLABS} AS available_slabs, {_TILE_SF} AS tile_sf, {_HAS_TILE} AS has_tile,
                    MAX(m.avg_length) AS avg_length, MAX(m.avg_width) AS avg_width,
                    {_SQFT} AS total_sqft,
-                   MAX(m.image_url) AS image_url{miles_col}
+                   {_CARD_IMG} AS image_url{miles_col}
             FROM materials m JOIN suppliers s ON s.id = m.supplier_id
             WHERE {clause}
             GROUP BY {group_by}{having}
@@ -550,7 +559,11 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
         ),
         "new": any(r["new_arrival"] for r in rows),
     }
-    photos = [r["image_url"] for r in rows if r["image_url"]][:8]
+    # Lead the hero strip with real product photos; SlabCloud thumbnails (which include a
+    # shared "coming soon" placeholder for un-photographed slabs) sort last.
+    photos = [*dict.fromkeys(
+        sorted((r["image_url"] for r in rows if r["image_url"]),
+               key=lambda u: "slabcloud.com/slabs/" in u))][:8]
     # No photo of its own? Borrow a labeled representative from the same trade name.
     rep_photo = "" if photos else _representative_photos(conn, [_base_name(key)]).get(_base_name(key), "")
 
