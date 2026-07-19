@@ -60,6 +60,12 @@ def _product_url(host: str, item_id, source_url: str) -> str:
 templates.env.globals["product_url"] = _product_url
 
 
+def _usable_img(url) -> bool:
+    """SlabCloud fabricates /slabs/<slug>/<id>.jpg image URLs that 404 (its API exposes
+    no image), so treat those as no image rather than a broken one."""
+    return bool(url) and "slabcloud.com/slabs/" not in url
+
+
 def _distinct(conn, column: str) -> list[str]:
     # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
     # is stone/tile only (it remains queryable on the Quality audit page).
@@ -118,6 +124,14 @@ _SLABS = f"SUM(CASE WHEN {_IS_TILE} THEN 0 ELSE COALESCE(m.available_slabs,0) EN
 _TILE_SF = (f"SUM(CASE WHEN {_IS_TILE} AND UPPER(COALESCE(m.uom,'')) = 'SF' "
             "THEN COALESCE(m.available_slabs,0) ELSE 0 END)")
 _HAS_TILE = f"MAX(CASE WHEN {_IS_TILE} THEN 1 ELSE 0 END)"
+
+# SlabCloud fabricates /slabs/<slug>/<id>.jpg image URLs that 404 (its API exposes no
+# image), and those sort high enough to beat real photos in MAX() — so never pick one
+# as a material's card image; a group with only SlabCloud images falls back to the
+# placeholder, and any material carried by another supplier shows that real photo.
+_JUNK_IMG = "slabcloud.com/slabs/"
+_IMG = ("MAX(CASE WHEN COALESCE(m.image_url,'') <> '' "
+        f"AND m.image_url NOT LIKE '%{_JUNK_IMG}%' THEN m.image_url END)")
 
 # Total in-stock SLAB area. Sum each slab listing's own slabs×length×width BEFORE
 # aggregating (a group spans suppliers/variants, so MAX(length)×MAX(width) would
@@ -278,7 +292,7 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
                    {_SLABS} AS available_slabs, {_TILE_SF} AS tile_sf, {_HAS_TILE} AS has_tile,
                    MAX(m.avg_length) AS avg_length, MAX(m.avg_width) AS avg_width,
                    {_SQFT} AS total_sqft,
-                   MAX(m.image_url) AS image_url{miles_col}
+                   {_IMG} AS image_url{miles_col}
             FROM materials m JOIN suppliers s ON s.id = m.supplier_id
             WHERE {clause}
             GROUP BY {group_by}{having}
@@ -451,7 +465,7 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
                 s["tile_sf"] += r["available_slabs"] or 0
         else:
             s["slabs"] += r["available_slabs"] or 0
-        if not s["image_url"] and r["image_url"]:
+        if not s["image_url"] and _usable_img(r["image_url"]):
             # Keep the outbound link on the same listing as the photo we show.
             s["image_url"], s["id"], s["item_id"] = r["image_url"], r["id"], r["item_id"]
             s["source_url"] = r["source_url"] or s["source_url"]
@@ -505,7 +519,7 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
         ),
         "new": any(r["new_arrival"] for r in rows),
     }
-    photos = [r["image_url"] for r in rows if r["image_url"]][:8]
+    photos = [r["image_url"] for r in rows if _usable_img(r["image_url"])][:8]
 
     mtype = rows[0]["material_type"]
     similar = [dict(x) for x in conn.execute(

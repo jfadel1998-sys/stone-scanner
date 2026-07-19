@@ -89,7 +89,7 @@
 <div class="cardgrid">
   {% for r in rows %}
   <a class="matcard" href="{{ mat_href(r) }}">
-    {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">
+    {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'">
     {% else %}<span class="cardph">🪨</span>{% endif %}
     <span class="cardmeta">
       <b>{{ mat_name(r) }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
@@ -117,7 +117,7 @@
     <tr>
       <td class="thumbcell">
         <a href="{{ mat_href(r) }}">
-        {% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">
+        {% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
         {% else %}<span class="thumb noimg"></span>{% endif %}</a>
       </td>
       <td class="name"><a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</td>

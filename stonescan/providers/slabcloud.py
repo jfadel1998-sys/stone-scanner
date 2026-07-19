@@ -134,7 +134,10 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.3,
 
 
 def _img(slug: str, slab_id: Any) -> str:
-    return f"{SITE}/slabs/{slug}/{slab_id}.jpg" if slab_id else ""
+    # SlabCloud's API exposes no image, and the guessable /slabs/<slug>/<id>.jpg path
+    # 404s (verified) — so publish no image rather than a broken one. (Kept as a hook in
+    # case a real image endpoint surfaces.)
+    return ""
 
 
 def _now() -> str:
