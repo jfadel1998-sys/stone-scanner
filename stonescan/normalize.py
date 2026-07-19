@@ -269,8 +269,9 @@ def normalize_item(
         except (TypeError, ValueError):
             return None
 
+    iid = _text(item.get("ItemID"))
     return {
-        "item_id": _text(item.get("ItemID")),
+        "item_id": iid,
         "item_name": name,
         "name_norm": name.upper(),
         "material_key": material_key(name, mtype),
@@ -293,6 +294,10 @@ def normalize_item(
         "new_arrival": 1 if _text(item.get("NewArrival")) else 0,
         "image_filename": _text(item.get("Filename")),
         "image_url": build_image_url(image_base, item.get("Filename")),
-        "source_url": f"https://{supplier_host}/",
+        # Deep-link straight to the product: the SPS storefront routes
+        # /InventoryDetail/<ItemID> to the item (falls back to the catalog root only
+        # when we somehow have no item id).
+        "source_url": (f"https://{supplier_host}/InventoryDetail/{iid}"
+                       if iid else f"https://{supplier_host}/"),
         "crawled_at": crawled_at,
     }

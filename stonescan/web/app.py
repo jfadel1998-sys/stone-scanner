@@ -42,6 +42,24 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 
+def _product_url(host: str, item_id, source_url: str) -> str:
+    """Best outbound link to the *exact* product on the supplier's own site.
+
+    Only the Stone Profits crawl path stores a bare-root source_url ('https://<host>/'),
+    and those tenants deep-link to a product at /InventoryDetail/<ItemID> (verified) — so
+    upgrade a bare root to that deep link. Every other provider already stores a real
+    product/listing URL in source_url, so pass it straight through."""
+    src = (source_url or "").strip()
+    if src and src.rstrip("/") != f"https://{host}":
+        return src  # a real product/listing link from a non-Stone-Profits provider
+    if item_id:
+        return f"https://{host}/InventoryDetail/{item_id}"
+    return src or f"https://{host}/"
+
+
+templates.env.globals["product_url"] = _product_url
+
+
 def _distinct(conn, column: str) -> list[str]:
     # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
     # is stone/tile only (it remains queryable on the Quality audit page).
@@ -88,15 +106,34 @@ def _close_words(conn, term: str) -> list[str]:
 
 
 # Total in-stock area of a grouped product, in square feet (dims are inches).
-_SQFT = "SUM(m.available_slabs) * MAX(m.avg_length) * MAX(m.avg_width) / 144.0"
+# available_slabs is a genuine slab count ONLY for slab listings. For tiles the crawlers
+# put a square-foot (or piece) quantity in that column, so a tile must never be summed as
+# a "slab". product_form is the reliable signal (uom=SF also marks ~11k real slabs, so it
+# can't be used). _SLABS = slab units only; _TILE_SF = the tile quantity, shown as area.
+_IS_TILE = "UPPER(COALESCE(m.product_form,'')) LIKE '%TILE%'"
+_SLABS = f"SUM(CASE WHEN {_IS_TILE} THEN 0 ELSE COALESCE(m.available_slabs,0) END)"
+# Tile area only where the quantity is genuinely square feet (uom=SF). Other tile rows
+# carry a piece/placeholder count that isn't an area, so don't label them "ft²"; a plain
+# has-tile flag still lets such tile-only materials count as in-stock and read as "tile".
+_TILE_SF = (f"SUM(CASE WHEN {_IS_TILE} AND UPPER(COALESCE(m.uom,'')) = 'SF' "
+            "THEN COALESCE(m.available_slabs,0) ELSE 0 END)")
+_HAS_TILE = f"MAX(CASE WHEN {_IS_TILE} THEN 1 ELSE 0 END)"
+
+# Total in-stock SLAB area. Sum each slab listing's own slabs×length×width BEFORE
+# aggregating (a group spans suppliers/variants, so MAX(length)×MAX(width) would
+# cross-multiply dims from different slabs); tiles contribute no slab area.
+_SQFT = (f"SUM(CASE WHEN {_IS_TILE} THEN 0 ELSE COALESCE(m.available_slabs,0) "
+         "* COALESCE(m.avg_length,0) * COALESCE(m.avg_width,0) END) / 144.0")
 
 SORTS = {
-    "relevance": "m.material_key, m.item_name, supplier_name",
-    "slabs": "SUM(m.available_slabs) DESC, m.material_key",
+    # Material-centric relevance: surface the materials the market actually carries
+    # widely (many suppliers, lots of slab stock) before one-off/granular SKUs.
+    "relevance": f"COUNT(DISTINCT m.supplier_id) DESC, {_SLABS} DESC, m.material_key",
+    "slabs": f"{_SLABS} DESC, m.material_key",
     "size": "MAX(m.avg_length) DESC, m.material_key",
     "new": "MAX(m.new_arrival) DESC, m.material_key",
     "area": f"{_SQFT} DESC, m.material_key",
-    "distance": "miles ASC, SUM(m.available_slabs) DESC",  # only valid when near-active
+    "distance": f"miles ASC, {_SLABS} DESC",  # only valid when near-active
 }
 
 
@@ -188,13 +225,16 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     tw, tp = term_sql([[t] for t in parsed["terms"]])
     where, params = base_where + tw, base_params + tp
 
-    # Collapse a supplier's duplicate listings of the same product (one row per
-    # physical slab, or re-entered batches) into a single line with a slab total.
-    group_by = "m.supplier_id, m.name_norm, m.thickness, m.finish, m.product_form"
+    # Group ACROSS suppliers: one row per material (its cross-supplier material_key),
+    # so "Calacatta Gold" is a single card carrying a supplier count + a total slab
+    # count — not one row per supplier/variant. The handful of empty-key materials
+    # stay individual (grouped on their own id) rather than collapsing together.
+    group_by = ("CASE WHEN COALESCE(m.material_key, '') = '' "
+                "THEN 'id:' || m.id ELSE m.material_key END")
     # Aggregates (slab total, total area) are grouped, so filter them at HAVING time.
     have = []
     if in_stock or min_sqft:  # needing enough area implies needing stock
-        have.append("SUM(m.available_slabs) > 0")
+        have.append(f"({_SLABS} > 0 OR {_HAS_TILE} = 1)")
     if min_sqft:
         have.append(f"{_SQFT} >= ?")
     having = (" HAVING " + " AND ".join(have)) if have else ""
@@ -228,15 +268,17 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
                 clause, params, total = fclause, fparams, ftotal
                 parsed["fuzzy"] = sorted({w for v in variants for w in v[1:]})
 
-    miles_col = ", nearest_miles(MAX(m.locations)) AS miles" if near_active else ""
+    # miles = distance to the NEAREST stocking supplier for this material.
+    miles_col = ", MIN(nearest_miles(m.locations)) AS miles" if near_active else ""
     rows = conn.execute(
-        f"""SELECT MIN(m.id) AS id, m.item_name, m.material_type, m.color, m.thickness,
-                   m.product_form, m.material_key, MAX(m.new_arrival) AS new_arrival,
-                   COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
-                   SUM(m.available_slabs) AS available_slabs,
+        f"""SELECT MIN(m.id) AS id, COALESCE(m.material_key, '') AS material_key,
+                   MIN(m.item_name) AS item_name, MAX(m.material_type) AS material_type,
+                   MAX(m.color) AS color, MAX(m.new_arrival) AS new_arrival,
+                   COUNT(DISTINCT m.supplier_id) AS suppliers,
+                   {_SLABS} AS available_slabs, {_TILE_SF} AS tile_sf, {_HAS_TILE} AS has_tile,
                    MAX(m.avg_length) AS avg_length, MAX(m.avg_width) AS avg_width,
                    {_SQFT} AS total_sqft,
-                   MAX(m.locations) AS locations, MAX(m.image_url) AS image_url{miles_col}
+                   MAX(m.image_url) AS image_url{miles_col}
             FROM materials m JOIN suppliers s ON s.id = m.supplier_id
             WHERE {clause}
             GROUP BY {group_by}{having}
@@ -302,7 +344,11 @@ def index(
     limit = 60
     offset = max(page - 1, 0) * limit
     ml, mw = _to_float(min_length), _to_float(min_width)
-    radius_mi = _to_float(radius) or 150.0
+    # Clamp to a positive radius: a 0/blank/negative value falls back to the default,
+    # so near_ok (origin resolved) can't diverge from near_active (radius > 0) and leave
+    # the template rendering a miles column the query never selected.
+    radius_mi = _to_float(radius)
+    radius_mi = radius_mi if radius_mi > 0 else 150.0
     origin, near_label = _resolve_near(near)
     total, rows, parsed = _search(
         conn, q=q, material_type=material_type, color=color,
@@ -360,7 +406,7 @@ def index(
 
 
 @app.get("/material", response_class=HTMLResponse)
-def material(request: Request, key: str):
+def material(request: Request, key: str, added: int = -1, list: int = 0):
     """Canonical page for a material: the whole market for it in one view —
     photos, spec ranges, every supplier that carries it, and similar stones."""
     conn = db.connect()
@@ -389,13 +435,22 @@ def material(request: Request, key: str):
         s = by_supplier.setdefault(r["supplier_name"], {
             "supplier_name": r["supplier_name"], "supplier_host": r["supplier_host"],
             "phone": r["supplier_phone"], "email": r["supplier_email"],
-            "slabs": 0, "image_url": "", "id": r["id"], "item_id": r["item_id"],
+            "slabs": 0, "tile_sf": 0, "has_tile": False,
+            "image_url": "", "id": r["id"], "item_id": r["item_id"],
             # Each platform has its own public URL shape, so carry the one the
             # crawler actually saw rather than reconstructing it.
             "source_url": r["source_url"] or "",
             "listings": [], "locations": set(),
         })
-        s["slabs"] += r["available_slabs"] or 0
+        # available_slabs is a slab count only for slab listings; for tiles it's a square
+        # foot (uom=SF) or piece/placeholder quantity — surface real areas as tile area,
+        # everything else just as "tile", never as slabs.
+        if "TILE" in (r["product_form"] or "").upper():
+            s["has_tile"] = True
+            if (r["uom"] or "").upper() == "SF":
+                s["tile_sf"] += r["available_slabs"] or 0
+        else:
+            s["slabs"] += r["available_slabs"] or 0
         if not s["image_url"] and r["image_url"]:
             # Keep the outbound link on the same listing as the photo we show.
             s["image_url"], s["id"], s["item_id"] = r["image_url"], r["id"], r["item_id"]
@@ -436,7 +491,12 @@ def material(request: Request, key: str):
         "types": uniq("material_type"), "colors": clean_colors(),
         "finishes": uniq("finish"), "thicknesses": sorted_thicknesses(),
         "origins": uniq("origin"), "forms": uniq("product_form"),
-        "slabs": sum(r["available_slabs"] or 0 for r in rows),
+        "slabs": sum(r["available_slabs"] or 0 for r in rows
+                     if "TILE" not in (r["product_form"] or "").upper()),
+        "tile_sf": sum(r["available_slabs"] or 0 for r in rows
+                       if "TILE" in (r["product_form"] or "").upper()
+                       and (r["uom"] or "").upper() == "SF"),
+        "has_tile": any("TILE" in (r["product_form"] or "").upper() for r in rows),
         "suppliers": len(suppliers_list),
         "listings": len(rows),
         "size_range": (
@@ -460,10 +520,12 @@ def material(request: Request, key: str):
            LIMIT 12""",
         (mtype, key, rows[0]["color"] or "", rows[0]["color"] or ""),
     )]
+    lists = db.get_lists(conn)
     conn.close()
     return templates.TemplateResponse(request, "material.html", {
         "rows": rows, "name": name, "key": key, "suppliers_list": suppliers_list,
         "facts": facts, "photos": photos, "similar": similar,
+        "lists": lists, "added": added, "added_list": list,
     })
 
 

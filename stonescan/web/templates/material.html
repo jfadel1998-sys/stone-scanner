@@ -8,8 +8,11 @@
   <p class="muted">
     {{ facts.types|join(' / ') }}{% if facts.colors %} · {{ facts.colors|join(', ') }}{% endif %}
     · carried by {{ facts.suppliers }} supplier{{ '' if facts.suppliers == 1 else 's' }}
-    · {{ facts.slabs }} slab{{ '' if facts.slabs == 1 else 's' }} in stock
+    {% if facts.slabs %}· {{ facts.slabs }} slab{{ '' if facts.slabs == 1 else 's' }} in stock{% endif %}
+    {% if facts.tile_sf %}· {{ facts.tile_sf|round|int }} ft² tile{% elif facts.has_tile and not facts.slabs %}· sold as tile{% endif %}
   </p>
+  {% if added == 1 %}<p class="hintline"><span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span></p>
+  {% elif added == 0 %}<p class="hintline"><span class="okchip warn">Already on that list</span></p>{% endif %}
 </div>
 
 {% if photos %}
@@ -37,7 +40,7 @@
   <table class="materials">
     <thead>
       <tr><th></th><th>Supplier</th><th>Listed as</th><th>Thk</th><th class="num">Slabs</th>
-          <th>Location</th><th>Contact</th><th></th></tr>
+          <th>Location</th><th>Contact</th><th></th><th></th></tr>
     </thead>
     <tbody>
     {% for s in suppliers_list %}
@@ -56,7 +59,7 @@
           {% if s.listings|length > 3 %}<span class="muted">+{{ s.listings|length - 3 }} more variant(s)</span>{% endif %}
         </td>
         <td class="muted">{{ s.listings|map(attribute='thickness')|select|unique|join(', ') }}</td>
-        <td class="num">{{ s.slabs or '—' }}</td>
+        <td class="num">{% if s.slabs %}{{ s.slabs }}{% elif s.tile_sf %}<span class="milechip" title="Sold as tile — measured by area, not slab count">{{ s.tile_sf|round|int }} ft² tile</span>{% elif s.has_tile %}<span class="milechip" title="Sold as tile">tile</span>{% else %}—{% endif %}</td>
         <td class="muted loc">{{ s.locations[:2]|join(', ') }}</td>
         <td class="muted">
           {% if s.phone %}<div>{{ s.phone }}</div>{% endif %}
@@ -64,11 +67,21 @@
           {% if not s.phone and not s.email %}—{% endif %}
         </td>
         <td>
-          {# source_url is what the crawler actually saw. Only Stone Profits uses
-             /InventoryDetail/<id>; building that for any other platform 404s. #}
-          {% if s.source_url %}<a class="compare" href="{{ s.source_url }}" target="_blank" rel="noopener">on their site ↗</a>
-          {% elif s.item_id %}<a class="compare" href="https://{{ s.supplier_host }}/InventoryDetail/{{ s.item_id }}" target="_blank" rel="noopener">on their site ↗</a>
-          {% else %}<a class="compare" href="https://{{ s.supplier_host }}/" target="_blank" rel="noopener">visit ↗</a>{% endif %}
+          {# Deep-link to the exact product; product_url() upgrades a Stone Profits
+             bare-root to /InventoryDetail/<id> and passes real URLs through unchanged. #}
+          <a class="compare" href="{{ product_url(s.supplier_host, s.item_id, s.source_url) }}" target="_blank" rel="noopener">on their site ↗</a>
+        </td>
+        <td>
+          {% if lists %}
+          <form class="addform" method="post" action="/lists/add">
+            <input type="hidden" name="material_id" value="{{ s.id }}">
+            <input type="hidden" name="back" value="/material?key={{ key|urlencode }}">
+            <select name="list_id" title="Add this supplier's listing to a sourcing list">
+              {% for l in lists %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+            </select>
+            <button title="Add to this list">＋</button>
+          </form>
+          {% else %}<a class="addnew" href="/lists" title="Create a sourcing list first">＋ list</a>{% endif %}
         </td>
       </tr>
     {% endfor %}

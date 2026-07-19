@@ -35,21 +35,20 @@
   <p class="hintline muted">Tip: “Back in stock” alerts appear here once the app has crawled at least twice (it compares each night's inventory to the last).</p>
   {% endif %}
   <table class="materials">
-    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th><th>Supplier</th><th class="num">Slabs</th><th></th></tr></thead>
+    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th class="num">Suppliers</th><th class="num">Slabs</th></tr></thead>
     <tbody>
     {% for r in rows %}
+      {% set href = ('/material?key=' ~ (r.material_key|urlencode)) if r.material_key else ('/item?id=' ~ r.id) %}
       <tr>
-        <td class="thumbcell"><a href="/item?id={{ r.id }}">{% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</a></td>
-        <td class="name"><a class="itemlink" href="/item?id={{ r.id }}">{{ r.item_name }}</a> <span class="new">NEW</span></td>
+        <td class="thumbcell"><a href="{{ href }}">{% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</a></td>
+        <td class="name"><a class="itemlink" href="{{ href }}">{{ (r.material_key.split('|')[0] or r.item_name)|title }}</a> <span class="new">NEW</span></td>
         <td>{{ r.material_type }}</td>
         <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
-        <td>{{ r.thickness }}</td>
-        <td>{{ r.supplier_name }}</td>
-        <td class="num">{{ r.available_slabs or '' }}</td>
-        <td><a class="compare" href="/material?key={{ r.material_key | urlencode }}">compare →</a></td>
+        <td class="num">{{ r.suppliers }}</td>
+        <td class="num">{% if r.available_slabs %}{{ r.available_slabs }}{% elif r.tile_sf %}<span class="milechip">{{ r.tile_sf|round|int }} ft² tile</span>{% elif r.has_tile %}<span class="milechip">tile</span>{% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="8" class="empty">No new arrivals flagged right now.</td></tr>
+      <tr><td colspan="6" class="empty">No new arrivals flagged right now.</td></tr>
     {% endfor %}
     </tbody>
   </table>

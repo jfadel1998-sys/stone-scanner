@@ -34,7 +34,14 @@
     </div>
 
     <div class="inv-box">
+      {% set is_tile = 'TILE' in (m.product_form or '')|upper %}
+      {% if is_tile and (m.uom or '')|upper == 'SF' %}
+      <div class="inv-stat"><b>{{ m.available_slabs|round|int }}</b><span>ft² tile available</span></div>
+      {% elif is_tile %}
+      <div class="inv-stat"><b>Tile</b><span>sold as {{ (m.product_form or 'tile')|lower }}</span></div>
+      {% else %}
       <div class="inv-stat"><b>{{ m.available_slabs or 0 }}</b><span>slabs available</span></div>
+      {% endif %}
       {% if m.avg_length and m.avg_width %}
       <div class="inv-stat"><b>{{ m.avg_length|int }}×{{ m.avg_width|int }}</b><span>avg size (in)</span></div>{% endif %}
       {% if m.available_qty %}
@@ -54,7 +61,7 @@
     <div class="actions">
       {# /InventoryDetail/<id> is a Stone Profits URL shape; other platforms store
          their own real link in source_url. #}
-      <a class="btn" href="{{ m.source_url or ('https://' ~ m.supplier_host ~ '/' ~ (('InventoryDetail/' ~ m.item_id) if m.item_id else '')) }}" target="_blank" rel="noopener">View this on {{ m.supplier_name }}'s live catalog ↗</a>
+      <a class="btn" href="{{ product_url(m.supplier_host, m.item_id, m.source_url) }}" target="_blank" rel="noopener">View this on {{ m.supplier_name }}'s live catalog ↗</a>
       <a class="btn ghost" href="/material?key={{ m.material_key | urlencode }}">Compare all suppliers</a>
       {% if lists %}
       <form class="addform detailadd" method="post" action="/lists/add">
@@ -123,7 +130,7 @@
         <td class="num muted">{{ o.variants }}</td>
         <td>
           <a class="compare" href="/item?id={{ o.id }}">view →</a>
-          <a class="compare" href="{{ o.source_url or ('https://' ~ o.supplier_host ~ '/' ~ (('InventoryDetail/' ~ o.item_id) if o.item_id else '')) }}" target="_blank" rel="noopener">site ↗</a>
+          <a class="compare" href="{{ product_url(o.supplier_host, o.item_id, o.source_url) }}" target="_blank" rel="noopener">site ↗</a>
         </td>
       </tr>
     {% endfor %}
