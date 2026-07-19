@@ -289,6 +289,50 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     return total, [dict(r) for r in rows], parsed
 
 
+def _base_name(material_key) -> str:
+    """Trade-name segment of a material_key ('river white|granite' -> 'river white')."""
+    return (material_key or "").split("|")[0]
+
+
+def _representative_photos(conn, bases) -> dict:
+    """One real catalog photo per trade name (the most-stocked listing's image) for the
+    given base names — a labeled 'representative' likeness for materials that have no
+    photo of their own. Only specific (multi-word) names are looked up: a single generic
+    word like 'white' would borrow an unrelated stone."""
+    bases = {b for b in bases if b and len(b.split()) >= 2}
+    if not bases:
+        return {}
+    # Match each base as a material_key range [<base>|, <base>}) so idx_mat_key is used —
+    # a computed "base-of-key IN (...)" would full-scan the whole materials table.
+    conds, params = [], []
+    for b in bases:
+        conds.append("(material_key >= ? AND material_key < ?)")
+        params += [b + "|", b + "}"]
+    best: dict[str, tuple] = {}
+    for r in conn.execute(
+        f"""SELECT material_key, image_url, available_slabs FROM materials
+            WHERE ({' OR '.join(conds)})
+                  AND material_type <> 'Accessory / Non-Slab'
+                  AND COALESCE(image_url,'') <> ''""",
+        params,
+    ):
+        b = _base_name(r["material_key"])
+        slabs = r["available_slabs"] or 0
+        if b not in best or slabs > best[b][1]:
+            best[b] = (r["image_url"], slabs)
+    return {b: v[0] for b, v in best.items()}
+
+
+def _attach_rep_photos(conn, rows) -> None:
+    """Set row['rep_image'] on any result row lacking a photo of its own, when another
+    material with the same (multi-word) trade name has a real catalog photo to stand in."""
+    reps = _representative_photos(conn, [_base_name(r.get("material_key")) for r in rows
+                                         if not r.get("image_url")])
+    for r in rows:
+        if not r.get("image_url") and _base_name(r.get("material_key")) in reps:
+            r["rep_image"] = reps[_base_name(r.get("material_key"))]
+
+
 def _resolve_near(near: str):
     """Resolve a typed origin ('Dallas', 'Charlotte NC') to (lat, lon), offline.
     Returns ((lat, lon)|None, label). Same city dataset the map uses, so an origin
@@ -359,6 +403,7 @@ def index(
         min_sqft=_to_float(min_sqft),
         limit=limit, offset=offset,
     )
+    _attach_rep_photos(conn, rows)
     ctx = {
         "request": request,
         "rows": rows,
@@ -506,6 +551,8 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
         "new": any(r["new_arrival"] for r in rows),
     }
     photos = [r["image_url"] for r in rows if r["image_url"]][:8]
+    # No photo of its own? Borrow a labeled representative from the same trade name.
+    rep_photo = "" if photos else _representative_photos(conn, [_base_name(key)]).get(_base_name(key), "")
 
     mtype = rows[0]["material_type"]
     similar = [dict(x) for x in conn.execute(
@@ -524,7 +571,7 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
     conn.close()
     return templates.TemplateResponse(request, "material.html", {
         "rows": rows, "name": name, "key": key, "suppliers_list": suppliers_list,
-        "facts": facts, "photos": photos, "similar": similar,
+        "facts": facts, "photos": photos, "rep_photo": rep_photo, "similar": similar,
         "lists": lists, "added": added, "added_list": list,
     })
 
@@ -812,6 +859,7 @@ def whats_new(request: Request, page: int = 1):
         conn, q="", material_type="", color="", thickness="", supplier="",
         new_only=True, limit=limit, offset=offset,
     )
+    _attach_rep_photos(conn, rows)
     restock = _restock_since_last(conn)
     stats = db.stats(conn)
     conn.close()

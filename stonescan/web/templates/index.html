@@ -90,6 +90,7 @@
   {% for r in rows %}
   <a class="matcard" href="{{ mat_href(r) }}">
     {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'">
+    {% elif r.rep_image %}<img loading="lazy" src="{{ r.rep_image }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'"><span class="repbadge" title="A photo of the same-named stone from another listing — representative only; the actual slab varies">representative</span>
     {% else %}<span class="cardph">🪨</span>{% endif %}
     <span class="cardmeta">
       <b>{{ mat_name(r) }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
@@ -118,9 +119,10 @@
       <td class="thumbcell">
         <a href="{{ mat_href(r) }}">
         {% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
+        {% elif r.rep_image %}<img class="thumb" loading="lazy" src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone — the actual slab varies" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
         {% else %}<span class="thumb noimg"></span>{% endif %}</a>
       </td>
-      <td class="name"><a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</td>
+      <td class="name"><a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}{% if r.rep_image %} <span class="repchip" title="The shown photo is a representative of the same-named stone from another listing — natural stone varies">≈ ref photo</span>{% endif %}</td>
       <td>{{ r.material_type }}</td>
       <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
       <td class="num">{{ r.suppliers }}</td>

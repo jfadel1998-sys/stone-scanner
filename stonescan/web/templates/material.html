@@ -19,6 +19,11 @@
 <div class="herostrip">
   {% for p in photos %}<img loading="lazy" src="{{ p }}" alt="" onerror="this.remove()">{% endfor %}
 </div>
+{% elif rep_photo %}
+<div class="herostrip">
+  <img loading="lazy" src="{{ rep_photo }}" alt="" onerror="this.closest('.herostrip').remove()">
+</div>
+<p class="repnote">≈ Representative photo — of the same-named stone from another listing. This exact material published no photo of its own, and natural stone varies, so the actual slab will differ.</p>
 {% endif %}
 
 <div class="block">

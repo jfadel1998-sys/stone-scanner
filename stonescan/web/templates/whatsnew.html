@@ -40,8 +40,8 @@
     {% for r in rows %}
       {% set href = ('/material?key=' ~ (r.material_key|urlencode)) if r.material_key else ('/item?id=' ~ r.id) %}
       <tr>
-        <td class="thumbcell"><a href="{{ href }}">{% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</a></td>
-        <td class="name"><a class="itemlink" href="{{ href }}">{{ (r.material_key.split('|')[0] or r.item_name)|title }}</a> <span class="new">NEW</span></td>
+        <td class="thumbcell"><a href="{{ href }}">{% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">{% elif r.rep_image %}<img class="thumb" loading="lazy" src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">{% else %}<span class="thumb noimg"></span>{% endif %}</a></td>
+        <td class="name"><a class="itemlink" href="{{ href }}">{{ (r.material_key.split('|')[0] or r.item_name)|title }}</a> <span class="new">NEW</span>{% if r.rep_image %} <span class="repchip" title="Representative photo of the same-named stone — natural stone varies">≈ ref photo</span>{% endif %}</td>
         <td>{{ r.material_type }}</td>
         <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
         <td class="num">{{ r.suppliers }}</td>

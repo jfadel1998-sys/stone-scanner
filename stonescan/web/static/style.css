@@ -482,10 +482,20 @@ footer {
 
 .cardgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; padding: 16px var(--pad-x) 34px; }
 .matcard {
+  position: relative;
   border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden;
   background: var(--panel); color: var(--ink); display: block; box-shadow: var(--shadow-sm);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
+/* representative-photo markers (a borrowed same-name likeness, not the actual slab) */
+.repbadge {
+  position: absolute; top: 8px; left: 8px; z-index: 1; pointer-events: none;
+  padding: 2px 9px; border-radius: var(--r-pill); background: rgba(20, 17, 12, .66); color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+.repchip { display: inline-block; padding: 1px 7px; border-radius: var(--r-pill); background: var(--chip); color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .02em; vertical-align: middle; }
+.repnote { padding: 6px var(--pad-x) 2px; color: var(--muted); font-size: 12.5px; max-width: 70ch; }
 .matcard:hover { border-color: var(--accent); text-decoration: none; box-shadow: var(--shadow-lg); transform: translateY(-3px); }
 .matcard img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: var(--chip); }
 .matcard img.broken { visibility: hidden; }
