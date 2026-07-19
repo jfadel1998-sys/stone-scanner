@@ -1,19 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ meta.name }} — sourcing list · Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists" class="active">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-  <div class="stats">{{ stats.materials }} materials · {{ stats.suppliers }} suppliers</div>
-</header>
+{% extends "base.html" %}
+{% block title %}{{ meta.name }} — sourcing list · Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats">{{ stats.materials }} materials · {{ stats.suppliers }} suppliers</div>
+{% endblock %}
+
+{% block content %}
 <div class="material-head">
   <a class="back" href="/lists">‹ All lists</a>
   <h1>{{ meta.name }}</h1>
@@ -77,7 +69,6 @@
 {% else %}
 <p class="empty">This list is empty. Search for material and use the ＋ button on any result to add it here.</p>
 {% endfor %}
+{% endblock %}
 
-<footer>Availability reflects each supplier's public catalog at last crawl. Items are kept by supplier + catalog item id, so they survive a re-crawl.</footer>
-</body>
-</html>
+{% block footer %}Availability reflects each supplier's public catalog at last crawl. Items are kept by supplier + catalog item id, so they survive a re-crawl.{% endblock %}

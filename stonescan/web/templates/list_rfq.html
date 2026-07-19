@@ -1,18 +1,7 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Quote requests — {{ meta.name }}</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/lists" class="active">📋 Lists</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-</header>
+{% extends "base.html" %}
+{% block title %}Quote requests — {{ meta.name }}{% endblock %}
 
+{% block content %}
 <div class="material-head">
   <a class="back" href="/list?id={{ meta.id }}">‹ Back to {{ meta.name }}</a>
   <h1>Request quotes</h1>
@@ -39,7 +28,6 @@
 {% else %}
 <p class="empty">This list is empty — add material to it first.</p>
 {% endfor %}
+{% endblock %}
 
-<footer>Contact details come from each supplier's own public catalog page.</footer>
-</body>
-</html>
+{% block footer %}Contact details come from each supplier's own public catalog page.{% endblock %}

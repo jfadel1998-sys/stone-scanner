@@ -1,18 +1,7 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ name }} — every supplier · Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand"><a href="/">🪨 Stone Scanner</a>
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-</header>
+{% extends "base.html" %}
+{% block title %}{{ name }} — every supplier · Stone Scanner{% endblock %}
 
+{% block content %}
 <div class="material-head">
   <a class="back" href="/">‹ Back to search</a>
   <h1>{{ name }}{% if facts.new %} <span class="new">NEW</span>{% endif %}</h1>
@@ -104,7 +93,6 @@
   </div>
 </div>
 {% endif %}
+{% endblock %}
 
-<footer>Availability and sizes reflect each supplier's public catalog at last crawl.</footer>
-</body>
-</html>
+{% block footer %}Availability and sizes reflect each supplier's public catalog at last crawl.{% endblock %}

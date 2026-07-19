@@ -1,19 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Supplier health — Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health" class="active">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-  <div class="stats">{{ stats.materials }} materials · {{ total }} suppliers</div>
-</header>
+{% extends "base.html" %}
+{% block title %}Supplier health — Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats">{{ stats.materials }} materials · {{ total }} suppliers</div>
+{% endblock %}
+
+{% block content %}
 <div class="material-head">
   <h1>Supplier health</h1>
   <p class="hintline muted">How each catalog fared on its last crawl. “Stale” means the last refresh failed but older data is still being served — worth investigating before it goes truly dark.</p>
@@ -48,7 +40,6 @@
   {% endfor %}
   </tbody>
 </table>
+{% endblock %}
 
-<footer>“Stale” catalogs still show their previous data — a failed refresh doesn't erase what was already indexed. Re-run a crawl (or the Refresh button) to retry them.</footer>
-</body>
-</html>
+{% block footer %}“Stale” catalogs still show their previous data — a failed refresh doesn't erase what was already indexed. Re-run a crawl (or the Refresh button) to retry them.{% endblock %}

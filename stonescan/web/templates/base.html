@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}Stone Scanner — cross-supplier material search{% endblock %}</title>
+  {# Set the saved theme before first paint to avoid a flash of the wrong theme. #}
+  <script>(function(){try{var t=localStorage.getItem('ss-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+  {% block head %}{% endblock %}
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="brand"><a href="/">🪨 <span>Stone Scanner</span></a></div>
+  {% set p = request.url.path %}
+  <nav class="topnav">
+    <a href="/" class="{{ 'active' if p == '/' }}">Search</a>
+    <a href="/photo" class="{{ 'active' if p.startswith('/photo') }}">📷 By Photo</a>
+    <a href="/new" class="{{ 'active' if p.startswith('/new') }}">✨ What's New</a>
+    <a href="/locations" class="{{ 'active' if p.startswith('/locations') }}">📍 Locations</a>
+    <a href="/lists" class="{{ 'active' if p.startswith('/list') }}">📋 Lists</a>
+    <a href="/watchlist" class="{{ 'active' if p.startswith('/watchlist') }}">★ Watchlist</a>
+    <a href="/health" class="{{ 'active' if p.startswith('/health') }}">🩺 Health</a>
+    <a href="/discovery" class="{{ 'active' if p.startswith('/discovery') }}">🔍 Discovery</a>
+    <a href="/quality" class="{{ 'active' if p.startswith('/quality') }}">🧹 Quality</a>
+  </nav>
+  <div class="header-aside">
+    {% block headeraside %}{% endblock %}
+    <button id="themeToggle" class="iconbtn" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">🌗</button>
+  </div>
+</header>
+
+{% block content %}{% endblock %}
+
+<footer>{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}</footer>
+
+{% block scripts %}{% endblock %}
+<script>
+(function(){
+  var b=document.getElementById('themeToggle');
+  if(!b)return;
+  function current(){
+    var t=document.documentElement.getAttribute('data-theme');
+    if(t)return t;
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+  }
+  b.addEventListener('click',function(){
+    var next=current()==='dark'?'light':'dark';
+    document.documentElement.setAttribute('data-theme',next);
+    try{localStorage.setItem('ss-theme',next);}catch(e){}
+  });
+})();
+</script>
+</body>
+</html>

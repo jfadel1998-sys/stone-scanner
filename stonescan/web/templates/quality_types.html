@@ -1,19 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Type audit — Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality" class="active">🧹 Quality</a></nav>
-  </div>
-  <div class="stats"><a href="/quality">← Data quality</a></div>
-</header>
+{% extends "base.html" %}
+{% block title %}Type audit — Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats"><a href="/quality">← Data quality</a></div>
+{% endblock %}
+
+{% block content %}
 <div class="material-head">
   <h1>Type audit</h1>
   <p class="hintline muted">How every material fell out of the classifier. The <b>Other</b> bucket is where real stones the rules missed hide — each is a candidate for a new rule in <code>normalize.py</code>. Click any name to see it in search.</p>
@@ -61,7 +53,6 @@
   {% else %}<p class="muted">No accessories flagged.</p>{% endfor %}
   </div>
 </div>
+{% endblock %}
 
-<footer>Type and colour are re-derivable without a re-crawl: edit the rules in <code>normalize.py</code>, then run <code>python -m stonescan.reclassify</code>.</footer>
-</body>
-</html>
+{% block footer %}Type and colour are re-derivable without a re-crawl: edit the rules in <code>normalize.py</code>, then run <code>python -m stonescan.reclassify</code>.{% endblock %}

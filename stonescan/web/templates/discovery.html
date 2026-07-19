@@ -1,19 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Discovery — Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery" class="active">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-  <div class="stats">{{ total }} candidates · {{ counts.live }} live</div>
-</header>
+{% extends "base.html" %}
+{% block title %}Discovery — Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats">{{ total }} candidates · {{ counts.live }} live</div>
+{% endblock %}
+
+{% block content %}
 <div class="material-head">
   <h1>Discovery triage</h1>
   <p class="hintline muted">Every catalog in <code>suppliers.json</code> by what a crawl actually found. Discovery casts a wide net (<code>python -m stonescan.discover</code> sweeps <b>Stone Profits</b> and <b>SlabWare</b> subdomains); this page is where you tell the keepers from the private/dead ones.</p>
@@ -94,7 +86,6 @@
   </div>
   {% if counts.live > 60 %}<p class="muted" style="padding:8px 0;">…and {{ counts.live - 60 }} more.</p>{% endif %}
 </div>
+{% endblock %}
 
-<footer>Discovery is deliberately wide: it adds every observed subdomain as a candidate, then a crawl reveals which are real public catalogs. Nothing here is auto-pruned — pruning <code>suppliers.json</code> stays a human decision.</footer>
-</body>
-</html>
+{% block footer %}Discovery is deliberately wide: it adds every observed subdomain as a candidate, then a crawl reveals which are real public catalogs. Nothing here is auto-pruned — pruning <code>suppliers.json</code> stays a human decision.{% endblock %}

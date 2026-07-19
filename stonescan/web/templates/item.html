@@ -1,17 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ m.item_name }} — {{ m.supplier_name }} · Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand"><a href="/">🪨 Stone Scanner</a></div>
-  <div class="stats"><a class="back" href="javascript:history.back()">‹ Back to results</a></div>
-</header>
+{% extends "base.html" %}
+{% block title %}{{ m.item_name }} — {{ m.supplier_name }} · Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats"><a class="back" href="javascript:history.back()">‹ Back to results</a></div>
+{% endblock %}
+
+{% block content %}
 <div class="detail">
   <div class="detail-photo">
     {% if m.image_url %}
@@ -94,41 +88,6 @@
   <img id="lightbox-img" src="" alt="">
 </div>
 
-<script>
-(function(){
-  var id = {{ m.id }};
-  var host = "{{ m.supplier_host }}";
-  var list = document.getElementById('slablist');
-  var countEl = document.getElementById('slabcount');
-  var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
-  fetch('/api/slabs?id='+id).then(function(r){return r.json();}).then(function(d){
-    var slabs = (d && d.slabs) || [];
-    if(!slabs.length){ list.innerHTML = '<div class="slabloading">No individual slab photos are published right now. '+liveLink+'</div>'; return; }
-    countEl.textContent = '· '+slabs.length+' slab'+(slabs.length===1?'':'s');
-    list.innerHTML = '';
-    slabs.forEach(function(s){
-      var card = document.createElement('div'); card.className='slabcard';
-      var size = (s.length && s.width) ? Math.round(s.length)+'×'+Math.round(s.width) : '';
-      var img = s.thumb ? '<img loading="lazy" src="'+s.thumb+'" data-full="'+s.photo+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">' : '<span class="thumb noimg"></span>';
-      card.innerHTML = img + '<div class="slabmeta"><b>'+(s.slab_no||'Slab')+'</b>'
-        + (size?'<span>'+size+' '+(s.uom||'in')+'</span>':'')
-        + (s.location?'<span>'+s.location+'</span>':'')
-        + (s.barcode?'<span class="bc">#'+s.barcode+'</span>':'')
-        + '</div>';
-      var im = card.querySelector('img');
-      if(im) im.addEventListener('click', function(){
-        var lb=document.getElementById('lightbox');
-        document.getElementById('lightbox-img').src=im.getAttribute('data-full');
-        lb.classList.add('show');
-      });
-      list.appendChild(card);
-    });
-  }).catch(function(){
-    list.innerHTML = '<div class="slabloading">Couldn\'t load slab photos just now. '+liveLink+'</div>';
-  });
-})();
-</script>
-
 {% if variants %}
 <section class="block">
   <h2>Other {{ m.thickness_label if false else 'options' }} at {{ m.supplier_name }}</h2>
@@ -189,7 +148,43 @@
   </div>
 </section>
 {% endif %}
+{% endblock %}
 
-<footer>Stone Scanner indexes suppliers' public catalogs. Photos and availability link to each supplier's live listing.</footer>
-</body>
-</html>
+{% block footer %}Stone Scanner indexes suppliers' public catalogs. Photos and availability link to each supplier's live listing.{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  var id = {{ m.id }};
+  var host = "{{ m.supplier_host }}";
+  var list = document.getElementById('slablist');
+  var countEl = document.getElementById('slabcount');
+  var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
+  fetch('/api/slabs?id='+id).then(function(r){return r.json();}).then(function(d){
+    var slabs = (d && d.slabs) || [];
+    if(!slabs.length){ list.innerHTML = '<div class="slabloading">No individual slab photos are published right now. '+liveLink+'</div>'; return; }
+    countEl.textContent = '· '+slabs.length+' slab'+(slabs.length===1?'':'s');
+    list.innerHTML = '';
+    slabs.forEach(function(s){
+      var card = document.createElement('div'); card.className='slabcard';
+      var size = (s.length && s.width) ? Math.round(s.length)+'×'+Math.round(s.width) : '';
+      var img = s.thumb ? '<img loading="lazy" src="'+s.thumb+'" data-full="'+s.photo+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">' : '<span class="thumb noimg"></span>';
+      card.innerHTML = img + '<div class="slabmeta"><b>'+(s.slab_no||'Slab')+'</b>'
+        + (size?'<span>'+size+' '+(s.uom||'in')+'</span>':'')
+        + (s.location?'<span>'+s.location+'</span>':'')
+        + (s.barcode?'<span class="bc">#'+s.barcode+'</span>':'')
+        + '</div>';
+      var im = card.querySelector('img');
+      if(im) im.addEventListener('click', function(){
+        var lb=document.getElementById('lightbox');
+        document.getElementById('lightbox-img').src=im.getAttribute('data-full');
+        lb.classList.add('show');
+      });
+      list.appendChild(card);
+    });
+  }).catch(function(){
+    list.innerHTML = '<div class="slabloading">Couldn\'t load slab photos just now. '+liveLink+'</div>';
+  });
+})();
+</script>
+{% endblock %}

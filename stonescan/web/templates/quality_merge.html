@@ -1,22 +1,14 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Review merges — Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality" class="active">🧹 Quality</a></nav>
-  </div>
-  <div class="stats"><a href="/quality">← Data quality</a></div>
-</header>
+{% extends "base.html" %}
+{% block title %}Review merges — Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats"><a href="/quality">← Data quality</a></div>
+{% endblock %}
+
+{% block content %}
 <div class="material-head">
   <h1>Review merges</h1>
-  <div class="viewtoggle" style="float:none;display:inline-flex;margin:6px 0;">
+  <div class="viewtoggle" style="margin-left:0;display:inline-flex;margin-top:6px;margin-bottom:6px;">
     <a href="/quality/merge?kind=conflict" class="{{ 'on' if kind == 'conflict' }}">Type conflicts</a>
     <a href="/quality/merge?kind=fuzzy" class="{{ 'on' if kind == 'fuzzy' }}">Spelling variants</a>
   </div>
@@ -75,7 +67,6 @@
   {% if page < pages %}<a href="/quality/merge?kind={{ kind }}&page={{ page + 1 }}">Next →</a>{% endif %}
 </div>
 {% endif %}
+{% endblock %}
 
-<footer>Merging is reversible from the <a href="/quality">Data quality</a> page until the next crawl bakes it in. When unsure, “Not the same” keeps the stones separate and hides the suggestion.</footer>
-</body>
-</html>
+{% block footer %}Merging is reversible from the <a href="/quality">Data quality</a> page until the next crawl bakes it in. When unsure, “Not the same” keeps the stones separate and hides the suggestion.{% endblock %}

@@ -1,20 +1,12 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Locations — Stone Scanner</title>
-  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations" class="active">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-  <div class="stats">{{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers</div>
-</header>
+{% extends "base.html" %}
+{% block title %}Locations — Stone Scanner{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">{% endblock %}
 
+{% block headeraside %}
+<div class="stats">{{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers</div>
+{% endblock %}
+
+{% block content %}
 <div class="material-head">
   <h1>Where the stone is</h1>
   <p class="hintline muted">
@@ -60,9 +52,11 @@
     {% endfor %}
   </div>
 </div>
+{% endblock %}
 
-<footer>Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.</footer>
+{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}
 
+{% block scripts %}
 <script src="/static/vendor/leaflet/leaflet.js"></script>
 <script id="pindata" type="application/json">{{ pins | tojson }}</script>
 <script>
@@ -81,15 +75,15 @@
     var r = 5 + 20 * Math.sqrt(p.slabs / max);
     L.circleMarker([p.lat, p.lon], {
       radius: r, weight: 1.5,
-      color: p.approx ? '#b9552b' : '#3a5a40',
-      fillColor: p.approx ? '#d98d6a' : '#6a8f6f',
+      color: p.approx ? '#9c5a40' : '#6c6744',
+      fillColor: p.approx ? '#d98d6a' : '#c9ba86',
       fillOpacity: 0.55,
       dashArray: p.approx ? '3,3' : null
     }).addTo(map).bindPopup(
       '<b>' + p.location + '</b><br>' +
       (p.label && p.label !== p.location ? '<span style="color:#8a857d">' + p.label + '</span><br>' : '') +
       p.slabs + ' slabs · ' + p.products + ' products · ' + p.suppliers + ' supplier(s)<br>' +
-      (p.approx ? '<i style="color:#b9552b">approximate — bare city name, could be another state</i><br>' : '') +
+      (p.approx ? '<i style="color:#9c5a40">approximate — bare city name, could be another state</i><br>' : '') +
       '<a href="/?location=' + encodeURIComponent(p.location) + '&in_stock=1&sort=slabs">Search this location →</a>'
     );
     bounds.push([p.lat, p.lon]);
@@ -99,5 +93,4 @@
   map.on('mouseout', function () { map.scrollWheelZoom.disable(); });
 })();
 </script>
-</body>
-</html>
+{% endblock %}

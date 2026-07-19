@@ -1,19 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>What's New · Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand"><a href="/">🪨 Stone Scanner</a>
-    <nav class="topnav"><a href="/">Search</a><a href="/photo">📷 By Photo</a><a href="/new" class="active">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-  <div class="stats">{% if stats.last_updated %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}</div>
-</header>
+{% extends "base.html" %}
+{% block title %}What's New · Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats">{% if stats.last_updated %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}</div>
+{% endblock %}
+
+{% block content %}
 {% if restock %}
 <section class="block">
   <h2>Back in stock <span class="muted">— newly available since the previous crawl ({{ restock|length }})</span></h2>
@@ -69,7 +61,6 @@
   </nav>
   {% endif %}
 </section>
+{% endblock %}
 
-<footer>“New arrivals” come from each supplier's own new-item flag; “back in stock” is detected by comparing nightly crawls.</footer>
-</body>
-</html>
+{% block footer %}“New arrivals” come from each supplier's own new-item flag; “back in stock” is detected by comparing nightly crawls.{% endblock %}

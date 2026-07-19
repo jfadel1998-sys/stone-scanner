@@ -1,19 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Search by photo — Stone Scanner</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/">Search</a><a href="/photo" class="active">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-  <div class="stats">{{ index.indexed }} of {{ index.images_total }} images indexed</div>
-</header>
+{% extends "base.html" %}
+{% block title %}Search by photo — Stone Scanner{% endblock %}
 
+{% block headeraside %}
+<div class="stats">{{ index.indexed }} of {{ index.images_total }} images indexed</div>
+{% endblock %}
+
+{% block content %}
 <div class="material-head">
   <h1>Search by photo</h1>
   <p class="hintline muted">Upload a photo of a slab, a countertop, or an inspiration image — CLIP finds the catalog materials that <em>look</em> like it (pattern, veining, tone), across every supplier.</p>
@@ -24,8 +16,7 @@
 {% endif %}
 
 <form class="filters" method="post" action="/photo" enctype="multipart/form-data">
-  <input type="file" name="photo" accept="image/*" required
-         style="flex:1 1 320px; padding:8px; border:1px solid var(--line); border-radius:8px; background:#fff;">
+  <input type="file" name="photo" accept="image/*" required class="fileinput">
   <select name="material_type" title="Restrict to one material type">
     <option value="">Any type</option>
     {% for t in types %}<option value="{{ t }}" {{ 'selected' if t == material_type }}>{{ t }}</option>{% endfor %}
@@ -67,7 +58,6 @@
 {% else %}
   <div class="block"><p class="muted">Tip: a clear, well-lit photo of the stone surface works best. You can narrow to a material type before searching.</p></div>
 {% endif %}
+{% endblock %}
 
-<footer>Matches are ranked by CLIP visual-embedding similarity over the indexed catalog images ({{ index.indexed }} of {{ index.images_total }} indexed). The index grows as more catalog photos are embedded.</footer>
-</body>
-</html>
+{% block footer %}Matches are ranked by CLIP visual-embedding similarity over the indexed catalog images ({{ index.indexed }} of {{ index.images_total }} indexed). The index grows as more catalog photos are embedded.{% endblock %}

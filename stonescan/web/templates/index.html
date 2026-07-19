@@ -1,87 +1,64 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stone Scanner — cross-supplier material search</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <div class="brand">🪨 Stone Scanner
-    <nav class="topnav"><a href="/" class="active">Search</a><a href="/photo">📷 By Photo</a><a href="/new">✨ What's New</a><a href="/locations">📍 Locations</a><a href="/lists">📋 Lists</a><a href="/watchlist">★ Watchlist</a><a href="/health">🩺 Health</a><a href="/discovery">🔍 Discovery</a><a href="/quality">🧹 Quality</a></nav>
-  </div>
-  <div class="stats">
-    {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
-    {% if stats.last_updated %}<span class="fresh" title="Data reflects each supplier's public catalog at last crawl">· updated {{ stats.last_updated[:16].replace('T',' ') }} UTC</span>{% endif %}
-    <button id="refreshBtn" class="refreshbtn" title="Re-crawl all catalogs (materials only; runs in the background). Shift-click for a deep refresh that also pre-caches slab galleries + locations.">↻ Refresh</button>
-    <span id="refreshMsg" class="refreshmsg"></span>
-  </div>
-</header>
-<script>
-(function(){
-  var btn=document.getElementById('refreshBtn'), msg=document.getElementById('refreshMsg'), timer=null;
-  function poll(){
-    fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){
-      if(s.running){ btn.disabled=true; msg.textContent='⏳ '+(s.summary||'Refreshing…'); }
-      else { clearInterval(timer); btn.disabled=false;
-        if(s.done){ msg.textContent='✓ '+(s.summary||'Done')+' — reload to see changes.'; }
-      }
-    }).catch(function(){});
-  }
-  btn && btn.addEventListener('click', function(ev){
-    var deep = ev.shiftKey;
-    var m = deep
-      ? 'Deep refresh: re-crawl all catalogs AND pre-cache every slab gallery + locations. Much slower (can take hours). Continue?'
-      : 'Re-crawl all catalogs now (materials & prices only — slab photos load on demand). Runs in the background with live progress; the full list takes a while. Continue?';
-    if(!confirm(m)) return;
-    btn.disabled=true; msg.textContent='⏳ Starting…';
-    fetch('/api/refresh'+(deep?'?slabs=1':''), {method:'POST'}).then(function(){ timer=setInterval(poll, 3000); poll(); });
-  });
-  // resume polling if a refresh is already running (e.g. after navigating)
-  fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){ if(s.running){ timer=setInterval(poll,3000); poll(); } });
-})();
-</script>
+{% extends "base.html" %}
+{% block title %}Stone Scanner — cross-supplier material search{% endblock %}
 
+{% block headeraside %}
+<div class="stats">
+  {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
+  {% if stats.last_updated %}<span class="fresh" title="Data reflects each supplier's public catalog at last crawl">· updated {{ stats.last_updated[:16].replace('T',' ') }} UTC</span>{% endif %}
+</div>
+<button id="refreshBtn" class="refreshbtn" title="Re-crawl all catalogs (materials only; runs in the background). Shift-click for a deep refresh that also pre-caches slab galleries + locations.">↻ Refresh</button>
+<span id="refreshMsg" class="refreshmsg"></span>
+{% endblock %}
+
+{% block content %}
+{% set adv_active = thickness or location or min_length or min_width or near or min_sqft or new_only or in_stock or (sort and sort != 'relevance') %}
 <form class="filters" method="get" action="/">
-  <input type="search" name="q" value="{{ q }}" placeholder="Try: blue marble slabs · black granite · 3cm polished calacatta…" autofocus>
-  <select name="material_type">
-    <option value="">All types</option>
-    {% for t in types %}<option value="{{ t }}" {{ 'selected' if t == material_type }}>{{ t }}</option>{% endfor %}
-  </select>
-  <select name="color">
-    <option value="">Any color</option>
-    {% for c in colors %}<option value="{{ c }}" {{ 'selected' if c == color }}>{{ c }}</option>{% endfor %}
-  </select>
-  <select name="thickness">
-    <option value="">Any thickness</option>
-    {% for t in thicknesses %}<option value="{{ t }}" {{ 'selected' if t == thickness }}>{{ t }}</option>{% endfor %}
-  </select>
-  <select name="supplier">
-    <option value="">All suppliers</option>
-    {% for s in suppliers %}<option value="{{ s.name }}" {{ 'selected' if s.name == supplier }}>{{ s.name }} ({{ s.item_count }})</option>{% endfor %}
-  </select>
-  <select name="location">
-    <option value="">Any location</option>
-    {% for l in locations %}<option value="{{ l }}" {{ 'selected' if l == location }}>{{ l }}</option>{% endfor %}
-  </select>
-  <input type="number" name="min_length" value="{{ min_length }}" placeholder="min L" class="sizein" title="Minimum slab length" min="0" step="1">
-  <input type="number" name="min_width" value="{{ min_width }}" placeholder="min W" class="sizein" title="Minimum slab width" min="0" step="1">
-  <input type="search" name="near" value="{{ near }}" placeholder="near (city/zip)" class="nearin" title="Show only material stocked near a place — a city (Dallas, Charlotte NC) or a US zip (07030)">
-  <select name="radius" title="Search radius" class="radsel">
-    {% for r in [50, 100, 150, 300, 500] %}<option value="{{ r }}" {{ 'selected' if radius|string == r|string }}>{{ r }} mi</option>{% endfor %}
-  </select>
-  <input type="number" name="min_sqft" value="{{ min_sqft }}" placeholder="min ft²" class="sizein" title="Only material with at least this much total in-stock area" min="0" step="10">
-  <select name="sort" title="Sort results">
-    {% for v, label in [('relevance','Best match'), ('slabs','Most slabs'), ('size','Biggest slabs'), ('area','Most area'), ('new','Newest first'), ('distance','Nearest')] %}
-    <option value="{{ v }}" {{ 'selected' if v == sort }}>{{ label }}</option>{% endfor %}
-  </select>
-  <label class="newchk" title="Only newly-arrived materials"><input type="checkbox" name="new_only" value="1" {{ 'checked' if new_only }}> New</label>
-  <label class="newchk" title="Hide products with no slabs available"><input type="checkbox" name="in_stock" value="1" {{ 'checked' if in_stock }}> In stock</label>
+  <div class="primary">
+    <input type="search" name="q" value="{{ q }}" placeholder="Try: blue marble slabs · black granite · 3cm polished calacatta…" autofocus>
+    <select name="material_type">
+      <option value="">All types</option>
+      {% for t in types %}<option value="{{ t }}" {{ 'selected' if t == material_type }}>{{ t }}</option>{% endfor %}
+    </select>
+    <select name="color">
+      <option value="">Any color</option>
+      {% for c in colors %}<option value="{{ c }}" {{ 'selected' if c == color }}>{{ c }}</option>{% endfor %}
+    </select>
+    <select name="supplier">
+      <option value="">All suppliers</option>
+      {% for s in suppliers %}<option value="{{ s.name }}" {{ 'selected' if s.name == supplier }}>{{ s.name }} ({{ s.item_count }})</option>{% endfor %}
+    </select>
+    <button type="submit">Search</button>
+    <a class="reset" href="/">Reset</a>
+    <button type="submit" formaction="/watchlist/add" formmethod="post" class="savebtn" title="Save this search to your watchlist">★ Save search</button>
+  </div>
+
+  <details class="morefilters" {{ 'open' if adv_active }}>
+    <summary>More filters{% if adv_active %} · active{% endif %}</summary>
+    <div class="advfilters">
+      <select name="thickness">
+        <option value="">Any thickness</option>
+        {% for t in thicknesses %}<option value="{{ t }}" {{ 'selected' if t == thickness }}>{{ t }}</option>{% endfor %}
+      </select>
+      <select name="location">
+        <option value="">Any location</option>
+        {% for l in locations %}<option value="{{ l }}" {{ 'selected' if l == location }}>{{ l }}</option>{% endfor %}
+      </select>
+      <input type="number" name="min_length" value="{{ min_length }}" placeholder="min L" class="sizein" title="Minimum slab length" min="0" step="1">
+      <input type="number" name="min_width" value="{{ min_width }}" placeholder="min W" class="sizein" title="Minimum slab width" min="0" step="1">
+      <input type="search" name="near" value="{{ near }}" placeholder="near (city/zip)" class="nearin" title="Show only material stocked near a place — a city (Dallas, Charlotte NC) or a US zip (07030)">
+      <select name="radius" title="Search radius" class="radsel">
+        {% for r in [50, 100, 150, 300, 500] %}<option value="{{ r }}" {{ 'selected' if radius|string == r|string }}>{{ r }} mi</option>{% endfor %}
+      </select>
+      <input type="number" name="min_sqft" value="{{ min_sqft }}" placeholder="min ft²" class="sizein" title="Only material with at least this much total in-stock area" min="0" step="10">
+      <select name="sort" title="Sort results">
+        {% for v, label in [('relevance','Best match'), ('slabs','Most slabs'), ('size','Biggest slabs'), ('area','Most area'), ('new','Newest first'), ('distance','Nearest')] %}
+        <option value="{{ v }}" {{ 'selected' if v == sort }}>{{ label }}</option>{% endfor %}
+      </select>
+      <label class="newchk" title="Only newly-arrived materials"><input type="checkbox" name="new_only" value="1" {{ 'checked' if new_only }}> New</label>
+      <label class="newchk" title="Hide products with no slabs available"><input type="checkbox" name="in_stock" value="1" {{ 'checked' if in_stock }}> In stock</label>
+    </div>
+  </details>
   <input type="hidden" name="view" value="{{ view }}">
-  <button type="submit">Search</button>
-  <a class="reset" href="/">Reset</a>
-  <button type="submit" formaction="/watchlist/add" formmethod="post" class="savebtn" title="Save this search to your watchlist">★ Save search</button>
 </form>
 
 {% set base = '/?q=' ~ (q|urlencode) ~ '&material_type=' ~ (material_type|urlencode) ~ '&color=' ~ (color|urlencode) ~ '&thickness=' ~ (thickness|urlencode) ~ '&supplier=' ~ (supplier|urlencode) ~ '&location=' ~ (location|urlencode) ~ '&min_length=' ~ min_length ~ '&min_width=' ~ min_width ~ '&new_only=' ~ new_only ~ '&in_stock=' ~ in_stock ~ '&sort=' ~ sort ~ '&near=' ~ (near|urlencode) ~ '&radius=' ~ radius ~ '&min_sqft=' ~ min_sqft %}
@@ -180,7 +157,33 @@
   {% if page < pages %}<a href="{{ base }}&view={{ view }}&page={{ page+1 }}">Next ›</a>{% endif %}
 </nav>
 {% endif %}
+{% endblock %}
 
-<footer>Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.</footer>
-</body>
-</html>
+{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  var btn=document.getElementById('refreshBtn'), msg=document.getElementById('refreshMsg'), timer=null;
+  function poll(){
+    fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){
+      if(s.running){ btn.disabled=true; msg.textContent='⏳ '+(s.summary||'Refreshing…'); }
+      else { clearInterval(timer); btn.disabled=false;
+        if(s.done){ msg.textContent='✓ '+(s.summary||'Done')+' — reload to see changes.'; }
+      }
+    }).catch(function(){});
+  }
+  btn && btn.addEventListener('click', function(ev){
+    var deep = ev.shiftKey;
+    var m = deep
+      ? 'Deep refresh: re-crawl all catalogs AND pre-cache every slab gallery + locations. Much slower (can take hours). Continue?'
+      : 'Re-crawl all catalogs now (materials & prices only — slab photos load on demand). Runs in the background with live progress; the full list takes a while. Continue?';
+    if(!confirm(m)) return;
+    btn.disabled=true; msg.textContent='⏳ Starting…';
+    fetch('/api/refresh'+(deep?'?slabs=1':''), {method:'POST'}).then(function(){ timer=setInterval(poll, 3000); poll(); });
+  });
+  // resume polling if a refresh is already running (e.g. after navigating)
+  fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){ if(s.running){ timer=setInterval(poll,3000); poll(); } });
+})();
+</script>
+{% endblock %}
