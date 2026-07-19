@@ -134,10 +134,10 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.3,
 
 
 def _img(slug: str, slab_id: Any) -> str:
-    # SlabCloud's API exposes no image, and the guessable /slabs/<slug>/<id>.jpg path
-    # 404s (verified) — so publish no image rather than a broken one. (Kept as a hook in
-    # case a real image endpoint surfaces.)
-    return ""
+    # SlabCloud serves slab photos at /slabs/<slug>/<slabid-LOWERCASE>_thumb.jpg — the URL
+    # its own inventory grid lazy-loads (the API exposes no image field, and the naive
+    # uppercase /<SlabID>.jpg 404s). A full-res sibling exists at the same path sans _thumb.
+    return f"{SITE}/slabs/{slug}/{str(slab_id).lower()}_thumb.jpg" if slab_id else ""
 
 
 def _now() -> str:
