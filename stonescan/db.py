@@ -293,14 +293,17 @@ def get_slabs(conn: sqlite3.Connection, supplier_id: int, item_id: str) -> list[
 def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     s = {}
     s["suppliers"] = conn.execute("SELECT COUNT(*) c FROM suppliers WHERE item_count > 0").fetchone()["c"]
-    s["materials"] = conn.execute("SELECT COUNT(*) c FROM materials").fetchone()["c"]
+    # User-facing counts are the stone/tile CATALOG — the accessory/non-slab bucket
+    # (sinks, tools, chemicals) is excluded here (it's still on the Quality audit).
+    _cat = "material_type <> 'Accessory / Non-Slab'"
+    s["materials"] = conn.execute(f"SELECT COUNT(*) c FROM materials WHERE {_cat}").fetchone()["c"]
     s["unique_materials"] = conn.execute(
-        "SELECT COUNT(DISTINCT material_key) c FROM materials WHERE material_key <> ''"
+        f"SELECT COUNT(DISTINCT material_key) c FROM materials WHERE material_key <> '' AND {_cat}"
     ).fetchone()["c"]
     s["by_type"] = [
         dict(r) for r in conn.execute(
-            "SELECT material_type, COUNT(*) n FROM materials "
-            "WHERE material_type <> '' GROUP BY material_type ORDER BY n DESC"
+            f"SELECT material_type, COUNT(*) n FROM materials "
+            f"WHERE material_type <> '' AND {_cat} GROUP BY material_type ORDER BY n DESC"
         ).fetchall()
     ]
     row = conn.execute(
@@ -308,7 +311,7 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     ).fetchone()
     s["last_updated"] = row["t"] if row else None
     s["with_images"] = conn.execute(
-        "SELECT COUNT(*) c FROM materials WHERE image_url <> ''"
+        f"SELECT COUNT(*) c FROM materials WHERE image_url <> '' AND {_cat}"
     ).fetchone()["c"]
     return s
 

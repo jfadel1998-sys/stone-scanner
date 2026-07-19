@@ -43,6 +43,9 @@ _TYPE_RULES: list[tuple[str, str]] = [
     ("caesarstone", "Quartz"), ("silestone", "Quartz"), ("compac", "Quartz"),
     ("santa margherita", "Quartz"), ("vicostone", "Quartz"), ("cambria", "Quartz"),
     ("hanstone", "Quartz"), ("silica free", "Quartz"), ("diresco", "Quartz"),
+    ("valiant", "Quartz"), ("revolux", "Quartz"), ("q-luxe", "Quartz"), ("q luxe", "Quartz"),
+    ("q-quartz", "Quartz"), ("qz ", "Quartz"),   # brand/SKU prefixes seen only on quartz
+    ("geoscape", "Porcelain"),
     ("corian", "Solid Surface"), ("solid surface", "Solid Surface"),
     ("terrazzo", "Terrazzo"), ("terrazo", "Terrazzo"),
     # natural stones (specific before generic)
@@ -64,22 +67,37 @@ _TYPE_RULES: list[tuple[str, str]] = [
 ]
 
 # Strong signals that a listing is NOT a slab/material (sinks, hardware, care...).
+# NB: no "blanco" — it's Spanish for "white" and hides real stones (Silestone Blanco,
+# Blanco Atlantico, Super Blanco-Gris); genuine Blanco sinks are caught by silgranit/sink.
 _ACCESSORY_RULES = [
     "sink", "faucet", "furniture", "sofa", "lighting", "light fixture", "cleaning",
     "maintenance", "sealer", "adhesive", "epoxy", "cabinet", "wall panel", "hardware",
-    "stainless steel", "blanco", "kohler", "silgranit", "pvc", "spc tile", "lvt",
+    "stainless steel", "kohler", "silgranit", "pvc", "spc tile", "lvt",
     "cleaning product", "stone care", "sample kit", "brochure", "display",
-    # Multi-word fabrication tools that were landing in "Other" (see /quality) — safe
-    # as substrings because the phrases don't occur inside real stone names.
+    # Multi-word fabrication tools / consumables / care products / PPE that were
+    # landing in "Other" — safe as substrings (the phrases don't occur in stone names).
     "core drill", "drill bit", "razor blade", "steel rod", "polishing pad",
+    "diamond blade", "mesh diamond", "knife grade", "brush applicator", "angle grinder",
+    "sample tower", "soap dish", "tape roll", "face mask", "countertop cleaner",
+    "dry treat", "poultice", "stain-proof", "stain proof",
 ]
 
-# Single-word fabrication consumables, matched on WORD BOUNDARIES so a stone whose
-# name merely *contains* the letters isn't swept into the non-slab bucket — e.g.
-# "gritstone" (a real sandstone) must not match "grit", nor "..." a substring of a
-# trade name. These catch "36 GRIT", "1 GALLON", "BACKER 4 VELCRO", etc.
-_ACCESSORY_WORDS = {"grit", "velcro", "acetone", "abrasive", "backer", "sanding", "gallon"}
+# Single-word fabrication consumables/tools/PPE, matched on WORD BOUNDARIES so a stone
+# whose name merely *contains* the letters isn't swept into the non-slab bucket — e.g.
+# "gritstone" (a real sandstone) must not match "grit", and "brushed"/"steel grey" (a
+# finish / a granite) must not match "brushes"/"steel". These catch "36 GRIT",
+# "1 GALLON", "MAKITA BRUSHES", "CUTTERS #2", etc.
+_ACCESSORY_WORDS = {"grit", "velcro", "acetone", "abrasive", "backer", "sanding",
+                    "gallon", "makita", "grinder", "cutters", "brushes", "abrax",
+                    "workdiamond", "handout", "handouts", "cleaner", "gloves", "respirator"}
 _ACCESSORY_WORD_RE = re.compile(r"\b(" + "|".join(_ACCESSORY_WORDS) + r")\b", re.IGNORECASE)
+
+# An explicit "slab" in the name means it IS a slab — never an accessory — UNLESS it's
+# slab-handling equipment (a "slab rack"/"slab lifter"/"slab dolly", which is a tool).
+_SLAB_RE = re.compile(r"\bslab\b", re.IGNORECASE)
+_SLAB_TOOL_RE = re.compile(
+    r"slab\s+(lifter|rack|dolly|cart|cradle|a-?frame|trolley|clamp|buggy|trailer|"
+    r"lifting|handling|storage|hook|caddy|stand)", re.IGNORECASE)
 
 _THICKNESS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*cm", re.IGNORECASE)
 # Qualifiers to strip from a name when building the cross-supplier match key.
@@ -117,12 +135,18 @@ def canonical_type(category: str, subcategory: str, name: str = "") -> str:
     parts = [p for p in (sub, cat) if p and not p.replace(".", "").isdigit()]
     hay = " ".join(parts)
 
-    # Non-slab accessories (sinks, care products, hardware) -> a single bucket.
-    for acc in _ACCESSORY_RULES:
-        if acc in hay or acc in nm:
-            return "Accessory / Non-Slab"
-    if _ACCESSORY_WORD_RE.search(hay) or _ACCESSORY_WORD_RE.search(nm):
+    # Non-slab accessories (sinks, care products, hardware, tools, PPE) -> one bucket.
+    # Slab-handling equipment ("slab rack/lifter/dolly") is an accessory outright; but
+    # otherwise a name that says "slab" IS a slab, so it skips the accessory keywords —
+    # this protects real slabs (e.g. "Silestone Blanco X SLAB") from over-broad matches.
+    if _SLAB_TOOL_RE.search(nm):
         return "Accessory / Non-Slab"
+    if not _SLAB_RE.search(nm):
+        for acc in _ACCESSORY_RULES:
+            if acc in hay or acc in nm:
+                return "Accessory / Non-Slab"
+        if _ACCESSORY_WORD_RE.search(hay) or _ACCESSORY_WORD_RE.search(nm):
+            return "Accessory / Non-Slab"
 
     label = _match_rules(hay) or _match_rules(nm)
     if label:

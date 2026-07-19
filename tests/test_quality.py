@@ -194,6 +194,23 @@ class NormalizeTests(unittest.TestCase):
         # a real stone whose name merely contains the letters must NOT be an accessory
         self.assertNotEqual(nz.canonical_type("", "", "Gritstone 3cm"), acc)
 
+    def test_catalog_classification(self):
+        acc = "Accessory / Non-Slab"
+        # junk / tools / PPE -> accessory
+        for junk in ("MAKITA BRUSHES 9565", "CUTTERS #2", "FACE MASK",
+                     "MESH DIAMOND BLADE", "16 OZ Dry Treat Countertop Cleaner",
+                     "SLAB RACK STEEL"):
+            self.assertEqual(nz.canonical_type("", "", junk), acc, junk)
+        # "blanco" is Spanish white, not the sink brand -> never accessory by itself
+        self.assertNotEqual(nz.canonical_type("", "", "Blanco Atlantico 3CM"), acc)
+        self.assertEqual(nz.canonical_type("", "", "SILESTONE BLANCO ORION P SLAB"), "Quartz")
+        # "slab" in the name protects real slabs from over-broad keywords
+        self.assertNotEqual(
+            nz.canonical_type("", "", "WHITE DIAMOND POLISHED CALCITE SLAB 2CM"), acc)
+        # quartz brands rescued out of "Other"
+        self.assertEqual(nz.canonical_type("", "", "VALIANT TECH CALCATTA VERONA 2CM"), "Quartz")
+        self.assertEqual(nz.canonical_type("", "", "QZ FERRARA WHITE 3CM"), "Quartz")
+
 
 class DiscoverTests(unittest.TestCase):
     def test_host_boundary_rejects_lookalike_domains(self):

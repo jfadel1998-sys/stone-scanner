@@ -43,8 +43,11 @@ templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 
 def _distinct(conn, column: str) -> list[str]:
+    # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
+    # is stone/tile only (it remains queryable on the Quality audit page).
+    extra = " AND material_type <> 'Accessory / Non-Slab'" if column == "material_type" else ""
     rows = conn.execute(
-        f"SELECT DISTINCT {column} v FROM materials WHERE {column} <> '' ORDER BY {column}"
+        f"SELECT DISTINCT {column} v FROM materials WHERE {column} <> ''{extra} ORDER BY {column}"
     ).fetchall()
     return [r["v"] for r in rows]
 
@@ -124,6 +127,11 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     mt = material_type or parsed["material_type"]
     if mt:
         where.append("m.material_type = ?"); params.append(mt)
+
+    # The catalog is stone/tile materials only — never surface the accessory/non-slab
+    # bucket (sinks, tools, chemicals, PPE). It stays in the DB for the Quality audit.
+    if mt != "Accessory / Non-Slab":
+        where.append("m.material_type <> 'Accessory / Non-Slab'")
 
     if color:  # explicit dropdown -> exact
         where.append("m.color = ?"); params.append(color)

@@ -290,6 +290,7 @@ def search(conn: sqlite3.Connection, query_vec: np.ndarray, top_k: int = 60,
                    SUM(m.available_slabs) AS available_slabs
             FROM materials m JOIN suppliers s ON s.id = m.supplier_id
             WHERE m.image_url IN ({ph}){mt_sql}
+                  AND m.material_type <> 'Accessory / Non-Slab'
             GROUP BY m.image_url""",
         (*url_score.keys(), *([material_type] if material_type else [])),
     ).fetchall()
