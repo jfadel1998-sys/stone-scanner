@@ -9,6 +9,8 @@
 # so the same spec builds on both (and neither package need be installed on the other).
 
 import sys
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 pw_datas, pw_binaries, pw_hidden = collect_all("playwright")
@@ -17,10 +19,14 @@ wv_datas, wv_binaries, wv_hidden = collect_all("webview")       # pywebview (nat
 ort_datas, ort_binaries, ort_hidden = collect_all("onnxruntime")  # CLIP image search (search-by-photo)
 
 # Catalog providers are resolved by NAME at runtime (providers/__init__.py calls
-# import_module(f".{name}")), which static analysis cannot follow — without this, a
-# provider is silently absent from the frozen app and only that platform's suppliers stop
-# refreshing, with no error in dev. Collect the whole subpackage so new ones are covered.
-provider_hidden = collect_submodules("stonescan.providers")
+# import_module(f".{name}")), which static analysis cannot follow — without this a provider
+# is silently absent from the frozen app and only that platform's suppliers stop refreshing,
+# with no error in dev. Enumerate the directory rather than collect_submodules(), which has
+# to import the package and silently yields nothing here because pathex is empty.
+_provider_dir = Path(SPECPATH) / "stonescan" / "providers"
+provider_hidden = [f"stonescan.providers.{p.stem}" for p in sorted(_provider_dir.glob("*.py"))
+                   if p.stem != "__init__"]
+assert len(provider_hidden) >= 6, f"providers not found for freezing: {provider_hidden}"
 
 # Cross-platform base collections (backend-agnostic).
 base_hidden = pw_hidden + wv_hidden + gn_hidden + ort_hidden + provider_hidden + [
