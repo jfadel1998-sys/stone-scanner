@@ -478,7 +478,13 @@
     {
       "host": "unbuilt.co",
       "name": "Unbuilt (Cosentino outlet)",
-      "provider": "unbuilt"
+      "provider": "unbuilt",
+      "robots_override": {
+        "allow_paths": [
+          "/api/listings"
+        ],
+        "reason": "Their robots.txt grants this endpoint explicitly (Allow: /api/listings/) to carve it out of Disallow: /api/. Their server then 308-redirects that URL to the slash-less /api/listings, which their own Allow rule no longer matches, so strict per-hop evaluation blocks an endpoint the publisher plainly opened. Scope is this one path prefix on this one host. Reviewed 2026-07-20."
+      }
     },
     {
       "host": "www.marblesystems.com",

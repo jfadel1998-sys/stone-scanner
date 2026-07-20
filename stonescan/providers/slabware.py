@@ -29,6 +29,7 @@ from typing import Any
 
 import httpx
 
+from ..robots import client_for
 from .base import SupplierData, material_row, slab_row
 
 PAGE = 40  # the site's own infinite scroll pages by 40
@@ -76,8 +77,8 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.4,
     out = SupplierData(host=host, company=entry.get("name") or "")
     crawled_at = _now()
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": UA},
-                                     follow_redirects=True) as client:
+        async with client_for(entry, headers={"User-Agent": UA},
+                              follow_redirects=True) as client:
             bundles: list[dict] = []
             offset = 0
             while True:

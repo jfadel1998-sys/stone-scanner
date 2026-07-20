@@ -21,8 +21,12 @@ from typing import Any
 
 from playwright.async_api import async_playwright, Browser, TimeoutError as PWTimeout
 
+from . import robots as rb
+
+# Built from robots.AGENT_TOKEN so the name a supplier would write in their
+# robots.txt to address us is the same name we actually send.
 USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) StoneScanner/0.1 "
+    f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) {rb.AGENT_TOKEN}/0.1 "
     "(+public-catalog indexer; contact: jason@traxtone.com)"
 )
 INV_MATCH = ("getinventorygallery", "getitemgallery")
@@ -30,10 +34,25 @@ TAX_MATCH = "getallsearchdetails"
 DEFAULT_ASHX = "fetchdataAngularProductionToyota.ashx"
 
 
+# Read robots.txt from *inside* the cleared page rather than with httpx. These hosts
+# sit behind Cloudflare, which answers an outside GET of /robots.txt with a challenge
+# page — a 4xx that RFC 9309 reads as "no restrictions". Asking through the same door
+# the catalog comes through is the only way the answer means anything. (In practice
+# the platform serves its SPA shell there, i.e. publishes no robots.txt at all — but
+# that is a fact we now verify per host instead of assume.)
+_ROBOTS_JS = """async () => {
+    try {
+        const r = await fetch('/robots.txt', { cache: 'no-store' });
+        return { status: r.status, body: await r.text() };
+    } catch (e) { return { status: 0, body: '', error: String(e) }; }
+}"""
+
+
 @dataclass
 class CrawlResult:
     host: str
     ok: bool = False
+    blocked: bool = False  # robots.txt disallows us; not an error, a decision
     company: str = ""
     products: str = ""
     token: str = ""
@@ -44,6 +63,18 @@ class CrawlResult:
     taxonomy: list[dict[str, Any]] = field(default_factory=list)
     slabs: dict[str, list] = field(default_factory=dict)  # ItemID -> [slab records]
     error: str = ""
+
+
+async def _robots_decision(page, host: str):
+    """Fetch and evaluate this host's robots.txt from inside the loaded page."""
+    try:
+        res = await page.evaluate(_ROBOTS_JS)
+    except Exception as e:  # noqa: BLE001
+        return rb.RobotsPolicy.unreachable(type(e).__name__).allows("/")
+    status, body = res.get("status") or 0, res.get("body") or ""
+    if not status:
+        return rb.RobotsPolicy.unreachable(res.get("error", "fetch failed")).allows("/")
+    return rb._policy_from_response(status, body, rb.AGENT_TOKEN).allows("/")
 
 
 async def _read_creds(page) -> dict[str, Any]:
@@ -221,9 +252,20 @@ async def _fetch_all_slabs(page, item_ids: list[str]) -> dict[str, list]:
 
 
 async def crawl_host(
-    browser: Browser, host: str, *, timeout_ms: int = 45000, with_slabs: bool = False
+    browser: Browser, host: str, *, timeout_ms: int = 45000, with_slabs: bool = False,
+    robots_cache=None,
 ) -> CrawlResult:
     res = CrawlResult(host=host)
+
+    # Two-stage check. First, cheaply, from outside: if a plain GET can already read
+    # an explicit opt-out, we stop without touching the site at all.
+    cache = robots_cache if robots_cache is not None else rb.RobotsCache()
+    pre = await cache.check(f"https://{host}/")
+    if pre.reason == rb.BLOCKED:
+        res.blocked = True
+        res.error = rb.block_error(f"{rb.AGENT_TOKEN} disallowed by {pre.rule}")
+        return res
+
     context = await browser.new_context(
         user_agent=USER_AGENT,
         viewport={"width": 1366, "height": 900},
@@ -260,6 +302,18 @@ async def crawl_host(
             await page.wait_for_load_state("networkidle", timeout=15000)
         except PWTimeout:
             pass
+
+        # Second stage, authoritative: now that Cloudflare has cleared us we can read
+        # the real robots.txt. Loading this one public homepage is what any visitor
+        # does and is the only way to obtain that clearance; everything that follows —
+        # the catalog API, the per-item slab galleries, the bulk of the traffic — is
+        # gated on the answer.
+        decision = await _robots_decision(page, host)
+        if not decision.allowed:
+            res.blocked = decision.reason == rb.BLOCKED
+            res.error = (rb.block_error(f"{rb.AGENT_TOKEN} disallowed by {decision.rule}")
+                         if res.blocked else f"robots.txt {decision}")
+            return res
 
         creds = await _read_creds(page)
         res.company = (creds.get("Company") or "").strip()
@@ -347,13 +401,15 @@ async def crawl_hosts(
     Yields CrawlResult objects as they complete.
     """
     results: list[CrawlResult] = []
+    cache = rb.RobotsCache()  # shared, so each origin is asked once per run
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=headless)
         sem = asyncio.Semaphore(concurrency)
 
         async def worker(h: str) -> CrawlResult:
             async with sem:
-                r = await crawl_host(browser, h, with_slabs=with_slabs)
+                r = await crawl_host(browser, h, with_slabs=with_slabs,
+                                     robots_cache=cache)
                 await asyncio.sleep(delay_s)  # be gentle
                 return r
 

@@ -4,9 +4,12 @@ Systems). No bespoke API: discover the sitemap from robots.txt, expand it, and r
 each product's `<script type="application/ld+json">` Product object.
 
 Robots-clean by construction: robots.txt is the entry point, its Sitemap: lines are
-followed, and every product URL is checked against the `Disallow` rules for `*`
-before it is fetched. Product-level only (breadth, not live slab quantities), so a
-run is bounded by `max_products` (raise it per-entry once you trust a site).
+followed, and every product URL is checked before it is fetched — now through the
+shared `stonescan.robots` engine, so this provider obeys the same RFC 9309 rules
+(named agent groups, Allow/Disallow precedence, Crawl-delay) as everything else
+rather than its own simplified reading. Product-level only (breadth, not live slab
+quantities), so a run is bounded by `max_products` (raise it per-entry once you
+trust a site).
 
 suppliers.json entry:
     {"host": "www.marblesystems.com", "provider": "genericfeed",
@@ -22,6 +25,7 @@ from typing import Any
 
 import httpx
 
+from ..robots import client_for
 from .base import SupplierData, material_row
 
 UA = "Mozilla/5.0 (compatible; StoneScanner/0.1; +public-catalog indexer)"
@@ -32,32 +36,6 @@ _LD = re.compile(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>',
 def _now() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _robots(text: str) -> tuple[list[str], list[str]]:
-    """Sitemaps + Disallow paths for User-agent: * (the group our crawler obeys)."""
-    sitemaps = re.findall(r"(?im)^\s*Sitemap:\s*(\S+)", text)
-    disallows, in_star = [], False
-    for line in text.splitlines():
-        s = line.split("#", 1)[0].strip()
-        if not s:
-            continue
-        m = re.match(r"(?i)User-agent:\s*(.+)", s)
-        if m:
-            in_star = m.group(1).strip() == "*"
-            continue
-        d = re.match(r"(?i)Disallow:\s*(.*)", s)
-        if d and in_star and d.group(1).strip():
-            disallows.append(d.group(1).strip())
-    return sitemaps, disallows
-
-
-def _disallowed(path: str, rules: list[str]) -> bool:
-    for r in rules:
-        pat = "^" + re.escape(r).replace(r"\*", ".*").replace(r"\$", "$")
-        if re.match(pat, path):
-            return True
-    return False
 
 
 async def _expand(client: httpx.AsyncClient, sitemaps: list[str], seen: set[str],
@@ -129,24 +107,22 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.5,
     pattern = entry.get("product_pattern", "/product/")
     cap = limit or int(entry.get("max_products", 600))
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": UA},
-                                     follow_redirects=True) as client:
-            robots = ""
-            try:
-                robots = (await client.get(f"https://{host}/robots.txt", timeout=30)).text
-            except Exception:  # noqa: BLE001
-                pass
-            sitemaps, disallows = _robots(robots)
-            if not sitemaps:
-                sitemaps = [f"https://{host}/sitemap_index.xml", f"https://{host}/sitemap.xml"]
+        async with client_for(entry, headers={"User-Agent": UA},
+                              follow_redirects=True) as client:
+            policy = await client.robots.policy(f"https://{host}/")
+            sitemaps = list(policy.sitemaps) or [
+                f"https://{host}/sitemap_index.xml", f"https://{host}/sitemap.xml"]
+            # A site that asks for slower crawling gets it.
+            delay = max(delay, policy.crawl_delay)
             all_urls = await _expand(client, sitemaps, set())
-            # Product pages only, and only those robots permits.
-            from urllib.parse import urlsplit
+            # Product pages only, and only those robots permits. The client would
+            # refuse a disallowed URL anyway; filtering first means a blocked page
+            # doesn't burn one of the `cap` slots and leave the run short.
             product_urls, seen = [], set()
             for u in all_urls:
                 if pattern not in u or u in seen:
                     continue
-                if _disallowed(urlsplit(u).path, disallows):
+                if not await client.robots.allowed(u):
                     continue
                 seen.add(u)
                 product_urls.append(u)

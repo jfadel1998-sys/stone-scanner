@@ -1068,7 +1068,9 @@ def discovery(request: Request):
     entries = discover.load_suppliers()
     rows = {r["host"]: dict(r) for r in conn.execute(
         "SELECT host, company, item_count, slab_count, last_crawled, last_error FROM suppliers")}
-    cats: dict[str, list] = {"unprobed": [], "empty": [], "broken": [], "live": []}
+    from ..robots import is_block_error
+    cats: dict[str, list] = {"unprobed": [], "empty": [], "broken": [], "blocked": [],
+                             "live": []}
     by_provider: dict[str, dict] = {}
     for e in entries:
         r = rows.get(e["host"])
@@ -1085,6 +1087,10 @@ def discovery(request: Request):
             rec["status"] = "unprobed"
         elif rec["items"] > 0:
             rec["status"] = "live"
+        elif is_block_error(rec["error"]):
+            # Declined, not broken. Filing a supplier who told us not to crawl them
+            # under "errored" invites someone to go fix it.
+            rec["status"] = "blocked"
         elif rec["error"]:
             rec["status"] = "broken"
         else:
@@ -1097,7 +1103,7 @@ def discovery(request: Request):
         if rec["status"] == "live":
             p["live"] += 1
     cats["live"].sort(key=lambda r: -r["items"])
-    for k in ("unprobed", "empty", "broken"):
+    for k in ("unprobed", "empty", "broken", "blocked"):
         cats[k].sort(key=lambda r: r["host"])
     stats = db.stats(conn)
     conn.close()

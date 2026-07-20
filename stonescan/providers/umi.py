@@ -29,6 +29,7 @@ import ssl
 
 import httpx
 
+from ..robots import client_for
 from .base import SupplierData, material_row, slab_row
 
 API = "https://apps.umistone.com/linv"
@@ -95,8 +96,11 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.25,
                        image_base="https://apps.umistone.com/images/")
     crawled_at = _now()
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": UA}, verify=_ssl_ctx(),
-                                     follow_redirects=True) as client:
+        # The gated client carries the legacy-cipher context into the robots.txt
+        # fetch too — umistone.com publishes a real robots.txt that a modern OpenSSL
+        # handshake can't reach, and an unreadable robots.txt means "don't crawl".
+        async with client_for(entry, headers={"User-Agent": UA}, verify=_ssl_ctx(),
+                              follow_redirects=True) as client:
             branches = await _branches(client)
             # item code -> (material, branch it was first seen at)
             seen: dict[str, tuple[dict, str]] = {}

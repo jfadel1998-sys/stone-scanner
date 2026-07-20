@@ -16,6 +16,7 @@
   <span class="hstat ok"><b>{{ counts.live }}</b> live catalogs</span>
   <span class="hstat"><b>{{ counts.empty }}</b> empty (private/dead)</span>
   <span class="hstat broken"><b>{{ counts.broken }}</b> errored</span>
+  {% if counts.blocked %}<span class="hstat"><b>{{ counts.blocked }}</b> declined (robots.txt)</span>{% endif %}
 </div>
 
 <div class="block">
@@ -69,6 +70,21 @@
     <thead><tr><th>Host</th><th>Platform</th><th>Error</th></tr></thead>
     <tbody>
     {% for r in cats.broken %}
+      <tr><td class="name">{{ r.host }}</td><td class="muted">{{ r.provider }}</td><td class="muted herr">{{ r.error[:80] }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if cats.blocked %}
+<div class="block">
+  <h2>Declined by robots.txt <span class="qbadge">{{ counts.blocked }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Not a fault to fix: these hosts disallow us in their <code>robots.txt</code>, and we honor that. They are re-checked on each full crawl (so a change on their side is picked up) but excluded from the retry pass. To stop probing one entirely, run <code>python -m stonescan.denylist add &lt;host&gt;</code>.</p>
+  <table class="materials healthtable">
+    <thead><tr><th>Host</th><th>Platform</th><th>Rule</th></tr></thead>
+    <tbody>
+    {% for r in cats.blocked %}
       <tr><td class="name">{{ r.host }}</td><td class="muted">{{ r.provider }}</td><td class="muted herr">{{ r.error[:80] }}</td></tr>
     {% endfor %}
     </tbody>

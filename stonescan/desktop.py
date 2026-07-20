@@ -60,6 +60,34 @@ def _seed(dest: Path, *candidates: Path) -> None:
             return
 
 
+def _merge_denylist(dest: Path, bundled: Path) -> None:
+    """Union the shipped denylist into the user's, keyed by host.
+
+    Deliberately not `_seed`: that copies only when the destination is missing, so
+    a host added to the denylist in a new release would never reach an install that
+    already had a data/denylist.json — the update would silently fail to honor a
+    removal request. Merging keeps the user's own entries and adds ours.
+    """
+    import json
+
+    def read(p: Path) -> list:
+        try:
+            return json.loads(p.read_text(encoding="utf-8")).get("denied", [])
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return []
+
+    if not bundled.exists() and not dest.exists():
+        return
+    have = read(dest)
+    known = {(e.get("host") or "").lower() for e in have}
+    added = [e for e in read(bundled) if (e.get("host") or "").lower() not in known]
+    if added or not dest.exists():
+        payload = {"_comment": "Hosts that must never be crawled or re-added by "
+                               "discovery. Merged from the shipped list on each launch.",
+                   "denied": have + added}
+        dest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def setup_env() -> Path:
     """Prepare the writable data dir + environment; return the data dir."""
     base = app_dir()
@@ -78,6 +106,12 @@ def setup_env() -> Path:
     locs = data / "locations.json"
     _seed(locs, bundle_dir() / "seed" / "locations.json", bundle_dir() / "locations.json")
     os.environ["STONESCAN_LOCATIONS"] = str(locs)
+
+    # Removal requests: merged rather than seeded, so a denial added in a later
+    # build still applies to an install that already has its own copy.
+    deny = data / "denylist.json"
+    _merge_denylist(deny, bundle_dir() / "seed" / "denylist.json")
+    os.environ["STONESCAN_DENYLIST"] = str(deny)
 
     browsers = base / "browsers"
     if browsers.exists():

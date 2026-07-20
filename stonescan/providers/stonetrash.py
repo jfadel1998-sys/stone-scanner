@@ -26,6 +26,7 @@ from typing import Any
 
 import httpx
 
+from ..robots import client_for
 from .base import SupplierData, material_row, slab_row
 
 SITE = "https://stonetrash.com"
@@ -72,8 +73,8 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.25,
     out = SupplierData(host=host, company=entry.get("name") or "StoneTrash (marketplace)")
     crawled_at = _now()
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": UA},
-                                     follow_redirects=True) as client:
+        async with client_for(entry, headers={"User-Agent": UA},
+                              follow_redirects=True) as client:
             build = await _build_id(client)
             ids = await _listing_ids(client)
             if limit:

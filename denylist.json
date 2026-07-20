@@ -1,0 +1,10 @@
+{
+  "_comment": "Hosts that must never be crawled or re-added by discovery. This is how a supplier's removal request is honored durably — deleting an entry from suppliers.json alone does not work, because the next discovery run re-adds it. Matching includes subdomains: 'example.com' also denies 'inventory.example.com'. Use: python -m stonescan.denylist add <host> --reason \"...\"",
+  "denied": [
+    {
+      "host": "ariastonegallery.com",
+      "reason": "robots.txt disallows all non-search crawlers on both the storefront and the catalog host; excluded by policy, not by oversight",
+      "added": "2026-07-20"
+    }
+  ]
+}

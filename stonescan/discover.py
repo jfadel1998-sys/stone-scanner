@@ -61,6 +61,26 @@ PLATFORMS: list[dict] = [
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; StoneScanner/0.1; +public-catalog indexer)"}
 
 
+def _gate():
+    """Denylist + robots gate for the probes.
+
+    Fingerprinting a candidate means fetching its homepage, which is a crawl like
+    any other. The aggregator queries above only read third-party indexes and need
+    no gate; the moment we touch a supplier's own server, it applies.
+    """
+    from .denylist import denied_hosts, is_denied
+    from .robots import SyncRobotsCache
+
+    cache = SyncRobotsCache()
+    denied = denied_hosts()
+
+    def may_fetch(url: str) -> bool:
+        host = url.split("//", 1)[-1].split("/")[0]
+        return not is_denied(host, denied) and cache.allowed(url)
+
+    return may_fetch
+
+
 def _host_re(base: str) -> re.Pattern:
     # Trailing (?![a-z0-9.-]) so the base must END the host: without it,
     # "x.slabware.company" (next char 'p') or "x.slabware.com.br" (next char '.')
@@ -174,13 +194,21 @@ def merge_discovered(hosts: dict[str, str | None] | set[str]) -> int:
     Accepts either a {host: provider} map (from discover_all) or a bare set of
     Stone Profits hosts (from the legacy discover_hosts), for back-compat.
     """
+    from .denylist import denied_hosts, is_denied
+
     if isinstance(hosts, set):
         hosts = {h: None for h in hosts}
     data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
     existing = {s["host"].lower() for s in data.get("suppliers", [])}
+    denied = denied_hosts()
     added = 0
     for host, provider in sorted(hosts.items()):
         if host.lower() in existing:
+            continue
+        # A host is not "new" just because it isn't listed — it may have been
+        # removed on request, and re-adding it here is exactly how that used to
+        # silently undo itself.
+        if is_denied(host, denied):
             continue
         entry: dict = {"host": host, "name": ""}
         if provider:
@@ -222,6 +250,7 @@ def _sc_rows(client: httpx.Client, slug: str) -> int:
 def discover_slabcloud(verbose: bool = True) -> list[dict]:
     """Resolve every published SlabCloud tenant to a supplier entry (host/slug/name)."""
     out: list[dict] = []
+    may_fetch = _gate()
     with httpx.Client(follow_redirects=True, headers=_UA, timeout=30) as client:
         try:
             idx = client.get(SLABCLOUD_CLIENTS).text
@@ -234,6 +263,8 @@ def discover_slabcloud(verbose: bool = True) -> list[dict]:
             if "slabcloud.com" in url or not _SC_INV_PATH.search(url) or url in seen_url:
                 continue
             seen_url.add(url)
+            if not may_fetch(url):   # the tenant's own site, so it gets a say
+                continue
             try:
                 m = _SC_COMPANY.search(client.get(url).text)
             except Exception:  # noqa: BLE001
@@ -253,13 +284,18 @@ def discover_slabcloud(verbose: bool = True) -> list[dict]:
 
 def merge_slabcloud(tenants: list[dict]) -> int:
     """Add SlabCloud tenants to suppliers.json, deduped by host AND slug."""
+    from .denylist import denied_hosts, is_denied
+
     data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
     sups = data.get("suppliers", [])
     hosts = {s["host"].lower() for s in sups}
     slugs = {(s.get("slug") or "").lower() for s in sups if s.get("provider") == "slabcloud"}
+    denied = denied_hosts()
     added = 0
     for t in tenants:
         if t["host"].lower() in hosts or t["slug"].lower() in slugs:
+            continue
+        if is_denied(t["host"], denied):
             continue
         sups.append({"host": t["host"], "slug": t["slug"], "name": t["name"], "provider": "slabcloud"})
         hosts.add(t["host"].lower())
@@ -300,11 +336,14 @@ def probe_sps_vanity(apexes: list[str], verbose: bool = True) -> set[str]:
     """Return the <prefix>.<apex> hosts that serve a Stone Profits catalog
     (fingerprinted in the page HTML), across the common vanity prefixes."""
     hits: set[str] = set()
+    may_fetch = _gate()
     with httpx.Client(follow_redirects=True, headers=_UA, timeout=25) as client:
         for apex in apexes:
             apex = apex.strip().lower().removeprefix("www.")
             for prefix in _SPS_VANITY_PREFIXES:
                 host = f"{prefix}.{apex}"
+                if not may_fetch(f"https://{host}/"):
+                    continue
                 try:
                     r = client.get(f"https://{host}/")
                     if any(mk in r.text for mk in _SPS_MARKERS):
@@ -329,6 +368,7 @@ def discover_sps_embeds(verbose: bool = True) -> set[str]:
     prefix guessing — this needs no candidate apex list at all."""
     candidates: set[str] = set()
     hits: set[str] = set()
+    may_fetch = _gate()
     with httpx.Client(follow_redirects=True, headers=_UA, timeout=45) as client:
         for apex in _SPS_API_DOMAINS:
             try:
@@ -341,6 +381,8 @@ def discover_sps_embeds(verbose: bool = True) -> set[str]:
                 if pd and "stoneprofits" not in pd:
                     candidates.add(pd)
         for host in sorted(candidates):
+            if not may_fetch(f"https://{host}/"):
+                continue
             try:
                 r = client.get(f"https://{host}/", timeout=20)
                 if any(mk in r.text for mk in _SPS_MARKERS):

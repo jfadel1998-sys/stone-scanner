@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+from ..robots import client_for
 from .base import SupplierData, material_row
 
 API = "https://unbuilt.co/api/listings/"
@@ -46,8 +47,10 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.4,
     crawled_at = _now()
     brands = entry.get("brands") or BRANDS
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": UA},
-                                     follow_redirects=True) as client:
+        # unbuilt.co disallows /api/ but allows /api/listings/ specifically, so this
+        # provider only works if the longest-match rule is honored properly.
+        async with client_for(entry, headers={"User-Agent": UA},
+                              follow_redirects=True) as client:
             seen: set[str] = set()
             for brand in brands:
                 page = 1

@@ -28,6 +28,7 @@ from typing import Any
 
 import httpx
 
+from ..robots import client_for
 from .base import SupplierData, material_row, metres_to_inches, slab_row
 
 SITE = "https://slabcloud.com"
@@ -54,8 +55,10 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.3,
     out = SupplierData(host=host, company=entry.get("name") or slug.title())
     crawled_at = _now()
     try:
-        async with httpx.AsyncClient(headers={"User-Agent": UA},
-                                     follow_redirects=True) as client:
+        # Checked against slabcloud.com — the origin actually fetched — not the
+        # per-tenant <slug>.slabcloud.com host this entry is filed under.
+        async with client_for(entry, headers={"User-Agent": UA},
+                              follow_redirects=True) as client:
             r = await client.get(f"{SITE}/api/slabs/{slug}", timeout=60)
             r.raise_for_status()
             rows = [m for m in r.json() if isinstance(m, dict)]

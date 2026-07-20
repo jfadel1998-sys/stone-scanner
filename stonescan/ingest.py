@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from . import db, discover
+from . import db, denylist, discover
 from .crawler import crawl_hosts, utc_now_iso
 from .normalize import normalize_item
 
@@ -121,12 +121,18 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
 
 
 def _errored_hosts(db_path: str, hosts: list[str]) -> set[str]:
-    """Which of `hosts` have a non-empty last_error after a crawl pass."""
+    """Which of `hosts` failed in a way worth retrying.
+
+    A robots.txt block is excluded: it is the supplier's answer, not a blip, and
+    an immediate retry would just ask again after being told no.
+    """
+    from .robots import BLOCK_MARKER
+
     conn = db.init_db(db_path)
     ph = ",".join("?" for _ in hosts)
     rows = conn.execute(
         f"SELECT host FROM suppliers WHERE last_error IS NOT NULL AND last_error <> '' "
-        f"AND host IN ({ph})", hosts,
+        f"AND last_error NOT LIKE ? AND host IN ({ph})", [f"{BLOCK_MARKER}%", *hosts],
     ).fetchall() if hosts else []
     conn.close()
     return {r["host"] for r in rows}
@@ -169,6 +175,14 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
     without re-crawling the whole list. Persistent failures just stay flagged.
     """
     db_path = db_path or str(db.DEFAULT_DB)
+
+    # Last line of defence for a removal request: even a hand-re-added entry, or
+    # one restored from an old suppliers.json, does not get crawled.
+    entries, denied = denylist.filter_entries(entries)
+    for e in denied:
+        print(f"  [deny] {e.get('name') or e['host']:<34} "
+              f"{denylist.reason_for(e['host']) or 'on the denylist'}")
+
     await _crawl_entries(entries, concurrency=concurrency, delay=delay,
                          headless=headless, db_path=db_path, with_slabs=with_slabs,
                          provider_limit=provider_limit, progress=progress)
@@ -304,9 +318,11 @@ def main() -> None:
         entries = entries[: args.limit]
 
     if args.retry_errored:
+        from .robots import BLOCK_MARKER
         conn = db.init_db(args.db)
         failed = {r["host"] for r in conn.execute(
-            "SELECT host FROM suppliers WHERE last_error IS NOT NULL AND last_error <> ''"
+            "SELECT host FROM suppliers WHERE last_error IS NOT NULL AND last_error <> '' "
+            "AND last_error NOT LIKE ?", (f"{BLOCK_MARKER}%",),
         )}
         conn.close()
         before = len(entries)

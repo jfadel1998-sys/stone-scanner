@@ -7,10 +7,13 @@ materials across suppliers. Most are on the Stone Profits platform
 
 **Scope constraint (important):** public catalogs only — the same pages customers
 browse. No logins, no private data. Rate-limited, identifiable crawler.
-**We honor robots.txt** — it's what makes that claim true across ~80 suppliers.
-Aria Stone Gallery is deliberately excluded: it disallows all non-search crawlers
-on both its storefront *and* (uniquely among SPS tenants) its catalog host. Getting
-Aria is a commercial ask, not a code change.
+**We honor robots.txt** — enforced in code (`robots.py`), not by hand: every fetch
+is checked against its own origin's rules before it goes out. **A removal request is
+honored via `denylist.json`** — deleting a host from `suppliers.json` is *not* enough,
+because discovery re-adds anything it finds that isn't listed. Aria Stone Gallery is
+denylisted for exactly this reason: it disallows all non-search crawlers on both its
+storefront *and* (uniquely among SPS tenants) its catalog host. Getting Aria is a
+commercial ask, not a code change.
 
 ## Run it
 
@@ -24,7 +27,9 @@ Aria is a commercial ask, not a code change.
 .\.venv\Scripts\python.exe -m stonescan.dedupe                            # report merge candidates (--auto-conflicts to bulk-merge landslides)
 .\.venv\Scripts\python.exe -m stonescan.imagesearch --download-model     # fetch the CLIP model (~81MB, git-ignored), then:
 .\.venv\Scripts\python.exe -m stonescan.imagesearch --index              # embed catalog images for search-by-photo (--limit N to bound)
-.\.venv\Scripts\python.exe -m unittest tests.test_quality                 # unit tests for the merge/quality/discovery logic
+.\.venv\Scripts\python.exe -m stonescan.denylist add <host> --reason "..."  # honor a removal request (durably)
+.\.venv\Scripts\python.exe -m stonescan.denylist list                     # what we've been asked not to crawl (`check <host>` to test one)
+.\.venv\Scripts\python.exe -m unittest tests.test_quality tests.test_robots  # merge/quality/discovery + robots/denylist tests
 .\build_exe.ps1                                                           # build the standalone Windows app
 ```
 
@@ -37,6 +42,8 @@ build/packaging details.
 | Path | Purpose |
 |------|---------|
 | `stonescan/crawler.py` | Playwright crawler — per supplier: creds/contacts, getItemGallery, slab pre-fetch |
+| `stonescan/robots.py` | robots.txt enforcement (RFC 9309). `PoliteClient` is an `httpx.AsyncClient` that refuses disallowed URLs; `client_for(entry)` is what providers use. Gate lives at the HTTP layer, not per-supplier, because the entry `host` often isn't the origin fetched |
+| `stonescan/denylist.py` | Durable removal requests (`denylist.json` + CLI). Checked by discovery, by ingest, and by the fingerprint probes |
 | `stonescan/providers/` | Non-StoneProfits adapters (`umi`, `slabware`, `stonetrash`, `slabcloud`, `unbuilt`, `genericfeed`); all plain HTTP. `base.material_row()` is mandatory — it's what keeps `material_key` identical across platforms |
 | `stonescan/normalize.py` | Category classifier, cross-supplier `material_key`, color/thickness cleanup |
 | `stonescan/smartsearch.py` | Natural-language query parser ("blue marble slabs" → filters) |
@@ -50,7 +57,8 @@ build/packaging details.
 | `stonescan/dedupe.py` | Data-quality curation: type-conflict + spelling merge candidates, `apply_aliases` fold |
 | `stonescan/desktop.py` + `main.py` | Frozen-app launcher (native window, `--refresh` mode) |
 | `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), **By Photo** (CLIP visual similarity), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist, Health, Discovery (candidate triage), Quality (merge review + type audit) |
-| `suppliers.json` | Editable allow-list of catalogs to crawl |
+| `suppliers.json` | Editable allow-list of catalogs to crawl (+ optional reviewed `robots_override`) |
+| `denylist.json` | Hosts that must never be crawled or re-discovered. Bundled into the exe and **merged** (not seeded-once) on launch, so a removal shipped in a new build reaches existing installs |
 | `locations.json` | Editable map pins for locations the geocoder can't resolve |
 | `stonescan.spec` / `build_exe.ps1` / `build_mac.sh` | PyInstaller packaging. Spec is platform-aware (WebView2/.NET deps gated to Windows, Cocoa/PyObjC to macOS); `build_exe.ps1` (Windows) and `build_mac.sh` (macOS) each build onedir + copy that OS's Chromium. **No cross-compile** — build each OS on that OS. |
 | `refresh.ps1` | Scheduled nightly refresh (installed as Windows task `StoneScannerRefresh`) |
@@ -103,6 +111,35 @@ build/packaging details.
   provider — robots.txt → sitemap(s) → product pages → schema.org Product JSON-LD, one
   page fetch per product (bounded by `max_products`), every URL checked against robots
   `Disallow` before fetch. Product-level only (no live slab qty).
+- **robots.txt must be asked through the same door the data comes through.** An
+  outside `httpx` GET of `<tenant>.stoneprofitsweb.com/robots.txt` gets a Cloudflare
+  **403**, which RFC 9309 reads as "no restrictions" — so a naive check would have
+  rubber-stamped ~95 of 118 suppliers while looking like it worked. The crawler reads
+  robots.txt *inside the cleared Playwright page* instead. (What it finds: the SPS
+  platform serves its Angular shell there, i.e. publishes no robots.txt at all — but
+  that is now verified per host, not assumed.) Same principle for UMI: `umistone.com`
+  publishes real rules that only its **legacy-cipher** context can reach, so
+  `PoliteClient` fetches robots.txt with the provider's own client.
+- **A 200 that is HTML is not a robots.txt.** SPA hosts answer `/robots.txt` with
+  index.html; parsing that yields "zero rules, allowed" — right answer, wrong reason,
+  and one bad marketing line away from inventing a rule. `looks_like_html()` treats it
+  as no-file.
+- **Check the URL fetched, not the URL requested.** The gate is an httpx *request
+  event hook*, because `follow_redirects=True` makes httpx follow 30x internally — a
+  wrapper around `.get()` never sees the final URL, and a redirect into a disallowed
+  path (or onto another origin) would sail through.
+- **A robots block is a decision, not a failure.** Blocked hosts get a `last_error`
+  prefixed `robots-blocked:` and are excluded from the retry pass — otherwise we'd
+  re-ask, every night, a supplier who already said no (same shape as the "errors that
+  never cleared" bug).
+- **A publisher's robots.txt can contradict their own server.** unbuilt.co writes
+  `Allow: /api/listings/` to carve that endpoint out of `Disallow: /api/`, then
+  308-redirects it to the slash-less `/api/listings`, which its own Allow no longer
+  matches. Strict per-hop evaluation therefore blocks an endpoint they plainly opened.
+  Handled by a **reviewed `robots_override`** in suppliers.json — per-host,
+  per-path-prefix, and invalid without a written `reason` (`Override.from_entry`
+  raises), so exceptions are auditable rather than silent. It can rescue a `BLOCKED`
+  but never an `UNREACHABLE`: "we couldn't ask" is not something a human pre-approved.
 - **Locations are not addresses.** `slabs.location` is free text: ~56 of 99 are real
   cities, the rest are internal yard names (`KLZ`, `HG-NJ`) or towns below the city
   dataset's ~15k-population floor. `geocode.py` resolves what it can **offline** and

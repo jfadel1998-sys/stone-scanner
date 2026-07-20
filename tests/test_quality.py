@@ -306,17 +306,20 @@ class ProviderParseTests(unittest.TestCase):
         self.assertEqual(gf._form("Basalt Mosaics 12x12"), "MOSAIC")
 
     def test_genericfeed_robots_and_disallow(self):
-        from stonescan.providers import genericfeed as gf
-        robots = ("User-agent: *\nDisallow: /cart\nDisallow: /*filter_*\n"
-                  "User-agent: BadBot\nDisallow: /\n"
-                  "Sitemap: https://x.com/sitemap_index.xml")
-        sitemaps, disallows = gf._robots(robots)
-        self.assertEqual(sitemaps, ["https://x.com/sitemap_index.xml"])
-        self.assertIn("/cart", disallows)
-        self.assertNotIn("/", disallows)  # BadBot's rule is not for us (User-agent: *)
-        self.assertTrue(gf._disallowed("/cart", disallows))
-        self.assertTrue(gf._disallowed("/shop/filter_color", disallows))
-        self.assertFalse(gf._disallowed("/product/calacatta", disallows))
+        """genericfeed's hand-rolled parser was replaced by stonescan.robots; the
+        behavior it guaranteed must still hold. (Deeper rule coverage, including
+        the Allow precedence this one never handled, lives in tests/test_robots.py.)"""
+        from stonescan import robots
+        txt = ("User-agent: *\nDisallow: /cart\nDisallow: /*filter_*\n"
+               "User-agent: BadBot\nDisallow: /\n"
+               "Sitemap: https://x.com/sitemap_index.xml")
+        pol = robots.RobotsPolicy.parse(txt)
+        self.assertEqual(pol.sitemaps, ["https://x.com/sitemap_index.xml"])
+        self.assertFalse(pol.allows("/cart").allowed)
+        self.assertFalse(pol.allows("/shop/filter_color").allowed)
+        self.assertTrue(pol.allows("/product/calacatta").allowed)
+        # BadBot's blanket Disallow is not ours to obey.
+        self.assertTrue(pol.allows("/").allowed)
 
     def test_unbuilt_price(self):
         from stonescan.providers import unbuilt
