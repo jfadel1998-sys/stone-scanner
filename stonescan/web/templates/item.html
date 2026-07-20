@@ -108,7 +108,7 @@
         <td>{{ v.thickness }}</td>
         <td class="muted">{{ v.finish }}</td>
         <td class="muted">{{ v.product_form }}</td>
-        <td class="num">{{ v.available_slabs or '' }}</td>
+        <td class="num">{% if v.available_slabs %}{{ v.available_slabs }}{% elif v.tile_sf %}<span class="milechip">{{ v.tile_sf|round|int }} ft² tile</span>{% elif v.has_tile %}<span class="milechip">tile</span>{% endif %}</td>
         <td><a class="compare" href="/item?id={{ v.id }}">view →</a></td>
       </tr>
     {% endfor %}
@@ -126,7 +126,7 @@
       <tr class="{{ 'self' if o.supplier_host == m.supplier_host }}">
         <td class="thumbcell">{% if o.image_url %}<img class="thumb" loading="lazy" src="{{ o.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
         <td class="name">{{ o.supplier_name }}{% if o.supplier_host == m.supplier_host %} <span class="here">viewing</span>{% endif %}</td>
-        <td class="num">{{ o.slabs or '' }}</td>
+        <td class="num">{% if o.slabs %}{{ o.slabs }}{% elif o.tile_sf %}<span class="milechip" title="Sold as tile — measured by area">{{ o.tile_sf|round|int }} ft² tile</span>{% elif o.has_tile %}<span class="milechip">tile</span>{% else %}—{% endif %}</td>
         <td class="num muted">{{ o.variants }}</td>
         <td>
           <a class="compare" href="/item?id={{ o.id }}">view →</a>

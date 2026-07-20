@@ -60,6 +60,87 @@ def _add_key(conn, key, mtype, n_suppliers, base_supplier=1):
         )
 
 
+class SlabCountTests(unittest.TestCase):
+    """The number the app shows for a material must be honest.
+
+    A material spans many suppliers, so a cross-supplier SUM of available_slabs
+    reads as one buyable pile when it is really N separate yards. The search /
+    material headline must show the DEEPEST SINGLE YARD (max per supplier), and a
+    tile's square-foot quantity must never be summed as if it were a slab count.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=10)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _mat(self, supplier_id, key, *, slabs=0, form="SLAB", uom="", length=0, width=0):
+        base = key.rsplit("|", 1)[0]
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key,
+                  material_type, product_form, available_slabs, uom, avg_length, avg_width)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (supplier_id, f"{supplier_id}-{slabs}-{form}", base.title(), base.upper(),
+             key, key.rsplit("|", 1)[1].title(), form, slabs, uom, length, width))
+        self.conn.commit()
+
+    def _search(self, **kw):
+        from stonescan.web import app
+        kw.setdefault("q", ""); kw.setdefault("material_type", ""); kw.setdefault("color", "")
+        kw.setdefault("thickness", ""); kw.setdefault("supplier", "")
+        kw.setdefault("limit", 20); kw.setdefault("offset", 0)
+        _total, rows, _ = app._search(self.conn, **kw)
+        return {r["material_key"]: r for r in rows}
+
+    def test_headline_is_deepest_yard_not_cross_supplier_sum(self):
+        # Same material at three yards: 100, 40, 10 slabs.
+        self._mat(1, "taj mahal|quartzite", slabs=100)
+        self._mat(2, "taj mahal|quartzite", slabs=40)
+        self._mat(3, "taj mahal|quartzite", slabs=10)
+        r = self._search(q="taj")["taj mahal|quartzite"]
+        self.assertEqual(r["suppliers"], 3)
+        self.assertEqual(r["available_slabs"], 100, "should be the single deepest yard")
+        self.assertEqual(r["total_slabs"], 150, "grand total kept, separately")
+
+    def test_per_slab_row_supplier_sums_within_the_yard(self):
+        # OHM-style: 5 rows of 1 slab each at ONE supplier = 5 at that yard, not max=1.
+        for _ in range(5):
+            self._mat(1, "fantasy brown|marble", slabs=1)
+        self._mat(2, "fantasy brown|marble", slabs=2)
+        r = self._search(q="fantasy")["fantasy brown|marble"]
+        self.assertEqual(r["available_slabs"], 5, "supplier 1's rows sum to 5 within its yard")
+        self.assertEqual(r["total_slabs"], 7)
+
+    def test_tile_sf_is_not_counted_as_slabs(self):
+        self._mat(1, "river white|granite", slabs=2, form="SLAB")
+        self._mat(1, "river white|granite", slabs=2493, form="TILE", uom="SF")
+        r = self._search(q="river")["river white|granite"]
+        self.assertEqual(r["available_slabs"], 2, "the 2493 SF tile must not become slabs")
+        self.assertEqual(round(r["tile_sf"]), 2493)
+        self.assertEqual(r["has_tile"], 1)
+
+    def test_min_sqft_requires_one_yard_to_hold_the_area(self):
+        # Two yards, ~69 ft² each (100x100 in, 1 slab). Neither alone reaches 100 ft².
+        self._mat(1, "blue bahia|granite", slabs=1, length=100, width=100)
+        self._mat(2, "blue bahia|granite", slabs=1, length=100, width=100)
+        self.assertIn("blue bahia|granite", self._search(q="blue", min_sqft=50),
+                      "one yard has ~69 ft², so 50 passes")
+        self.assertNotIn("blue bahia|granite", self._search(q="blue", min_sqft=100),
+                         "no single yard has 100 ft², so it must be filtered out")
+
+    def test_in_stock_filter_still_works_across_the_rollup(self):
+        self._mat(1, "empty stone|granite", slabs=0)
+        self._mat(2, "stocked stone|granite", slabs=3)
+        keys = self._search(q="stone", in_stock=True)
+        self.assertIn("stocked stone|granite", keys)
+        self.assertNotIn("empty stone|granite", keys)
+
+
 class AliasApplyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

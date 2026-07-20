@@ -119,14 +119,20 @@ _TILE_SF = (f"SUM(CASE WHEN {_IS_TILE} AND UPPER(COALESCE(m.uom,'')) = 'SF' "
             "THEN COALESCE(m.available_slabs,0) ELSE 0 END)")
 _HAS_TILE = f"MAX(CASE WHEN {_IS_TILE} THEN 1 ELSE 0 END)"
 
+# Same tile-vs-slab rule for queries over the bare materials table (no "m." alias),
+# used by the per-supplier breakdown on /item. Without the guard, a tile's
+# square-foot quantity prints as a slab count under a "Slabs" column.
+_IS_TILE_RAW = "UPPER(COALESCE(product_form,'')) LIKE '%TILE%'"
+_SLABS_RAW = f"SUM(CASE WHEN {_IS_TILE_RAW} THEN 0 ELSE COALESCE(available_slabs,0) END)"
+_TILE_SF_RAW = (f"SUM(CASE WHEN {_IS_TILE_RAW} AND UPPER(COALESCE(uom,'')) = 'SF' "
+                "THEN COALESCE(available_slabs,0) ELSE 0 END)")
+_HAS_TILE_RAW = f"MAX(CASE WHEN {_IS_TILE_RAW} THEN 1 ELSE 0 END)"
+
 # Card image: prefer a real product photo over a SlabCloud thumbnail. SlabCloud tenants
 # reuse a shared "coming soon" graphic (in many byte-variants) for un-photographed slabs,
 # so whenever a material also has a Stone Profits photo, that real photo should win; the
-# SlabCloud thumb is used only when it's the material's sole image.
-_CARD_IMG = ("COALESCE("
-             "MAX(CASE WHEN COALESCE(m.image_url,'') <> '' "
-             "AND m.image_url NOT LIKE '%slabcloud.com/slabs/%' THEN m.image_url END), "
-             "MAX(m.image_url))")
+# SlabCloud thumb is used only when it's the material's sole image. (The search query
+# inlines this two-tier pick per supplier via real_img/any_img, so no shared constant.)
 
 # Total in-stock SLAB area. Sum each slab listing's own slabs×length×width BEFORE
 # aggregating (a group spans suppliers/variants, so MAX(length)×MAX(width) would
@@ -134,15 +140,18 @@ _CARD_IMG = ("COALESCE("
 _SQFT = (f"SUM(CASE WHEN {_IS_TILE} THEN 0 ELSE COALESCE(m.available_slabs,0) "
          "* COALESCE(m.avg_length,0) * COALESCE(m.avg_width,0) END) / 144.0")
 
+# ORDER BY runs on the OUTER (per-material) query, so these reference its output
+# columns. `available_slabs` is the deepest single yard (max per supplier), which is
+# also the number shown — so "most slabs" ranks by the same figure the user reads.
 SORTS = {
     # Material-centric relevance: surface the materials the market actually carries
-    # widely (many suppliers, lots of slab stock) before one-off/granular SKUs.
-    "relevance": f"COUNT(DISTINCT m.supplier_id) DESC, {_SLABS} DESC, m.material_key",
-    "slabs": f"{_SLABS} DESC, m.material_key",
-    "size": "MAX(m.avg_length) DESC, m.material_key",
-    "new": "MAX(m.new_arrival) DESC, m.material_key",
-    "area": f"{_SQFT} DESC, m.material_key",
-    "distance": f"miles ASC, {_SLABS} DESC",  # only valid when near-active
+    # widely (many suppliers, deep single-yard stock) before one-off/granular SKUs.
+    "relevance": "suppliers DESC, available_slabs DESC, material_key",
+    "slabs": "available_slabs DESC, material_key",
+    "size": "avg_length DESC, material_key",
+    "new": "new_arrival DESC, material_key",
+    "area": "total_sqft DESC, material_key",
+    "distance": "miles ASC, available_slabs DESC",  # only valid when near-active
 }
 
 
@@ -240,12 +249,40 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     # stay individual (grouped on their own id) rather than collapsing together.
     group_by = ("CASE WHEN COALESCE(m.material_key, '') = '' "
                 "THEN 'id:' || m.id ELSE m.material_key END")
-    # Aggregates (slab total, total area) are grouped, so filter them at HAVING time.
+
+    # Two-level aggregation. The INNER query sums each supplier's stock for a material
+    # (grp, supplier_id); the OUTER query then aggregates ACROSS suppliers. This is
+    # what lets "slabs" mean the deepest single yard — MAX of the per-supplier sums —
+    # instead of a cross-supplier SUM that reads as one buyable pile when it is really
+    # N separate yards. The per-supplier tile guard rides along for free.
+    sup_miles = ", MIN(nearest_miles(m.locations)) AS sup_miles" if near_active else ""
+
+    def inner_sql(clause: str) -> str:
+        return f"""
+            SELECT {group_by} AS grp, m.supplier_id AS sid,
+                   MIN(m.id) AS id, MAX(m.material_key) AS material_key,
+                   MIN(m.item_name) AS item_name, MAX(m.material_type) AS material_type,
+                   MAX(m.color) AS color, MAX(m.new_arrival) AS new_arrival,
+                   MAX(m.avg_length) AS avg_length, MAX(m.avg_width) AS avg_width,
+                   {_SLABS} AS sup_slabs, {_TILE_SF} AS sup_tile_sf, {_HAS_TILE} AS sup_has_tile,
+                   {_SQFT} AS sup_sqft,
+                   MAX(CASE WHEN COALESCE(m.image_url,'') <> ''
+                            AND m.image_url NOT LIKE '%slabcloud.com/slabs/%'
+                            THEN m.image_url END) AS real_img,
+                   MAX(m.image_url) AS any_img{sup_miles}
+            FROM materials m JOIN suppliers s ON s.id = m.supplier_id
+            WHERE {clause}
+            GROUP BY grp, m.supplier_id
+        """
+
+    # HAVING now filters the per-material rollup (outer), so it references the inner
+    # per-supplier columns. in_stock: stocked at any yard. min_sqft: a SINGLE yard must
+    # hold the area — 40 ft² at each of ten yards is not a 400 ft² order.
     have = []
-    if in_stock or min_sqft:  # needing enough area implies needing stock
-        have.append(f"({_SLABS} > 0 OR {_HAS_TILE} = 1)")
+    if in_stock or min_sqft:
+        have.append("(SUM(sup_slabs) > 0 OR MAX(sup_has_tile) = 1)")
     if min_sqft:
-        have.append(f"{_SQFT} >= ?")
+        have.append("MAX(sup_sqft) >= ?")
     having = (" HAVING " + " AND ".join(have)) if have else ""
     having_params = [min_sqft] if min_sqft else []
 
@@ -255,8 +292,8 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
 
     def count(clause, ps):
         return conn.execute(
-            f"SELECT COUNT(*) c FROM (SELECT 1 FROM materials m JOIN suppliers s "
-            f"ON s.id=m.supplier_id WHERE {clause} GROUP BY {group_by}{having})",
+            f"SELECT COUNT(*) c FROM (SELECT 1 FROM ({inner_sql(clause)}) "
+            f"GROUP BY grp{having})",
             ps + having_params,
         ).fetchone()["c"]
 
@@ -277,20 +314,23 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
                 clause, params, total = fclause, fparams, ftotal
                 parsed["fuzzy"] = sorted({w for v in variants for w in v[1:]})
 
-    # miles = distance to the NEAREST stocking supplier for this material.
-    miles_col = ", MIN(nearest_miles(m.locations)) AS miles" if near_active else ""
+    # Outer rollup across suppliers. available_slabs = deepest single yard (MAX of the
+    # per-supplier sums); total_slabs keeps the grand total for anything that wants it.
+    # total_sqft is likewise the deepest yard's area, so it reads consistently with the
+    # slab figure beside it. miles = distance to the NEAREST stocking supplier.
+    miles_col = ", MIN(sup_miles) AS miles" if near_active else ""
     rows = conn.execute(
-        f"""SELECT MIN(m.id) AS id, COALESCE(m.material_key, '') AS material_key,
-                   MIN(m.item_name) AS item_name, MAX(m.material_type) AS material_type,
-                   MAX(m.color) AS color, MAX(m.new_arrival) AS new_arrival,
-                   COUNT(DISTINCT m.supplier_id) AS suppliers,
-                   {_SLABS} AS available_slabs, {_TILE_SF} AS tile_sf, {_HAS_TILE} AS has_tile,
-                   MAX(m.avg_length) AS avg_length, MAX(m.avg_width) AS avg_width,
-                   {_SQFT} AS total_sqft,
-                   {_CARD_IMG} AS image_url{miles_col}
-            FROM materials m JOIN suppliers s ON s.id = m.supplier_id
-            WHERE {clause}
-            GROUP BY {group_by}{having}
+        f"""SELECT MIN(id) AS id, COALESCE(MAX(material_key), '') AS material_key,
+                   MIN(item_name) AS item_name, MAX(material_type) AS material_type,
+                   MAX(color) AS color, MAX(new_arrival) AS new_arrival,
+                   COUNT(*) AS suppliers,
+                   MAX(sup_slabs) AS available_slabs, SUM(sup_slabs) AS total_slabs,
+                   SUM(sup_tile_sf) AS tile_sf, MAX(sup_has_tile) AS has_tile,
+                   MAX(avg_length) AS avg_length, MAX(avg_width) AS avg_width,
+                   MAX(sup_sqft) AS total_sqft,
+                   COALESCE(MAX(real_img), MAX(any_img)) AS image_url{miles_col}
+            FROM ({inner_sql(clause)})
+            GROUP BY grp{having}
             ORDER BY {order_by}
             LIMIT ? OFFSET ?""",
         (*params, *having_params, limit, offset),
@@ -545,12 +585,16 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
         "types": uniq("material_type"), "colors": clean_colors(),
         "finishes": uniq("finish"), "thicknesses": sorted_thicknesses(),
         "origins": uniq("origin"), "forms": uniq("product_form"),
-        "slabs": sum(r["available_slabs"] or 0 for r in rows
-                     if "TILE" not in (r["product_form"] or "").upper()),
-        "tile_sf": sum(r["available_slabs"] or 0 for r in rows
-                       if "TILE" in (r["product_form"] or "").upper()
-                       and (r["uom"] or "").upper() == "SF"),
-        "has_tile": any("TILE" in (r["product_form"] or "").upper() for r in rows),
+        # Headline stock is the DEEPEST SINGLE YARD, not a cross-supplier sum: this
+        # material spans up to dozens of yards, and "2,240 slabs" read as one pile is
+        # a number you can't actually buy. suppliers_list is already sorted -slabs, so
+        # its first entry is the deepest. The grand total and the yard's name ride
+        # along for an honest "largest of N" caption.
+        "slabs": max((s["slabs"] for s in suppliers_list), default=0),
+        "total_slabs": sum(s["slabs"] for s in suppliers_list),
+        "top_yard": next((s["supplier_name"] for s in suppliers_list if s["slabs"]), ""),
+        "tile_sf": max((s["tile_sf"] for s in suppliers_list), default=0),
+        "has_tile": any(s["has_tile"] for s in suppliers_list),
         "suppliers": len(suppliers_list),
         "listings": len(rows),
         "size_range": (
@@ -609,11 +653,13 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
     m = dict(m)
     # Every supplier that carries this material (one row per supplier).
     others = conn.execute(
-        """SELECT COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
+        f"""SELECT COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
                   mm.id AS id, mm.item_id AS item_id, mm.source_url AS source_url,
-                  g.variants AS variants, g.slabs AS slabs, g.image_url AS image_url
+                  g.variants AS variants, g.slabs AS slabs,
+                  g.tile_sf AS tile_sf, g.has_tile AS has_tile, g.image_url AS image_url
            FROM (SELECT supplier_id, MIN(id) AS min_id, COUNT(*) AS variants,
-                        MAX(available_slabs) AS slabs, MAX(image_url) AS image_url
+                        {_SLABS_RAW} AS slabs, {_TILE_SF_RAW} AS tile_sf,
+                        {_HAS_TILE_RAW} AS has_tile, MAX(image_url) AS image_url
                  FROM materials WHERE material_key = ? AND material_key <> ''
                  GROUP BY supplier_id) g
            JOIN materials mm ON mm.id = g.min_id
@@ -624,8 +670,9 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
     # Other variants (e.g. different thickness/finish) of this material at THIS
     # supplier — grouped so per-slab duplicates don't appear.
     variants = conn.execute(
-        """SELECT MIN(id) AS id, item_name, thickness, finish, product_form,
-                  SUM(available_slabs) AS available_slabs, MAX(image_url) AS image_url
+        f"""SELECT MIN(id) AS id, item_name, thickness, finish, product_form,
+                  {_SLABS_RAW} AS available_slabs, {_TILE_SF_RAW} AS tile_sf,
+                  {_HAS_TILE_RAW} AS has_tile, MAX(image_url) AS image_url
            FROM materials
            WHERE material_key = ? AND supplier_id = ?
                  AND NOT (name_norm = ? AND thickness = ? AND finish = ?)
@@ -638,16 +685,16 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
     # materials, one row per material_key, prefer those with stock + a photo.
     first_word = (m["name_norm"] or "").split(" ")[0] if m["name_norm"] else ""
     similar = conn.execute(
-        """SELECT MIN(m.id) AS id, m.item_name, m.material_type, m.color, m.material_key,
+        f"""SELECT MIN(m.id) AS id, m.item_name, m.material_type, m.color, m.material_key,
                   MAX(m.image_url) AS image_url,
                   COUNT(DISTINCT m.supplier_id) AS suppliers,
-                  SUM(m.available_slabs) AS slabs
+                  {_SLABS} AS slabs
            FROM materials m
            WHERE m.material_type = ? AND m.material_key <> ? AND m.material_key <> ''
                  AND (m.color = ? OR (? <> '' AND m.name_norm LIKE ?))
            GROUP BY m.material_key
            ORDER BY (MAX(m.image_url) = '' OR MAX(m.image_url) IS NULL),
-                    SUM(m.available_slabs) DESC
+                    {_SLABS} DESC
            LIMIT 12""",
         (m["material_type"], m["material_key"], m["color"] or "\0",
          first_word, f"{first_word}%"),

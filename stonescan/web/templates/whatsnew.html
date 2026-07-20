@@ -35,7 +35,7 @@
   <p class="hintline muted">Tip: “Back in stock” alerts appear here once the app has crawled at least twice (it compares each night's inventory to the last).</p>
   {% endif %}
   <table class="materials">
-    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th class="num">Suppliers</th><th class="num">Slabs</th></tr></thead>
+    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th class="num">Suppliers</th><th class="num" title="Slabs at the single best-stocked supplier — not a total across yards">Slabs / yard</th></tr></thead>
     <tbody>
     {% for r in rows %}
       {% set href = ('/material?key=' ~ (r.material_key|urlencode)) if r.material_key else ('/item?id=' ~ r.id) %}

@@ -96,7 +96,7 @@
       <b>{{ mat_name(r) }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
       <span class="cardspec">{{ [r.material_type, r.color]|select|join(' · ') }}</span>
       <span class="cardstats">
-        <span class="cardslabs">{{ r.suppliers }} supplier{{ '' if r.suppliers == 1 else 's' }}{% if r.available_slabs %} · {{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}{% elif r.tile_sf %} · {{ r.tile_sf|round|int }} ft² tile{% elif r.has_tile %} · tile{% endif %}</span>
+        <span class="cardslabs">{{ r.suppliers }} supplier{{ '' if r.suppliers == 1 else 's' }}{% if r.available_slabs %} · {% if r.suppliers > 1 %}up to {% endif %}{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}{% if r.suppliers > 1 %}/yard{% endif %}{% elif r.tile_sf %} · {{ r.tile_sf|round|int }} ft² tile{% elif r.has_tile %} · tile{% endif %}</span>
         {% if near_ok and r.miles is not none %}<span class="milechip">📍 {{ r.miles|round|int }} mi</span>{% endif %}
       </span>
     </span>
@@ -110,7 +110,7 @@
   <thead>
     <tr>
       <th></th><th>Material</th><th>Type</th><th>Color</th>
-      <th class="num">Suppliers</th><th class="num">Slabs</th>{% if near_ok %}<th class="num">Nearest</th>{% endif %}
+      <th class="num">Suppliers</th><th class="num" title="Slabs at the single best-stocked supplier — not a total across yards">Slabs / yard</th>{% if near_ok %}<th class="num">Nearest</th>{% endif %}
     </tr>
   </thead>
   <tbody>

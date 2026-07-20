@@ -8,7 +8,7 @@
   <p class="muted">
     {{ facts.types|join(' / ') }}{% if facts.colors %} · {{ facts.colors|join(', ') }}{% endif %}
     · carried by {{ facts.suppliers }} supplier{{ '' if facts.suppliers == 1 else 's' }}
-    {% if facts.slabs %}· {{ facts.slabs }} slab{{ '' if facts.slabs == 1 else 's' }} in stock{% endif %}
+    {% if facts.slabs %}· {% if facts.suppliers > 1 %}up to {% endif %}{{ facts.slabs }} slab{{ '' if facts.slabs == 1 else 's' }}{% if facts.suppliers > 1 %} at {{ facts.top_yard }}{% else %} in stock{% endif %}{% if facts.total_slabs > facts.slabs %} <span class="muted" title="Total across all {{ facts.suppliers }} suppliers — held at separate yards, not one pile">({{ facts.total_slabs }} across all)</span>{% endif %}{% endif %}
     {% if facts.tile_sf %}· {{ facts.tile_sf|round|int }} ft² tile{% elif facts.has_tile and not facts.slabs %}· sold as tile{% endif %}
   </p>
   {% if added == 1 %}<p class="hintline"><span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span></p>
