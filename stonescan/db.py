@@ -243,6 +243,60 @@ def upsert_supplier(conn: sqlite3.Connection, host: str, **fields: Any) -> int:
     return int(row["id"])
 
 
+def purge_supplier(conn: sqlite3.Connection, host: str) -> dict[str, int]:
+    """Erase a supplier's collected catalog — for honoring a removal request.
+
+    The denylist stops us *crawling* a host again. On its own that leaves everything
+    already collected sitting in the database and still fully searchable, which is
+    not what "stop indexing us" means; a supplier who asked to be removed would keep
+    finding themselves in the app indefinitely. This removes the catalog rows, the
+    per-slab cache, the history snapshots, and the CLIP embeddings derived from their
+    photos, then scrubs the contact details the crawler scraped.
+
+    The `suppliers` row is zeroed rather than deleted, and `list_items` is left
+    alone, because those are the *user's* sourcing lists referencing this supplier by
+    id — their own saved work, which already snapshots name/photo so the entries
+    still render (flagged "gone"). Deleting it would also break the foreign key.
+    The remaining count is returned so the caller can say so out loud instead of
+    quietly leaving it there.
+    """
+    row = conn.execute("SELECT id FROM suppliers WHERE host = ?", (host,)).fetchone()
+    if row is None:
+        return {"materials": 0, "slabs": 0, "history": 0, "image_vectors": 0,
+                "list_items_kept": 0}
+    sid = int(row["id"])
+
+    def _count(sql: str) -> int:
+        return int(conn.execute(sql, (sid,)).fetchone()[0])
+
+    out = {
+        "materials": _count("SELECT COUNT(*) FROM materials WHERE supplier_id = ?"),
+        "slabs": _count("SELECT COUNT(*) FROM slabs WHERE supplier_id = ?"),
+        "history": _count("SELECT COUNT(*) FROM history WHERE supplier_id = ?"),
+        "list_items_kept": _count("SELECT COUNT(*) FROM list_items WHERE supplier_id = ?"),
+    }
+    # Embeddings are keyed by image_url, so they must be resolved through materials
+    # BEFORE those rows go — afterwards there is nothing left to join against and the
+    # vectors would linger, still answering search-by-photo with this supplier's stone.
+    out["image_vectors"] = int(conn.execute(
+        "SELECT COUNT(*) FROM image_vectors WHERE image_url IN "
+        "(SELECT image_url FROM materials WHERE supplier_id = ? AND COALESCE(image_url,'') <> '')",
+        (sid,)).fetchone()[0])
+    conn.execute(
+        "DELETE FROM image_vectors WHERE image_url IN "
+        "(SELECT image_url FROM materials WHERE supplier_id = ? AND COALESCE(image_url,'') <> '')",
+        (sid,))
+    for table in ("materials", "slabs", "history"):
+        conn.execute(f"DELETE FROM {table} WHERE supplier_id = ?", (sid,))
+    conn.execute(
+        "UPDATE suppliers SET item_count = 0, slab_count = 0, token = NULL, "
+        "company = NULL, products = NULL, phone = NULL, email = NULL, "
+        "image_base = NULL, locations = NULL, last_error = ? WHERE id = ?",
+        ("removed at the supplier's request (denylisted)", sid))
+    conn.commit()
+    return out
+
+
 def replace_materials(
     conn: sqlite3.Connection, supplier_id: int, rows: Iterable[dict[str, Any]]
 ) -> int:

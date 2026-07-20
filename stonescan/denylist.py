@@ -125,6 +125,35 @@ def add(host: str, reason: str = "", *, prune_suppliers: bool = True) -> bool:
     return True
 
 
+def purge_data(host: str, db_path: str = "") -> dict[str, int]:
+    """Erase already-collected data for a denied host (and its subdomains) from the
+    database. Denying stops future crawls; this honors the removal for what is
+    already stored. Aggregated across every matching supplier row.
+
+    Returns zeroed totals (and never touches the DB) if there is no database yet,
+    so calling it on a fresh install or in a test is safe.
+    """
+    from . import db
+
+    totals = {"materials": 0, "slabs": 0, "history": 0, "image_vectors": 0,
+              "list_items_kept": 0, "suppliers": 0}
+    path = db_path or str(db.DEFAULT_DB)
+    if not Path(path).exists():
+        return totals
+    conn = db.connect(path)
+    try:
+        hosts = [r["host"] for r in conn.execute("SELECT host FROM suppliers")]
+        for h in hosts:
+            if is_denied(h, {_normalize(host)}):
+                res = db.purge_supplier(conn, h)
+                totals["suppliers"] += 1
+                for k, v in res.items():
+                    totals[k] = totals.get(k, 0) + v
+    finally:
+        conn.close()
+    return totals
+
+
 def remove(host: str) -> bool:
     h = _normalize(host)
     entries = load()
@@ -160,6 +189,10 @@ def main() -> None:
     a = sub.add_parser("add", help="Deny a host and drop it from suppliers.json.")
     a.add_argument("host")
     a.add_argument("--reason", default="", help="Why (shown in the file; for your records).")
+    a.add_argument("--keep-data", action="store_true",
+                   help="Deny future crawls but leave already-collected rows in the DB "
+                        "(default is to erase them, which is what a removal request means).")
+    a.add_argument("--db", default="", help="SQLite path (default: the app DB).")
     r = sub.add_parser("remove", help="Un-deny a host.")
     r.add_argument("host")
     sub.add_parser("list", help="Show the denylist.")
@@ -168,11 +201,26 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.cmd == "add":
-        if add(args.host, args.reason):
+        newly = add(args.host, args.reason)
+        if newly:
             print(f"Denied {_normalize(args.host)} (and its subdomains).")
             print(f"  {DENYLIST_FILE}")
         else:
             print(f"{_normalize(args.host)} was already denied.")
+        # Erase what we already collected, unless told to keep it. Run this even for
+        # an already-denied host: a first `add` may have denied it before this data
+        # existed, or a later re-crawl slipped rows in — so re-running cleans up.
+        if not args.keep_data:
+            t = purge_data(args.host, args.db)
+            if t["suppliers"]:
+                print(f"Erased collected data from {t['suppliers']} supplier row(s): "
+                      f"{t['materials']} materials, {t['slabs']} slabs, "
+                      f"{t['history']} history rows, {t['image_vectors']} image vectors.")
+                if t["list_items_kept"]:
+                    print(f"  Kept {t['list_items_kept']} of your own sourcing-list "
+                          "item(s) referencing them (they render as 'gone').")
+            else:
+                print("  No collected data to erase.")
     elif args.cmd == "remove":
         print("Removed." if remove(args.host) else "Not on the denylist.")
     elif args.cmd == "check":

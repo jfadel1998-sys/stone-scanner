@@ -2,22 +2,38 @@
 # Discovers any newly-published catalogs, then re-crawls everything so material
 # availability and new arrivals stay current. Safe to run on a schedule.
 #
-# One-time setup of a daily 3:00 AM refresh (run in an elevated PowerShell):
-#   schtasks /Create /SC DAILY /ST 03:00 /TN "StoneScannerRefresh" `
-#     /TR "powershell -NoProfile -ExecutionPolicy Bypass -File `"$PWD\refresh.ps1`""
+# Install the nightly task (run once, in an ELEVATED PowerShell):
+#   .\install-refresh-task.ps1
 #
 # Run manually any time:  .\refresh.ps1
 
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 
-$py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-$stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-Add-Content -Path "refresh.log" -Value "`n===== refresh started $stamp ====="
+$py  = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$log = Join-Path $PSScriptRoot "refresh.log"
 
-# --discover finds newly-listed suppliers; --slabs pre-caches every in-stock
-# item's full slab gallery so detail pages open instantly during the day.
-& $py -u -m stonescan.ingest --discover --slabs --concurrency 4 --delay 1.0 2>&1 |
-    Tee-Object -FilePath "refresh.log" -Append
+# One writer, one encoding. The previous version mixed Add-Content (UTF-8/ANSI) with
+# Tee-Object (UTF-16LE) into the same file, so the log came out as garbled spaced-out
+# characters that couldn't be grepped — useless for diagnosing a failed run. Everything
+# now goes through Write-Log, which appends UTF-8 and echoes to the console.
+function Write-Log([string]$msg) {
+    $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
+    Add-Content -Path $log -Value $line -Encoding utf8
+    Write-Host $line
+}
 
-Add-Content -Path "refresh.log" -Value "===== refresh finished $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ====="
+if (-not (Test-Path $py)) {
+    Write-Log "ERROR: venv python not found at $py — run from the project root with the venv set up."
+    exit 1
+}
+
+Write-Log "===== refresh started ====="
+# --discover finds newly-listed suppliers; --slabs pre-caches every in-stock item's
+# full slab gallery so detail pages open instantly during the day. --retry gives
+# anything that trips a Cloudflare challenge one more attempt in the same run.
+& $py -u -m stonescan.ingest --discover --slabs --retry --concurrency 4 --delay 1.0 2>&1 |
+    ForEach-Object { Add-Content -Path $log -Value ([string]$_) -Encoding utf8; Write-Host $_ }
+$code = $LASTEXITCODE
+Write-Log "===== refresh finished (exit $code) ====="
+exit $code

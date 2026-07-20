@@ -497,5 +497,100 @@ class DenylistTests(unittest.TestCase):
             self.dl.load()
 
 
+class PurgeTests(unittest.TestCase):
+    """Denying a host must actually erase its collected data — otherwise a supplier
+    who asked to be removed stays searchable forever."""
+
+    def setUp(self):
+        import tempfile
+
+        from stonescan import db
+
+        self.db = db
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "t.db")
+        conn = db.init_db(self.path)
+        # Cleanups run LIFO: register the dir removal first and the connection close
+        # second, so the connection closes BEFORE the dir is unlinked — Windows can't
+        # delete a .db file that still has an open handle.
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(lambda: self.conn.close())
+        sid = db.upsert_supplier(conn, host="gone.example.com", company="Gone Co",
+                                 phone="555-1000", email="x@gone.example.com")
+        keep = db.upsert_supplier(conn, host="keep.example.com", company="Keep Co")
+        db.replace_materials(conn, sid, [
+            {"supplier_id": sid, "item_id": f"i{i}", "item_name": f"Stone {i}",
+             "name_norm": f"STONE {i}", "material_key": f"stone {i}|granite",
+             "material_type": "Granite", "available_slabs": 3,
+             "image_url": f"http://img/{i}.jpg", "crawled_at": "2026-07-19"}
+            for i in range(5)])
+        db.replace_materials(conn, keep, [
+            {"supplier_id": keep, "item_id": "k1", "item_name": "Keep Stone",
+             "name_norm": "KEEP STONE", "material_key": "keep|granite",
+             "material_type": "Granite", "available_slabs": 2,
+             "image_url": "http://img/keep.jpg", "crawled_at": "2026-07-19"}])
+        db.replace_slabs(conn, sid, [
+            {"supplier_id": sid, "item_id": "i0", "slab_no": "A", "crawled_at": "2026-07-19"}],
+            "2026-07-19")
+        db.snapshot_history(conn, sid, "2026-07-19")
+        conn.execute("INSERT INTO image_vectors (image_url, vec) VALUES (?, ?)",
+                     ("http://img/0.jpg", b"\x00" * 8))
+        conn.execute("INSERT INTO image_vectors (image_url, vec) VALUES (?, ?)",
+                     ("http://img/keep.jpg", b"\x00" * 8))
+        conn.commit()
+        self.sid, self.keep = sid, keep
+        self.conn = conn
+
+    def _count(self, table, sid):
+        return self.conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE supplier_id = ?", (sid,)).fetchone()[0]
+
+    def test_purge_erases_only_the_target(self):
+        res = self.db.purge_supplier(self.conn, "gone.example.com")
+        self.assertEqual(res["materials"], 5)
+        self.assertEqual(res["slabs"], 1)
+        self.assertEqual(self._count("materials", self.sid), 0)
+        self.assertEqual(self._count("history", self.sid), 0)
+        # The other supplier is untouched.
+        self.assertEqual(self._count("materials", self.keep), 1)
+
+    def test_purge_removes_derived_image_vectors_but_not_others(self):
+        self.db.purge_supplier(self.conn, "gone.example.com")
+        urls = {r[0] for r in self.conn.execute("SELECT image_url FROM image_vectors")}
+        self.assertNotIn("http://img/0.jpg", urls)   # was the gone supplier's
+        self.assertIn("http://img/keep.jpg", urls)   # the other supplier's survives
+
+    def test_purge_scrubs_contact_details_but_keeps_the_row(self):
+        self.db.purge_supplier(self.conn, "gone.example.com")
+        r = self.conn.execute(
+            "SELECT item_count, company, phone, email FROM suppliers WHERE id = ?",
+            (self.sid,)).fetchone()
+        self.assertEqual(r["item_count"], 0)
+        self.assertIsNone(r["company"])
+        self.assertIsNone(r["phone"])
+        # Row kept (list_items FK depends on it); zeroed, not deleted.
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM suppliers WHERE id = ?", (self.sid,)).fetchone()[0], 1)
+
+    def test_purge_unknown_host_is_a_noop(self):
+        res = self.db.purge_supplier(self.conn, "nosuch.example.com")
+        self.assertEqual(res["materials"], 0)
+
+    def test_purge_data_matches_subdomains(self):
+        from stonescan import denylist
+        # Deny the apex; a supplier stored under a subdomain must still be purged.
+        sub = self.db.upsert_supplier(self.conn, host="inventory.gone.example.com",
+                                      company="Sub")
+        self.db.replace_materials(self.conn, sub, [
+            {"supplier_id": sub, "item_id": "s1", "item_name": "S", "name_norm": "S",
+             "material_key": "s|granite", "material_type": "Granite",
+             "available_slabs": 1, "crawled_at": "2026-07-19"}])
+        self.conn.commit()
+        totals = denylist.purge_data("gone.example.com", self.path)
+        # both gone.example.com and inventory.gone.example.com match the apex
+        self.assertEqual(totals["suppliers"], 2)
+        self.assertGreaterEqual(totals["materials"], 6)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

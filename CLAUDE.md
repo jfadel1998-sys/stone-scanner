@@ -27,7 +27,8 @@ commercial ask, not a code change.
 .\.venv\Scripts\python.exe -m stonescan.dedupe                            # report merge candidates (--auto-conflicts to bulk-merge landslides)
 .\.venv\Scripts\python.exe -m stonescan.imagesearch --download-model     # fetch the CLIP model (~81MB, git-ignored), then:
 .\.venv\Scripts\python.exe -m stonescan.imagesearch --index              # embed catalog images for search-by-photo (--limit N to bound)
-.\.venv\Scripts\python.exe -m stonescan.denylist add <host> --reason "..."  # honor a removal request (durably)
+.\.venv\Scripts\python.exe -m stonescan.denylist add <host> --reason "..."  # honor a removal request: deny future crawls AND erase collected data (--keep-data to skip the erase)
+.\install-refresh-task.ps1                                                # install the nightly refresh as a Windows task (run once, elevated)
 .\.venv\Scripts\python.exe -m stonescan.denylist list                     # what we've been asked not to crawl (`check <host>` to test one)
 .\.venv\Scripts\python.exe -m unittest tests.test_quality tests.test_robots  # merge/quality/discovery + robots/denylist tests
 .\build_exe.ps1                                                           # build the standalone Windows app
@@ -61,7 +62,7 @@ build/packaging details.
 | `denylist.json` | Hosts that must never be crawled or re-discovered. Bundled into the exe and **merged** (not seeded-once) on launch, so a removal shipped in a new build reaches existing installs |
 | `locations.json` | Editable map pins for locations the geocoder can't resolve |
 | `stonescan.spec` / `build_exe.ps1` / `build_mac.sh` | PyInstaller packaging. Spec is platform-aware (WebView2/.NET deps gated to Windows, Cocoa/PyObjC to macOS); `build_exe.ps1` (Windows) and `build_mac.sh` (macOS) each build onedir + copy that OS's Chromium. **No cross-compile** — build each OS on that OS. |
-| `refresh.ps1` | Scheduled nightly refresh (installed as Windows task `StoneScannerRefresh`) |
+| `refresh.ps1` + `install-refresh-task.ps1` | Nightly refresh crawl, and the idempotent elevated installer that registers it as the `StoneScannerRefresh` Windows task. **Not auto-installed** — run `install-refresh-task.ps1` once; without it nothing refreshes and data goes stale |
 
 ## Gotchas (learned the hard way — see user memory for depth)
 
