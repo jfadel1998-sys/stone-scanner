@@ -88,6 +88,36 @@ def _merge_denylist(dest: Path, bundled: Path) -> None:
         dest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _merge_reference(dest: Path, bundled: Path) -> None:
+    """Union the shipped stone reference into the user's copy, keyed by stone.
+
+    Same reasoning as _merge_denylist: seeding once would mean stones researched
+    for a later release never reach an install that already has the file, while
+    plain overwriting would discard entries the user looked up themselves. The
+    shipped (curated, fact-checked) entry wins a collision, because a live Wikipedia
+    lookup is the weaker source of the two.
+    """
+    import json
+
+    def read(p: Path) -> list:
+        try:
+            return json.loads(p.read_text(encoding="utf-8")).get("stones", [])
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return []
+
+    if not bundled.exists() and not dest.exists():
+        return
+    mine, theirs = read(dest), read(bundled)
+    merged = {(s.get("key") or s.get("display_name", "")).lower(): s for s in mine}
+    for s in theirs:  # curated entries overwrite a looked-up one of the same name
+        merged[(s.get("key") or s.get("display_name", "")).lower()] = s
+    payload = {"_comment": "Stone reference (origin, quarries, price). Merged from the "
+                           "shipped list on each launch; every fact carries its sources.",
+               "stones": list(merged.values())}
+    dest.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+
+
 def setup_env() -> Path:
     """Prepare the writable data dir + environment; return the data dir."""
     base = app_dir()
@@ -112,6 +142,11 @@ def setup_env() -> Path:
     deny = data / "denylist.json"
     _merge_denylist(deny, bundle_dir() / "seed" / "denylist.json")
     os.environ["STONESCAN_DENYLIST"] = str(deny)
+
+    # Stone reference: writable, because the app appends to it on a live lookup.
+    ref = data / "stone_reference.json"
+    _merge_reference(ref, bundle_dir() / "seed" / "stone_reference.json")
+    os.environ["STONESCAN_REFERENCE"] = str(ref)
 
     browsers = base / "browsers"
     if browsers.exists():

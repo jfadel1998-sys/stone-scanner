@@ -57,6 +57,8 @@ base_datas = pw_datas + wv_datas + gn_datas + ort_datas + [
     # Without this the frozen app starts with no denylist and would happily crawl a
     # host that asked to be removed — the packaged build must carry the removals.
     ("denylist.json", "seed"),
+    # Researched stone facts (origin/quarries/price) behind the photo-ID panel.
+    ("stone_reference.json", "seed"),
     ("stonescan.db", "seed"),
 ]
 base_binaries = pw_binaries + wv_binaries + gn_binaries + ort_binaries

@@ -30,6 +30,8 @@ commercial ask, not a code change.
 .\.venv\Scripts\python.exe -m stonescan.denylist add <host> --reason "..."  # honor a removal request: deny future crawls AND erase collected data (--keep-data to skip the erase)
 .\install-refresh-task.ps1                                                # install the nightly refresh as a Windows task (run once, elevated)
 .\.venv\Scripts\python.exe -m stonescan.denylist list                     # what we've been asked not to crawl (`check <host>` to test one)
+.\.venv\Scripts\python.exe -m stonescan.reference stats                   # stone-reference coverage (`list --gaps`, `lookup <name>`)
+.\.venv\Scripts\python.exe -m stonescan.reference import <file.json>      # merge researched entries (unsourced facts are stripped)
 .\.venv\Scripts\python.exe -m unittest tests.test_quality tests.test_robots  # merge/quality/discovery + robots/denylist tests
 .\build_exe.ps1                                                           # build the standalone Windows app
 ```
@@ -51,7 +53,8 @@ build/packaging details.
 | `stonescan/db.py` | SQLite schema + all query/storage helpers (materials, slabs, history, watchlist) |
 | `stonescan/ingest.py` | Orchestrator: crawl → normalize → store → history snapshot |
 | `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached) |
-| `stonescan/imagesearch.py` | Search-by-photo: CLIP ViT-B/32 vision encoder (ONNX, CPU, no torch). Embeds catalog images into `image_vectors` (keyed by image_url); `search()` cosine-ranks against an uploaded photo. Model at `stonescan/models/clip/clip_vision.onnx` (git-ignored, `--download-model`). |
+| `stonescan/imagesearch.py` | Search-by-photo: CLIP ViT-B/32 vision encoder (ONNX, CPU, no torch). Embeds catalog images into `image_vectors` (keyed by image_url); `search()` cosine-ranks against an uploaded photo and carries per-material agreement counts; `identify()` turns those into a named verdict + confidence. Model at `stonescan/models/clip/clip_vision.onnx` (git-ignored, `--download-model`). |
+| `stonescan/reference.py` | What a stone *is* — origin, quarries, market price — none of which exists in the catalog (see Gotchas). Cited facts in `stone_reference.json`; `lookup_live()` fills gaps from the Wikipedia API on demand. Unsourced facts are stripped on import, so the UI says "not established" rather than inventing one. |
 | `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) distributor **vanity / white-label** Stone Profits catalogs on the distributor's own domain (slabs.nsrstone.com, inventory.acegraniteusa.com, outlet.ckfco.com — drop-in on the default provider, any subdomain prefix, invisible to the subdomain sweep). `discover_sps_embeds()` finds them via urlscan (pages that load a Stone Profits resource → fingerprint-verify); `probe_sps_vanity()` fingerprints `<prefix>.<apex>` over a curated apex list. UMI/StoneTrash single sites stay hand-seeded |
 | `stonescan/geocode.py` | Offline location → lat/long for the pin map (+ `locations.json` overrides) |
 | `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling (also re-applies merges) |
@@ -60,6 +63,7 @@ build/packaging details.
 | `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), **By Photo** (CLIP visual similarity), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist, Health, Discovery (candidate triage), Quality (merge review + type audit) |
 | `suppliers.json` | Editable allow-list of catalogs to crawl (+ optional reviewed `robots_override`) |
 | `denylist.json` | Hosts that must never be crawled or re-discovered. Bundled into the exe and **merged** (not seeded-once) on launch, so a removal shipped in a new build reaches existing installs |
+| `stone_reference.json` | Researched stone facts with per-fact source URLs + confidence. Bundled and merged on launch like the denylist; curated entries beat live-looked-up ones on a collision |
 | `locations.json` | Editable map pins for locations the geocoder can't resolve |
 | `stonescan.spec` / `build_exe.ps1` / `build_mac.sh` | PyInstaller packaging. Spec is platform-aware (WebView2/.NET deps gated to Windows, Cocoa/PyObjC to macOS); `build_exe.ps1` (Windows) and `build_mac.sh` (macOS) each build onedir + copy that OS's Chromium. **No cross-compile** — build each OS on that OS. |
 | `refresh.ps1` + `install-refresh-task.ps1` | Nightly refresh crawl, and the idempotent elevated installer that registers it as the `StoneScannerRefresh` Windows task. **Not auto-installed** — run `install-refresh-task.ps1` once; without it nothing refreshes and data goes stale |
@@ -141,6 +145,24 @@ build/packaging details.
   per-path-prefix, and invalid without a written `reason` (`Override.from_entry`
   raises), so exceptions are auditable rather than silent. It can rescue a `BLOCKED`
   but never an `UNREACHABLE`: "we couldn't ask" is not something a human pre-approved.
+- **`materials.origin` is not geological origin, and `price_range` is not money.**
+  Both look usable and neither is. `origin` has 44 distinct values of which exactly
+  three are countries — the other 41 are US warehouse cities ("Anaheim, CA"), i.e. a
+  mislabeled location field, and only 1.1% of rows are populated. `price_range` is
+  52% populated but 76% of it is supplier tier codes ("Group 5", "Level 2",
+  "Caesarstone B - Standard", bare `$`/`$$$` bands). Only two shapes are real money
+  and they mean different things: `$11.9/sf` (per sq ft — StoneTrash only, ~4.7k rows)
+  and `$570` (a whole-slab total — Unbuilt, Marble Systems). `_observed_prices()`
+  keeps them apart and drops everything else. **This is why the photo-ID reference
+  data has to come from outside the catalog** — don't "just join" origin or average
+  price_range.
+- **The photo-ID consensus must be measured before the dedupe.** `search()` returns
+  one row per `material_key` by construction, so counting how many top results share
+  a name always yields 1 — the first cut of `identify()` reported "uncertain" for a
+  100% self-match. Agreement (`image_matches`, `distinct_suppliers`) is therefore
+  tallied over the raw image ranking inside `search()` and carried forward. Distinct
+  suppliers matter separately from image count: fourteen photos from one supplier is
+  one opinion, not fourteen.
 - **Locations are not addresses.** `slabs.location` is free text: ~56 of 99 are real
   cities, the rest are internal yard names (`KLZ`, `HG-NJ`) or towns below the city
   dataset's ~15k-population floor. `geocode.py` resolves what it can **offline** and

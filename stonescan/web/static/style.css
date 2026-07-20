@@ -668,6 +668,94 @@ footer {
   table.materials { display: block; overflow-x: auto; white-space: nowrap; }
 }
 
+/* ---- Photo identification ------------------------------------------------
+   Two fact tiers that must never read as one: `.reference` is external data we
+   cite, `.catalog` is the app's own verifiable data. They're given different
+   accent edges and source badges so provenance is legible at a glance rather
+   than buried in a footnote. All colors come from the existing tokens, so both
+   tiers follow light/dark automatically. */
+.idpanel {
+  display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;
+  margin: 10px var(--pad-x) 4px; padding: 18px; border: 1px solid var(--line);
+  border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow-sm);
+}
+.idphoto {
+  width: 148px; height: 148px; object-fit: cover; border-radius: var(--r);
+  border: 1px solid var(--line-strong); background: var(--chip); flex: none;
+}
+.idverdict { flex: 1 1 320px; min-width: 0; }
+.idlabel { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.idname { margin: 6px 0 4px; font-family: var(--font-display); font-size: 27px; font-weight: 600; letter-spacing: -.3px; line-height: 1.15; }
+.idname a { color: var(--ink); }
+.idmeta { margin: 0 0 6px; font-size: 13px; color: var(--ink-soft); }
+.idwhy { font-size: 12.5px; margin: 0; max-width: 68ch; }
+.idalts { margin-top: 10px; font-size: 12px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* Confidence: earned, not decorative — `unknown` must not look like a low score. */
+.conf {
+  display: inline-block; padding: 1px 8px; border-radius: var(--r-pill);
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  border: 1px solid var(--line-strong); background: var(--chip); color: var(--muted);
+}
+.conf-strong, .conf-high { background: var(--accent-soft); color: var(--accent-soft-ink); border-color: var(--accent); }
+.conf-likely, .conf-medium { background: var(--chip); color: var(--ink-soft); }
+.conf-uncertain, .conf-low { background: var(--brick-soft); color: var(--brick-ink); border-color: var(--brick); }
+.conf-unknown { opacity: .75; }
+
+.factgrid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 16px; padding: 14px var(--pad-x) 6px; align-items: start;
+}
+.factcard {
+  border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel);
+  padding: 16px 18px; box-shadow: var(--shadow-sm);
+}
+.factcard.reference { border-top: 3px solid var(--gold); }
+.factcard.catalog { border-top: 3px solid var(--accent); }
+.factcard h3 {
+  margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); font-weight: 700; display: flex; align-items: center; gap: 8px;
+}
+.srcbadge {
+  padding: 1px 8px; border-radius: var(--r-pill); font-size: 10px; font-weight: 700;
+  background: var(--gold); color: var(--on-accent); text-transform: none; letter-spacing: 0;
+}
+.srcbadge.cat { background: var(--btn-bg); }
+.refsummary { margin: 0 0 12px; font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; max-width: 62ch; }
+
+.factlist { margin: 0; display: grid; grid-template-columns: minmax(84px, auto) 1fr; gap: 7px 14px; font-size: 13px; }
+.factlist dt { color: var(--muted); font-weight: 600; font-size: 12px; padding-top: 1px; }
+.factlist dd { margin: 0; color: var(--ink); min-width: 0; }
+.factlist dd .small { font-size: 11.5px; }
+
+/* A citation is part of the fact, not a footnote — it sits inline with it. */
+.cite {
+  display: inline-block; margin-left: 5px; padding: 0 6px; border-radius: var(--r-xs);
+  font-size: 10.5px; font-weight: 700; background: var(--chip); color: var(--accent-ink);
+  border: 1px solid var(--line-strong); vertical-align: 1px;
+}
+.cite:hover { background: var(--accent-soft); text-decoration: none; }
+/* "not established" must read as an honest gap, not as a styling accident. */
+.notest { color: var(--muted); font-style: italic; }
+.tradenote { margin-top: 4px; font-size: 11.5px; color: var(--brick-ink); background: var(--brick-soft); border-radius: var(--r-xs); padding: 4px 8px; }
+.quarrylist { margin: 0; padding-left: 16px; display: grid; gap: 5px; }
+.quarrylist li { font-size: 12.5px; line-height: 1.45; }
+.gapnote { font-size: 11.5px; margin: 12px 0 0; padding-top: 9px; border-top: 1px dashed var(--line); }
+.provline { font-size: 11px; margin: 6px 0 0; }
+/* The reference card standalone on the canonical material page (not in the two-up factgrid) */
+.matref { margin: 22px 0 0; max-width: 680px; }
+.lookupform { margin-top: 10px; }
+.lookupform button { font-size: 13px; }
+.factcard .btn { margin-top: 12px; }
+
+@media (max-width: 640px) {
+  .idpanel { gap: 14px; padding: 14px; }
+  .idphoto { width: 96px; height: 96px; }
+  .idname { font-size: 22px; }
+  .factlist { grid-template-columns: 1fr; gap: 2px 0; }
+  .factlist dt { margin-top: 8px; }
+}
+
 /* ---- Reduced motion ----------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }

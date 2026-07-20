@@ -34,11 +34,90 @@
     <div><span>Thickness</span>{{ facts.thicknesses|join(', ') or '—' }}</div>
     <div><span>Finish</span>{{ facts.finishes|join(', ') or '—' }}</div>
     <div><span>Slab size range</span>{{ facts.size_range or '—' }}</div>
-    <div><span>Origin</span>{{ facts.origins|join(', ') or '—' }}</div>
+    <div><span title="Origin as entered in supplier catalogs — usually a warehouse or branch location, not a verified geological source. See “About this stone” below for the cited origin.">Listed location</span>{{ facts.origins|join(', ') or '—' }}</div>
     <div><span>Form</span>{{ facts.forms|join(', ') or '—' }}</div>
     <div><span>Listings</span>{{ facts.listings }} across {{ facts.suppliers }} supplier{{ '' if facts.suppliers == 1 else 's' }}</div>
   </div>
 </div>
+
+{# External, cited reference — origin/quarries/price the catalog cannot supply. Kept
+   visually distinct (gold rule + "reference" badge) from the catalog specs above, and
+   every fact links to the source it came from. Blank reads "not established", never a guess. #}
+<section class="factcard reference matref">
+  <h3>About this stone
+    <span class="srcbadge" title="External reference data researched from public sources. Every fact below links to the source it came from.">reference</span>
+  </h3>
+  {% if ref.known %}
+    {% if ref.summary %}<p class="refsummary">{{ ref.summary }}</p>{% endif %}
+    <dl class="factlist">
+      <dt>What it is</dt>
+      <dd>
+        {{ ref.stone_type or '—' }}
+        {% if ref.formation == 'engineered' %}<span class="ichip">engineered</span>{% endif %}
+        {% if ref.trade_type_note %}
+          <div class="tradenote" title="The trade name and the geology disagree">⚠ {{ ref.trade_type_note }}</div>
+        {% endif %}
+      </dd>
+
+      <dt>Origin</dt>
+      <dd>
+        {% if ref.origin %}
+          {{ ref.origin_text }}
+          <span class="conf conf-{{ ref.origin.confidence }}">{{ ref.origin.confidence }}</span>
+          {% for s in ref.origin.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+        {% else %}<span class="notest">not established</span>{% endif %}
+      </dd>
+
+      <dt>Typical price</dt>
+      <dd>
+        {% if ref.price %}
+          {{ ref.price_text }}
+          <span class="conf conf-{{ ref.price.confidence }}">{{ ref.price.confidence }}</span>
+          {% for s in ref.price.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+        {% else %}<span class="notest">not established</span>{% endif %}
+      </dd>
+
+      <dt>{{ 'Made by' if ref.formation == 'engineered' else 'Quarries' }}</dt>
+      <dd>
+        {% if ref.formation == 'engineered' %}
+          {{ ref.manufacturer or 'not established' }}
+          <div class="muted small">Engineered stone is manufactured, not quarried.</div>
+        {% elif ref.quarries %}
+          <ul class="quarrylist">
+          {% for q in ref.quarries %}
+            <li>
+              <b>{{ q.name }}</b>
+              {% if q.operator and q.operator != q.name %}<span class="muted">· {{ q.operator }}</span>{% endif %}
+              {% if q.region or q.country %}<span class="muted">· {{ [q.region, q.country]|select|join(', ') }}</span>{% endif %}
+              <span class="conf conf-{{ q.confidence }}">{{ q.confidence }}</span>
+              {% for s in q.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+            </li>
+          {% endfor %}
+          </ul>
+        {% else %}
+          <span class="notest">not established</span>
+          <div class="muted small">There is no public quarry registry for dimension stone; we list a quarry only when a fetched source names it for this stone.</div>
+        {% endif %}
+      </dd>
+    </dl>
+
+    {% if ref.gaps %}
+    <p class="gapnote muted">Not established for this stone: {{ ref.gaps|join(', ') }}. Blank means we found no source we'd stand behind — not that none exists.</p>
+    {% endif %}
+    <p class="provline muted">
+      {{ 'Curated + fact-checked' if ref.provenance == 'curated' else 'Fetched live' }}{% if ref.updated %} · {{ ref.updated }}{% endif %}
+    </p>
+  {% else %}
+    <p class="notest">No reference entry for this stone yet.</p>
+    <p class="muted small">The bundled reference covers the most widely-carried stones. You can look this one up now — it fetches from public sources, cites them, and is remembered for next time.</p>
+    <form method="post" action="/photo/lookup" class="lookupform">
+      <input type="hidden" name="key" value="{{ key }}">
+      <input type="hidden" name="name" value="{{ name }}">
+      <input type="hidden" name="stone_type" value="{{ facts.types[0] if facts.types else '' }}">
+      <button type="submit">Look this up</button>
+    </form>
+  {% endif %}
+</section>
 
 <div class="block">
   <h2>Where to buy it</h2>

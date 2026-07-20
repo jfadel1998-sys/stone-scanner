@@ -92,6 +92,17 @@ other supplier that carries it), or **compare →** to jump straight to the
 cross-supplier comparison.
 
 **Sourcing features:**
+- **📷 Identify by photo** — upload a photo of a slab, countertop or inspiration
+  image. CLIP finds the catalog materials that *look* like it, then names the most
+  likely stone based on how much the closest matches agree (and how many
+  *independent* suppliers photographed it — fourteen photos from one supplier is
+  one opinion, not fourteen). The result page gathers two clearly-separated tiers:
+  **your catalog** (who carries it, deepest yard, real published asking prices,
+  thicknesses, finishes) and **reference** (what the stone actually is, where it's
+  quarried, who quarries it, typical price per sq ft). Every reference fact carries
+  a clickable source and a confidence marker; where no source was found the field
+  reads *"not established"* rather than being filled in with a guess. Stones outside
+  the bundled reference can be looked up on demand and are remembered.
 - **Location + size filters** — narrow to stock in a given warehouse/city, or to
   slabs at least a given length × width.
 - **✨ What's New** — materials suppliers flagged as new, plus "back in stock"
@@ -175,6 +186,8 @@ PyObjC) instead of WebView2; no .NET is involved. Three things to know:
 |------|---------|
 | `suppliers.json` | Editable allow-list of public catalogs to index |
 | `denylist.json` | Hosts that must never be crawled or re-discovered (removal requests) |
+| `stone_reference.json` | Researched stone facts (origin, quarries, price) — every fact cited |
+| `stonescan/reference.py` | Loads/merges that reference; live Wikipedia lookup for gaps |
 | `stonescan/crawler.py` | Playwright crawler (captures each catalog's JSON) |
 | `stonescan/robots.py` | robots.txt enforcement — every fetch checked against its own origin |
 | `stonescan/denylist.py` | Durable removals: honored by discovery, ingest, and the probes |

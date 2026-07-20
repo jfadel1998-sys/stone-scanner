@@ -13,13 +13,14 @@ import asyncio
 import re
 import threading
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import db, dedupe, geocode, imagesearch, slabs, smartsearch
+from .. import db, dedupe, geocode, imagesearch, reference, slabs, smartsearch
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Stone Scanner")
@@ -661,10 +662,15 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
     )]
     lists = db.get_lists(conn)
     conn.close()
+    # External, cited reference facts (origin/quarries/price) — the same panel the
+    # photo-ID page shows, surfaced on the canonical page where people actually browse
+    # to a stone. lookup() matches on trade name, so a supplier type disagreement
+    # ("Taj Mahal" as marble vs quartzite) still resolves to the one researched entry.
+    ref = reference.summarize(reference.lookup(material_key=key, name=name))
     return templates.TemplateResponse(request, "material.html", {
         "rows": rows, "name": name, "key": key, "suppliers_list": suppliers_list,
         "facts": facts, "photos": photos, "rep_photo": rep_photo, "similar": similar,
-        "lists": lists, "added": added, "added_list": list,
+        "lists": lists, "added": added, "added_list": list, "ref": ref,
     })
 
 
@@ -883,9 +889,101 @@ def photo_page(request: Request, material_type: str = ""):
         "material_type": material_type, "model_ready": imagesearch.available(),
         "index": imagesearch.index_stats(conn), "types": _distinct(conn, "material_type"),
         "stats": db.stats(conn),
+        "ident": {"known": False}, "evidence": {}, "ref": {"known": False},
+        "ref_stats": reference.stats(),
     }
     conn.close()
     return templates.TemplateResponse(request, "photo.html", ctx)
+
+
+_PER_SQFT_RE = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)\s*/\s*(?:sf|sq\.?\s*ft)", re.I)
+_BARE_AMOUNT_RE = re.compile(r"^\$\s*([\d,]+(?:\.\d+)?)$")
+
+
+def _observed_prices(rows) -> dict:
+    """Real money the catalog actually contains, separated by BASIS.
+
+    `price_range` is 76% supplier tier codes — "Group 5", "Level 2",
+    "Caesarstone B - Standard", and bare "$"/"$$$" symbols that are price *bands*,
+    not amounts. Averaging that into "typical price" would invent a number. Only
+    two shapes are real, and they mean different things, so they are never mixed:
+
+      $11.90/sf   an explicit per-square-foot ask (StoneTrash marketplace listings)
+      $570        a whole-slab total (Unbuilt / Marble Systems) — NOT per sq ft
+
+    Everything else is dropped rather than coerced.
+    """
+    per_sqft, slab_total = [], []
+    for r in rows:
+        raw = (r["price_range"] or "").strip()
+        if not raw:
+            continue
+        sup = r["supplier_name"]
+        m = _PER_SQFT_RE.search(raw)
+        if m:
+            per_sqft.append((float(m.group(1).replace(",", "")), sup))
+            continue
+        m = _BARE_AMOUNT_RE.match(raw)
+        if m:
+            slab_total.append((float(m.group(1).replace(",", "")), sup))
+
+    def band(vals):
+        if not vals:
+            return None
+        nums = sorted(v for v, _ in vals)
+        return {
+            "low": nums[0], "high": nums[-1],
+            "median": nums[len(nums) // 2],
+            "n": len(nums),
+            "suppliers": sorted({s for _, s in vals}),
+        }
+
+    return {"per_sqft": band(per_sqft), "slab_total": band(slab_total)}
+
+
+def _catalog_evidence(conn, material_key: str) -> dict:
+    """What the app can prove about a stone from its own data — the tier that links
+    to a real supplier, kept visually separate from external reference facts."""
+    if not material_key:
+        return {}
+    rows = conn.execute(
+        """SELECT m.available_slabs, m.thickness, m.finish, m.product_form, m.uom,
+                  m.price_range, m.locations, m.material_type, m.color,
+                  COALESCE(NULLIF(s.company,''), s.host) AS supplier_name,
+                  m.supplier_id
+           FROM materials m JOIN suppliers s ON s.id = m.supplier_id
+           WHERE m.material_key = ?""",
+        (material_key,),
+    ).fetchall()
+    if not rows:
+        return {}
+    per_supplier: dict[str, float] = {}
+    thicknesses, finishes, locations, types = set(), set(), set(), set()
+    for r in rows:
+        if "TILE" not in (r["product_form"] or "").upper():
+            per_supplier[r["supplier_name"]] = (
+                per_supplier.get(r["supplier_name"], 0) + (r["available_slabs"] or 0))
+        for field, sink in (("thickness", thicknesses), ("finish", finishes),
+                            ("material_type", types)):
+            if (r[field] or "").strip():
+                sink.add(r[field].strip())
+        for loc in (r["locations"] or "").split(","):
+            if loc.strip():
+                locations.add(loc.strip())
+    best = max(per_supplier.items(), key=lambda kv: kv[1]) if per_supplier else ("", 0)
+    return {
+        "suppliers": len({r["supplier_id"] for r in rows}),
+        "listings": len(rows),
+        "deepest_yard": {"supplier": best[0], "slabs": int(best[1])} if best[1] else None,
+        "total_slabs": int(sum(per_supplier.values())),
+        "thicknesses": sorted(thicknesses,
+                              key=lambda t: float(re.match(r"([\d.]+)", t).group(1))
+                              if re.match(r"([\d.]+)", t) else 99),
+        "finishes": sorted(finishes)[:6],
+        "locations": sorted(locations)[:8],
+        "types": sorted(types),
+        "prices": _observed_prices(rows),
+    }
 
 
 @app.post("/photo", response_class=HTMLResponse)
@@ -908,14 +1006,42 @@ async def photo_search(request: Request, photo: UploadFile = File(...),
                 r["match"] = max(0, min(100, round((r["score"] - 0.5) * 200)))
         except Exception as e:  # noqa: BLE001 - never 500 the page over a bad upload
             error = f"Couldn't read that image: {e}"
+
+    # Identify from the consensus of the top matches, then hang both fact tiers off
+    # the winner: what the catalog can prove, and what external research established.
+    ident = imagesearch.identify(results) if results else {"known": False}
+    key = ident.get("best", {}).get("material_key", "") if ident.get("known") else ""
+    evidence = _catalog_evidence(conn, key) if key else {}
+    ref = reference.summarize(
+        reference.lookup(material_key=key, name=ident.get("best", {}).get("name", ""))
+    ) if key else {"known": False}
+
     ctx = {
         "request": request, "results": results, "queried": True, "error": error,
         "query_uri": query_uri, "material_type": material_type,
+        "ident": ident, "evidence": evidence, "ref": ref,
         "model_ready": imagesearch.available(), "index": imagesearch.index_stats(conn),
         "types": _distinct(conn, "material_type"), "stats": db.stats(conn),
+        "ref_stats": reference.stats(),
     }
     conn.close()
     return templates.TemplateResponse(request, "photo.html", ctx)
+
+
+@app.post("/photo/lookup", response_class=HTMLResponse)
+async def photo_lookup(request: Request, key: str = Form(""), name: str = Form(""),
+                       stone_type: str = Form("")):
+    """Research a stone we have no curated entry for, on demand, and remember it.
+
+    Runs off the event loop because it makes real network calls. What it can
+    establish is deliberately narrow (see reference.lookup_live) — it will not
+    invent a quarry list or a price to fill the panel.
+    """
+    entry = await asyncio.to_thread(reference.lookup_live, name, stone_type, key)
+    if entry:
+        await asyncio.to_thread(reference.remember, entry)
+    return RedirectResponse(f"/material?key={quote(key)}" if key else "/photo",
+                            status_code=303)
 
 
 def _stock_changes(conn) -> tuple[list[dict], list[dict], bool]:

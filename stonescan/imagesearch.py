@@ -36,6 +36,11 @@ DIM = 512
 _session = None
 _out_index = 0  # which model output carries the 512-d image embedding
 
+# How many of the closest IMAGES vote on the identification. Wide enough that a
+# widely-stocked stone can show cross-supplier agreement, narrow enough that a
+# distant 200th-ranked image doesn't get a say.
+CONSENSUS_WINDOW = 40
+
 
 def model_path() -> Path:
     """Model location: bundled under _MEIPASS when frozen, else the project tree."""
@@ -281,6 +286,7 @@ def search(conn: sqlite3.Connection, query_vec: np.ndarray, top_k: int = 60,
     order = np.argsort(-scores)[:max(top_k * 6, 200)]    # oversample for dedupe/filter
     ranked = [(urls[i], float(scores[i])) for i in order]
     url_score = {u: s for u, s in ranked}
+    url_rank = {u: i for i, (u, _) in enumerate(ranked)}
     ph = ",".join("?" for _ in url_score)
     mt_sql = " AND m.material_type = ?" if material_type else ""
     rows = conn.execute(
@@ -294,6 +300,23 @@ def search(conn: sqlite3.Connection, query_vec: np.ndarray, top_k: int = 60,
             GROUP BY m.image_url""",
         (*url_score.keys(), *([material_type] if material_type else [])),
     ).fetchall()
+
+    # Consensus is measured BEFORE the dedupe, over the closest images, because the
+    # deduped list has exactly one row per material by construction — counting
+    # agreement on it would always say "1 of N, from 1 supplier" no matter how many
+    # suppliers photographed the same stone. `image_matches` / `distinct_suppliers`
+    # carry that signal forward for identify().
+    agree: dict[str, dict] = {}
+    for r in rows:
+        if url_rank.get(r["image_url"], 10 ** 6) >= CONSENSUS_WINDOW:
+            continue
+        key = r["material_key"] or r["image_url"]
+        g = agree.setdefault(key, {"n": 0, "suppliers": set()})
+        g["n"] += 1
+        if r["supplier_name"]:
+            g["suppliers"].add(r["supplier_name"])
+    window_total = sum(g["n"] for g in agree.values()) or 1
+
     best: dict[str, dict] = {}
     for r in rows:
         d = dict(r)
@@ -301,8 +324,88 @@ def search(conn: sqlite3.Connection, query_vec: np.ndarray, top_k: int = 60,
         key = d["material_key"] or d["image_url"]
         if key not in best or d["score"] > best[key]["score"]:
             best[key] = d
+    for key, d in best.items():
+        g = agree.get(key)
+        d["image_matches"] = g["n"] if g else 0
+        d["distinct_suppliers"] = len(g["suppliers"]) if g else 0
+        d["window_total"] = window_total
     out = sorted(best.values(), key=lambda d: -d["score"])[:top_k]
     return out
+
+
+def identify(results: list[dict[str, Any]], top_n: int = 12) -> dict[str, Any]:
+    """Turn a ranked list of visual matches into an identification.
+
+    A flat grid of "94% match / 93% match / 91% match" makes the user do the
+    inference. What actually answers "what is this stone?" is the CONSENSUS across
+    the top matches: if nine of the top twelve are Taj Mahal from nine different
+    suppliers, that is a far stronger claim than any single 94% score, because
+    nine suppliers photographing their own slabs independently agreed.
+
+    So candidates are scored on three things a single similarity number misses:
+      * how many of the top matches share the trade name (agreement),
+      * how well they scored (mean similarity of that name's matches),
+      * how many DISTINCT suppliers contributed (independent corroboration —
+        five photos from one supplier is one opinion, not five).
+
+    `confidence` is deliberately conservative and never says "certain": CLIP
+    matches appearance, and different stones genuinely look alike. It answers
+    "how much does the catalog agree", which is a claim we can actually support.
+    """
+    top = [r for r in results[:top_n] if r.get("material_key")]
+    if not top:
+        return {"known": False, "candidates": []}
+
+    window = max((r.get("window_total") or 0) for r in top) or len(top)
+    cands = []
+    for r in top:
+        # image_matches / distinct_suppliers are computed by search() over the raw
+        # image ranking; recomputing them here would be meaningless because `results`
+        # holds exactly one row per material.
+        n = max(r.get("image_matches") or 1, 1)
+        distinct = max(r.get("distinct_suppliers") or 1, 1)
+        share = n / window
+        # Corroboration saturates: the 2nd and 3rd independent supplier are worth a
+        # lot, the 8th very little. sqrt keeps one supplier's many photos of the same
+        # slab from outranking genuine cross-supplier agreement.
+        corrob = (distinct / n) ** 0.5
+        cands.append({
+            "material_key": r["material_key"],
+            "name": (r["material_key"].split("|")[0] or r.get("item_name", "")).title(),
+            "material_type": r.get("material_type", ""),
+            "matches": n,
+            "distinct_suppliers": distinct,
+            "share": share,
+            "best_score": r.get("score", 0.0),
+            "rank_score": r.get("score", 0.0) * (0.55 + 0.45 * share) * (0.7 + 0.3 * corrob),
+            "example": r,
+        })
+    cands.sort(key=lambda g: -g["rank_score"])
+
+    best = cands[0]
+    runner = cands[1] if len(cands) > 1 else None
+    margin = best["rank_score"] - (runner["rank_score"] if runner else 0.0)
+    # Thresholds are empirical and intentionally cautious — the cost of a confident
+    # wrong identification is a user ordering the wrong stone. A near-perfect single
+    # match still counts as strong: an exact photo match is real evidence even when
+    # only one supplier has photographed that stone.
+    if best["best_score"] >= 0.95 and margin >= 0.02:
+        confidence, blurb = "strong", "a near-exact image match"
+    elif best["share"] >= 0.25 and best["best_score"] >= 0.80 and margin >= 0.03:
+        confidence, blurb = "strong", "the closest matches agree"
+    elif best["share"] >= 0.12 or best["best_score"] >= 0.75:
+        confidence, blurb = "likely", "several close matches point the same way"
+    else:
+        confidence, blurb = "uncertain", "the closest matches disagree"
+    return {
+        "known": True,
+        "best": best,
+        "confidence": confidence,
+        "blurb": blurb,
+        "candidates": cands[:5],
+        "considered": best.get("matches", 0),
+        "window": window,
+    }
 
 
 def main() -> None:

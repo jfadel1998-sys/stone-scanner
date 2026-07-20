@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Search by photo — Stone Scanner{% endblock %}
+{% block title %}Identify a stone by photo — Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{{ index.indexed }} of {{ index.images_total }} images indexed</div>
+<div class="stats">{{ index.indexed }} of {{ index.images_total }} images indexed
+  {%- if ref_stats.total %} · {{ ref_stats.total }} stones referenced{% endif %}</div>
 {% endblock %}
 
 {% block content %}
 <div class="material-head">
-  <h1>Search by photo</h1>
-  <p class="hintline muted">Upload a photo of a slab, a countertop, or an inspiration image — CLIP finds the catalog materials that <em>look</em> like it (pattern, veining, tone), across every supplier.</p>
+  <h1>Identify a stone by photo</h1>
+  <p class="hintline muted">Upload a photo of a slab, a countertop, or an inspiration image. Stone Scanner finds the catalog materials that <em>look</em> like it, names the most likely stone, and pulls together what it is, where it comes from, who quarries it and what it sells for.</p>
 </div>
 
 {% if not model_ready %}
@@ -21,20 +22,188 @@
     <option value="">Any type</option>
     {% for t in types %}<option value="{{ t }}" {{ 'selected' if t == material_type }}>{{ t }}</option>{% endfor %}
   </select>
-  <button type="submit" {{ 'disabled' if not model_ready }}>Find similar</button>
+  <button type="submit" {{ 'disabled' if not model_ready }}>Identify</button>
 </form>
 
 {% if queried %}
   {% if error %}
     <div class="block"><p class="okchip warn">{{ error }}</p></div>
+  {% elif not results %}
+    <p class="empty">No visual matches{% if index.indexed == 0 %} — the image index is empty. Run <code>python -m stonescan.imagesearch --index</code>{% endif %}.</p>
   {% else %}
-    <div class="photo-head">
-      {% if query_uri %}<img class="query-img" src="{{ query_uri }}" alt="your photo">{% endif %}
-      <div class="resultcount">{{ results|length }} visual match{{ '' if results|length == 1 else 'es' }}
-        {% if material_type %}· {{ material_type }}{% endif %}
-        {% if index.indexed < index.images_total %}<span class="muted">· searching {{ index.indexed }} indexed images (index still building)</span>{% endif %}
-      </div>
+
+  {# ── Verdict ─────────────────────────────────────────────────────────────── #}
+  <section class="idpanel">
+    {% if query_uri %}<img class="idphoto" src="{{ query_uri }}" alt="your photo">{% endif %}
+    <div class="idverdict">
+      {% if ident.known %}
+        {% set b = ident.best %}
+        <div class="idlabel">Most likely
+          <span class="conf conf-{{ ident.confidence }}" title="How much the closest catalog matches agree — not a guarantee. CLIP matches appearance, and different stones can look alike.">{{ ident.confidence }}</span>
+        </div>
+        <h2 class="idname"><a href="/material?key={{ b.material_key|urlencode }}">{{ b.name }}</a></h2>
+        <p class="idmeta">
+          {{ b.material_type }} ·
+          {{ b.matches }} of the {{ ident.window }} closest catalog image{{ '' if ident.window == 1 else 's' }},
+          from {{ b.distinct_suppliers }} independent supplier{{ '' if b.distinct_suppliers == 1 else 's' }} ·
+          best similarity {{ (b.best_score * 100)|round|int }}%
+        </p>
+        <p class="idwhy muted">Ranked by how many close matches share the name and how many different suppliers photographed it — {{ ident.blurb }}.</p>
+        {% if ident.candidates|length > 1 %}
+        <div class="idalts">Also possible:
+          {% for c in ident.candidates[1:4] %}
+          <a class="ichip" href="/material?key={{ c.material_key|urlencode }}">{{ c.name }} <span class="muted">({{ c.matches }}×)</span></a>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% else %}
+        <div class="idlabel">No confident identification</div>
+        <p class="idwhy muted">The closest matches don't agree on a name. Browse the visual matches below.</p>
+      {% endif %}
     </div>
+  </section>
+
+  {# ── Two fact tiers, deliberately never blended ──────────────────────────── #}
+  <div class="factgrid">
+
+    {# Tier 1: external reference — every fact cited #}
+    <section class="factcard reference">
+      <h3>About this stone
+        <span class="srcbadge" title="External reference data researched from public sources. Every fact below links to the source it came from.">reference</span>
+      </h3>
+      {% if ref.known %}
+        {% if ref.summary %}<p class="refsummary">{{ ref.summary }}</p>{% endif %}
+
+        <dl class="factlist">
+          <dt>What it is</dt>
+          <dd>
+            {{ ref.stone_type or '—' }}
+            {% if ref.formation == 'engineered' %}<span class="ichip">engineered</span>{% endif %}
+            {% if ref.trade_type_note %}
+              <div class="tradenote" title="The trade name and the geology disagree">⚠ {{ ref.trade_type_note }}</div>
+            {% endif %}
+          </dd>
+
+          <dt>Origin</dt>
+          <dd>
+            {% if ref.origin %}
+              {{ ref.origin_text }}
+              <span class="conf conf-{{ ref.origin.confidence }}">{{ ref.origin.confidence }}</span>
+              {% for s in ref.origin.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+            {% else %}<span class="notest">not established</span>{% endif %}
+          </dd>
+
+          <dt>Typical price</dt>
+          <dd>
+            {% if ref.price %}
+              {{ ref.price_text }}
+              <span class="conf conf-{{ ref.price.confidence }}">{{ ref.price.confidence }}</span>
+              {% for s in ref.price.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+            {% else %}<span class="notest">not established</span>{% endif %}
+          </dd>
+
+          <dt>{{ 'Made by' if ref.formation == 'engineered' else 'Quarries' }}</dt>
+          <dd>
+            {% if ref.formation == 'engineered' %}
+              {{ ref.manufacturer or 'not established' }}
+              <div class="muted small">Engineered stone is manufactured, not quarried.</div>
+            {% elif ref.quarries %}
+              <ul class="quarrylist">
+              {% for q in ref.quarries %}
+                <li>
+                  <b>{{ q.name }}</b>
+                  {% if q.operator and q.operator != q.name %}<span class="muted">· {{ q.operator }}</span>{% endif %}
+                  {% if q.region or q.country %}<span class="muted">· {{ [q.region, q.country]|select|join(', ') }}</span>{% endif %}
+                  <span class="conf conf-{{ q.confidence }}">{{ q.confidence }}</span>
+                  {% for s in q.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+                </li>
+              {% endfor %}
+              </ul>
+            {% else %}
+              <span class="notest">not established</span>
+              <div class="muted small">There is no public quarry registry for dimension stone; we list a quarry only when a fetched source names it for this stone.</div>
+            {% endif %}
+          </dd>
+        </dl>
+
+        {% if ref.gaps %}
+        <p class="gapnote muted">Not established for this stone: {{ ref.gaps|join(', ') }}. Blank means we found no source we'd stand behind — not that none exists.</p>
+        {% endif %}
+        <p class="provline muted">
+          {{ 'Curated + fact-checked' if ref.provenance == 'curated' else 'Fetched live' }}{% if ref.updated %} · {{ ref.updated }}{% endif %}
+        </p>
+
+      {% else %}
+        <p class="notest">No reference entry for this stone yet.</p>
+        <p class="muted small">The bundled reference covers the most widely-carried stones. You can look this one up now — it fetches from public sources, cites them, and is remembered for next time.</p>
+        {% if ident.known %}
+        <form method="post" action="/photo/lookup" class="lookupform">
+          <input type="hidden" name="key" value="{{ ident.best.material_key }}">
+          <input type="hidden" name="name" value="{{ ident.best.name }}">
+          <input type="hidden" name="stone_type" value="{{ ident.best.material_type }}">
+          <button type="submit">Look this up</button>
+        </form>
+        {% endif %}
+      {% endif %}
+    </section>
+
+    {# Tier 2: the app's own data — verifiable, links to suppliers #}
+    <section class="factcard catalog">
+      <h3>In your catalog
+        <span class="srcbadge cat" title="Derived from the suppliers Stone Scanner indexes. Every number here links to a real listing.">your data</span>
+      </h3>
+      {% if evidence %}
+        <dl class="factlist">
+          <dt>Carried by</dt>
+          <dd>{{ evidence.suppliers }} supplier{{ '' if evidence.suppliers == 1 else 's' }}
+              <span class="muted">· {{ evidence.listings }} listing{{ '' if evidence.listings == 1 else 's' }}</span></dd>
+
+          <dt>Best stocked</dt>
+          <dd>
+            {% if evidence.deepest_yard %}
+              {{ evidence.deepest_yard.slabs }} slab{{ '' if evidence.deepest_yard.slabs == 1 else 's' }} at {{ evidence.deepest_yard.supplier }}
+              {% if evidence.total_slabs > evidence.deepest_yard.slabs %}
+                <span class="muted" title="Held at separate yards, not one pile">({{ evidence.total_slabs }} across all)</span>
+              {% endif %}
+            {% else %}<span class="notest">none in stock</span>{% endif %}
+          </dd>
+
+          <dt>Asking prices</dt>
+          <dd>
+            {% if evidence.prices.per_sqft %}
+              {% set p = evidence.prices.per_sqft %}
+              <b>${{ p.low|round(2) }}–${{ p.high|round(2) }}</b> / sq ft
+              <span class="muted">· median ${{ p.median|round(2) }} · {{ p.n }} listing{{ '' if p.n == 1 else 's' }} on {{ p.suppliers|join(', ') }}</span>
+            {% endif %}
+            {% if evidence.prices.slab_total %}
+              {% set t = evidence.prices.slab_total %}
+              <div>${{ t.low|round|int }}–${{ t.high|round|int }} <span class="muted">per whole slab · {{ t.n }} listing{{ '' if t.n == 1 else 's' }} on {{ t.suppliers|join(', ') }}</span></div>
+            {% endif %}
+            {% if not evidence.prices.per_sqft and not evidence.prices.slab_total %}
+              <span class="notest">no published prices</span>
+              <div class="muted small">Most suppliers publish a price tier ("Group 5", "$$$") rather than an amount; those aren't shown as money.</div>
+            {% endif %}
+          </dd>
+
+          {% if evidence.thicknesses %}<dt>Thicknesses</dt><dd>{{ evidence.thicknesses|join(' · ') }}</dd>{% endif %}
+          {% if evidence.finishes %}<dt>Finishes</dt><dd>{{ evidence.finishes|join(' · ') }}</dd>{% endif %}
+          {% if evidence.locations %}<dt>Stocked near</dt><dd class="muted">{{ evidence.locations|join(' · ') }}</dd>{% endif %}
+        </dl>
+        {% if ident.known %}
+        <a class="btn" href="/material?key={{ ident.best.material_key|urlencode }}">Compare all {{ evidence.suppliers }} suppliers →</a>
+        {% endif %}
+      {% else %}
+        <p class="notest">No catalog data for this match.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  {# ── The evidence the identification rests on ────────────────────────────── #}
+  <section class="block">
+    <h2>Visual matches <span class="muted">— {{ results|length }} closest image{{ '' if results|length == 1 else 's' }} in the catalog{% if material_type %}, {{ material_type }} only{% endif %}</span></h2>
+    {% if index.indexed < index.images_total %}
+    <p class="hintline muted">Searching {{ index.indexed }} of {{ index.images_total }} catalog images — the index is still building, so more matches may appear later.</p>
+    {% endif %}
     <div class="cardgrid">
     {% for r in results %}
       <a class="matcard" href="/item?id={{ r.id }}">
@@ -50,14 +219,13 @@
           </span>
         </span>
       </a>
-    {% else %}
-      <p class="empty">No visual matches{% if index.indexed == 0 %} — the image index is empty. Run <code>python -m stonescan.imagesearch --index</code>.{% endif %}.</p>
     {% endfor %}
     </div>
+  </section>
   {% endif %}
 {% else %}
-  <div class="block"><p class="muted">Tip: a clear, well-lit photo of the stone surface works best. You can narrow to a material type before searching.</p></div>
+  <div class="block"><p class="muted">Tip: a clear, well-lit photo of the stone surface works best — fill the frame with the slab and avoid heavy shadow. You can narrow to a material type before searching.</p></div>
 {% endif %}
 {% endblock %}
 
-{% block footer %}Matches are ranked by CLIP visual-embedding similarity over the indexed catalog images ({{ index.indexed }} of {{ index.images_total }} indexed). The index grows as more catalog photos are embedded.{% endblock %}
+{% block footer %}Matches are ranked by CLIP visual-embedding similarity over {{ index.indexed }} of {{ index.images_total }} indexed catalog images. Identification reflects how much those matches agree — it is not a lab analysis. Reference facts (origin, quarries, price) come from public sources and carry their citations; where we found no source we'd stand behind, the field reads “not established” rather than being filled in.{% endblock %}
