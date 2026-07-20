@@ -190,6 +190,14 @@ def connect(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # The packaged app runs the UI and a refresh as separate processes against one file.
+    # WAL lets readers keep serving while a crawl writes; busy_timeout waits out the brief
+    # writer locks instead of raising "database is locked" up through the request handlers.
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 10000")
+    except sqlite3.Error:  # read-only/locked media — fall back to defaults rather than fail
+        pass
     return conn
 
 
@@ -249,10 +257,15 @@ def replace_materials(
     ]
     placeholders = ", ".join("?" for _ in cols)
     sql = f"INSERT OR IGNORE INTO materials ({', '.join(cols)}) VALUES ({placeholders})"
-    n = 0
+    # Some tenants return one row per SLAB, so many rows repeat a single
+    # (supplier_id, item_id, idone) — collapsing them to one material is correct. Counting
+    # the attempts was not: item_count is shown on Health, drives "N suppliers" stats, and
+    # is the number we'd quote back to a supplier about their own catalog. Count what
+    # actually landed.
+    before = conn.total_changes
     for r in rows:
         conn.execute(sql, tuple(r.get(c) for c in cols))
-        n += 1
+    n = conn.total_changes - before
     conn.execute("UPDATE suppliers SET item_count = ? WHERE id = ?", (n, supplier_id))
     conn.commit()
     return n

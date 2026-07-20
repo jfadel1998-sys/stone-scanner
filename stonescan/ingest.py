@@ -55,7 +55,10 @@ def _store(conn, data, *, with_slabs: bool) -> tuple[int, int]:
         phone=data.phone or None,
         email=data.email or None,
         last_crawled=utc_now_iso(),
-        last_error=data.error or None,
+        # "" not None: upsert_supplier drops None fields, so a successful crawl would
+        # otherwise leave the previous error in place forever (and keep the host in the
+        # nightly retry-errored pass).
+        last_error=data.error or "",
     )
     for r in data.materials:
         r["supplier_id"] = supplier_id
@@ -214,7 +217,8 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
             phone=result.phone or None,
             email=result.email or None,
             last_crawled=utc_now_iso(),
-            last_error=result.error or None,
+            # "" not None — see note in the provider path above.
+            last_error=result.error or "",
         )
         if result.ok:
             try:

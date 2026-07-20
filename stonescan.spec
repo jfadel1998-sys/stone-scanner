@@ -16,8 +16,14 @@ gn_datas, gn_binaries, gn_hidden = collect_all("geonamescache")  # offline city 
 wv_datas, wv_binaries, wv_hidden = collect_all("webview")       # pywebview (native window)
 ort_datas, ort_binaries, ort_hidden = collect_all("onnxruntime")  # CLIP image search (search-by-photo)
 
+# Catalog providers are resolved by NAME at runtime (providers/__init__.py calls
+# import_module(f".{name}")), which static analysis cannot follow — without this, a
+# provider is silently absent from the frozen app and only that platform's suppliers stop
+# refreshing, with no error in dev. Collect the whole subpackage so new ones are covered.
+provider_hidden = collect_submodules("stonescan.providers")
+
 # Cross-platform base collections (backend-agnostic).
-base_hidden = pw_hidden + wv_hidden + gn_hidden + ort_hidden + [
+base_hidden = pw_hidden + wv_hidden + gn_hidden + ort_hidden + provider_hidden + [
     # search-by-photo (imagesearch.py imports these lazily, so name them explicitly)
     "onnxruntime", "PIL", "PIL.Image", "numpy",
     "uvicorn.logging",

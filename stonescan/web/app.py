@@ -852,12 +852,18 @@ def _restock_since_last(conn) -> list[dict]:
                            AND mm.thickness = h.thickness) AS id
            FROM history h JOIN suppliers s ON s.id = h.supplier_id
            WHERE h.snapshot_date = ? AND h.slabs > 0
+                 -- Snapshots are written per-supplier as each one is crawled, so the two
+                 -- most recent dates rarely cover the same suppliers. Without this guard a
+                 -- supplier crawled today but absent from the previous snapshot has its
+                 -- ENTIRE catalog reported as "back in stock" — the restock list was almost
+                 -- entirely this artifact. Only compare suppliers present in both.
+                 AND h.supplier_id IN (SELECT supplier_id FROM history WHERE snapshot_date = ?)
                  AND NOT EXISTS (
                      SELECT 1 FROM history p WHERE p.snapshot_date = ?
                        AND p.supplier_id = h.supplier_id AND p.name_norm = h.name_norm
                        AND p.thickness = h.thickness AND p.slabs > 0)
            ORDER BY h.slabs DESC LIMIT 300""",
-        (latest, prev),
+        (latest, prev, prev),
     ).fetchall()
     return [dict(r) for r in rows if r["id"]]
 
