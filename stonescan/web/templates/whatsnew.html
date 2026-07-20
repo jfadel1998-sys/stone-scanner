@@ -2,13 +2,13 @@
 {% block title %}What's New · Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{% if stats.last_updated %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}</div>
+<div class="stats">{% if stats.last_updated %}{% if stats.oldest_updated and stats.oldest_updated[:10] != stats.last_updated[:10] %}<span title="Suppliers are crawled on different days — oldest data → newest">crawled {{ stats.oldest_updated[:10] }} → {{ stats.last_updated[:10] }} UTC</span>{% else %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}{% endif %}</div>
 {% endblock %}
 
 {% block content %}
 {% if restock %}
 <section class="block">
-  <h2>Back in stock <span class="muted">— newly available since the previous crawl ({{ restock|length }})</span></h2>
+  <h2>Back in stock <span class="muted">— listed with zero stock at the supplier's previous crawl, in stock now ({{ restock|length }})</span></h2>
   <table class="materials">
     <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th><th>Supplier</th><th class="num">Slabs</th><th></th></tr></thead>
     <tbody>
@@ -19,7 +19,30 @@
         <td>{{ r.material_type }}</td>
         <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
         <td>{{ r.thickness }}</td>
-        <td>{{ r.supplier_name }}</td>
+        <td title="vs their previous snapshot ({{ r.since }})">{{ r.supplier_name }}</td>
+        <td class="num">{{ r.slabs or '' }}</td>
+        <td><a class="compare" href="/item?id={{ r.id }}">view →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if newly_listed %}
+<section class="block">
+  <h2>Newly listed <span class="muted">— first seen in the supplier's latest crawl ({{ newly_listed|length }})</span></h2>
+  <table class="materials">
+    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th><th>Supplier</th><th class="num">Slabs</th><th></th></tr></thead>
+    <tbody>
+    {% for r in newly_listed %}
+      <tr>
+        <td class="thumbcell"><a href="/item?id={{ r.id }}">{% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</a></td>
+        <td class="name"><a class="itemlink" href="/item?id={{ r.id }}">{{ r.name_norm|title }}</a></td>
+        <td>{{ r.material_type }}</td>
+        <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
+        <td>{{ r.thickness }}</td>
+        <td title="not present in their previous snapshot ({{ r.since }})">{{ r.supplier_name }}</td>
         <td class="num">{{ r.slabs or '' }}</td>
         <td><a class="compare" href="/item?id={{ r.id }}">view →</a></td>
       </tr>
@@ -32,7 +55,11 @@
 <section class="block">
   <h2>New arrivals <span class="muted">— materials the suppliers flagged as new ({{ total }})</span></h2>
   {% if not restock %}
-  <p class="hintline muted">Tip: “Back in stock” alerts appear here once the app has crawled at least twice (it compares each night's inventory to the last).</p>
+  {% if has_baseline %}
+  <p class="hintline muted">Nothing newly back in stock — each supplier's latest crawl was compared against its own previous one.</p>
+  {% else %}
+  <p class="hintline muted">Tip: “Back in stock” alerts appear once a supplier has been crawled at least twice (each supplier's newest snapshot is compared with its previous one).</p>
+  {% endif %}
   {% endif %}
   <table class="materials">
     <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th class="num">Suppliers</th><th class="num" title="Slabs at the single best-stocked supplier — not a total across yards">Slabs / yard</th></tr></thead>

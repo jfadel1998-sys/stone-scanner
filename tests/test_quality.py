@@ -141,6 +141,182 @@ class SlabCountTests(unittest.TestCase):
         self.assertNotIn("empty stone|granite", keys)
 
 
+class StockChangesTests(unittest.TestCase):
+    """'Back in stock' must compare each supplier against ITS OWN previous
+    snapshot — the original compared two global dates that shared no suppliers,
+    so it silently returned zero forever while real signal was discarded."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=5)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _set_materials(self, supplier_id, products):
+        """Replace a supplier's materials with (name, slabs, form) tuples."""
+        self.conn.execute("DELETE FROM materials WHERE supplier_id = ?", (supplier_id,))
+        for name, slabs, *rest in products:
+            form = rest[0] if rest else "SLAB"
+            self.conn.execute(
+                """INSERT INTO materials
+                     (supplier_id, item_id, item_name, name_norm, material_key,
+                      material_type, thickness, finish, product_form, available_slabs, uom)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (supplier_id, f"{supplier_id}-{name}", name, name.upper(),
+                 f"{name.lower()}|granite", "Granite", "3cm", "", form, slabs,
+                 "SF" if form == "TILE" else ""))
+        self.conn.commit()
+
+    def _changes(self):
+        from stonescan.web import app
+        return app._stock_changes(self.conn)
+
+    def test_restock_compares_each_supplier_to_its_own_baseline(self):
+        # Supplier 1: crawled on d1 (X out of stock) and d3 (X restocked, Z new).
+        self._set_materials(1, [("X", 0), ("Y", 5)])
+        db.snapshot_history(self.conn, 1, "2026-07-01")
+        self._set_materials(1, [("X", 4), ("Y", 5), ("Z", 2)])
+        db.snapshot_history(self.conn, 1, "2026-07-03")
+        # Supplier 2: crawled ONCE, on d2 — the global two most recent dates
+        # (d3, d2) share no suppliers, which is exactly the shape that used to
+        # make the comparison come up empty (or, before that, fabricate rows).
+        self._set_materials(2, [("W", 9)])
+        db.snapshot_history(self.conn, 2, "2026-07-02")
+
+        restock, listed, has_baseline = self._changes()
+        self.assertTrue(has_baseline)
+        self.assertEqual([r["name_norm"] for r in restock], ["X"],
+                         "X went 0 -> 4 at supplier 1's own baseline")
+        self.assertEqual(restock[0]["since"], "2026-07-01")
+        self.assertEqual([r["name_norm"] for r in listed], ["Z"],
+                         "Z is newly listed, not a restock")
+        names = {r["name_norm"] for r in restock + listed}
+        self.assertNotIn("Y", names, "unchanged stock is not a change")
+        self.assertNotIn("W", names,
+                         "a supplier with one snapshot has no baseline to compare")
+
+    def test_no_baseline_reports_honestly(self):
+        self._set_materials(1, [("X", 3)])
+        db.snapshot_history(self.conn, 1, "2026-07-01")
+        restock, listed, has_baseline = self._changes()
+        self.assertFalse(has_baseline)
+        self.assertEqual((restock, listed), ([], []))
+
+    def test_snapshot_excludes_tile_square_footage_from_slabs(self):
+        """A restock alert reading '2493 slabs' for a tile listing would be flatly
+        wrong — history.slabs must count slabs only."""
+        self._set_materials(1, [("RIVER", 2, "SLAB"), ("RIVER TILE", 2493, "TILE")])
+        db.snapshot_history(self.conn, 1, "2026-07-01")
+        rows = {r["name_norm"]: r["slabs"] for r in self.conn.execute(
+            "SELECT name_norm, slabs FROM history WHERE supplier_id = 1")}
+        self.assertEqual(rows["RIVER"], 2)
+        self.assertEqual(rows["RIVER TILE"], 0, "tile SF must not be stored as slabs")
+
+
+class FreshnessTests(unittest.TestCase):
+    """The 'updated' claim must describe when the DATA was collected, not when the
+    freshest (or merely most recently attempted) crawl ran."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=3)
+        for sid, ts in ((1, "2026-07-10T08:00:00+00:00"), (2, "2026-07-14T08:00:00+00:00")):
+            self.conn.execute(
+                """INSERT INTO materials (supplier_id, item_id, item_name, name_norm,
+                     material_key, material_type, available_slabs, crawled_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (sid, f"i{sid}", "S", "S", "s|granite", "Granite", 1, ts))
+            self.conn.execute("UPDATE suppliers SET item_count = 1 WHERE id = ?", (sid,))
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_stats_reports_the_range_not_the_single_freshest(self):
+        s = db.stats(self.conn)
+        self.assertEqual(s["oldest_updated"][:10], "2026-07-10")
+        self.assertEqual(s["last_updated"][:10], "2026-07-14")
+
+    def test_failed_crawls_do_not_advance_the_freshness_claim(self):
+        # A failed crawl stamps suppliers.last_crawled but must not move the data
+        # range — that was the latent half of the bug: a night of 104 Cloudflare
+        # errors would have advanced "updated" over an unchanged catalog.
+        db.upsert_supplier(self.conn, host="s1.example.com",
+                           last_crawled="2026-07-19T03:00:00+00:00",
+                           last_error="timeout loading catalog")
+        s = db.stats(self.conn)
+        self.assertEqual(s["last_updated"][:10], "2026-07-14")
+
+    def test_health_separates_data_age_from_attempt_age(self):
+        db.upsert_supplier(self.conn, host="s1.example.com",
+                           last_crawled="2026-07-19T03:00:00+00:00",
+                           last_error="timeout loading catalog")
+        h = {r["host"]: r for r in db.supplier_health(self.conn)}
+        r = h["s1.example.com"]
+        self.assertEqual(r["status"], "stale")
+        # The attempt is recent; the data is old. Both must be visible.
+        self.assertLess(r["age_hours"], r["data_age_hours"])
+
+
+class LocationCoverageTests(unittest.TestCase):
+    """Location filters must not silently drop suppliers that lack slab-level
+    location data — fall back to the supplier's known yards, and say out loud
+    what still can't be placed."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=5)
+
+        def mat(sid, name, locations):
+            self.conn.execute(
+                """INSERT INTO materials (supplier_id, item_id, item_name, name_norm,
+                     material_key, material_type, available_slabs, locations)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (sid, f"{sid}-{name}", name, name.upper(),
+                 f"{name.lower()}|granite", "Granite", 3, locations))
+
+        mat(1, "Alpha", "Dallas")            # slab-level location
+        mat(2, "Beta", None)                 # none of its own; supplier has yards
+        self.conn.execute("UPDATE suppliers SET locations = 'Dallas' WHERE id = 2")
+        mat(3, "Gamma", None)                # no location data anywhere
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _search(self, **kw):
+        from stonescan.web import app
+        kw.setdefault("q", ""); kw.setdefault("material_type", ""); kw.setdefault("color", "")
+        kw.setdefault("thickness", ""); kw.setdefault("supplier", "")
+        kw.setdefault("limit", 20); kw.setdefault("offset", 0)
+        total, rows, parsed = app._search(self.conn, **kw)
+        return {r["material_key"] for r in rows}, parsed
+
+    def test_supplier_yards_fall_back_when_material_has_no_location(self):
+        keys, _ = self._search(location="Dallas")
+        self.assertIn("alpha|granite", keys)
+        self.assertIn("beta|granite", keys,
+                      "no slab-level location, but its supplier's yard is Dallas")
+        self.assertNotIn("gamma|granite", keys)
+
+    def test_unplaceable_matches_are_counted_not_hidden(self):
+        _, parsed = self._search(location="Dallas")
+        self.assertEqual(parsed.get("unlocated"),
+                         {"suppliers": 1, "materials": 1},
+                         "supplier 3 matches everything but location and must be surfaced")
+
+    def test_no_location_filter_no_survey(self):
+        _, parsed = self._search()
+        self.assertNotIn("unlocated", parsed)
+
+
 class AliasApplyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

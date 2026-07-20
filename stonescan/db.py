@@ -373,10 +373,19 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
             f"WHERE material_type <> '' AND {_cat} GROUP BY material_type ORDER BY n DESC"
         ).fetchall()
     ]
+    # Freshness comes from materials.crawled_at — when the shown data was actually
+    # collected — not suppliers.last_crawled, which (a) is set by the single freshest
+    # supplier while most of the catalog may be days older, and (b) is stamped even on
+    # FAILED crawls, so a night of 104 Cloudflare errors would advance the "updated"
+    # claim over an entirely unchanged catalog. The range (oldest live supplier's data
+    # → newest) is what the header shows; a single MAX was overstating freshness for
+    # 65% of items.
     row = conn.execute(
-        "SELECT MAX(last_crawled) t FROM suppliers WHERE item_count > 0"
+        """SELECT MIN(t) oldest, MAX(t) newest FROM
+             (SELECT MAX(crawled_at) t FROM materials GROUP BY supplier_id)"""
     ).fetchone()
-    s["last_updated"] = row["t"] if row else None
+    s["last_updated"] = row["newest"] if row else None
+    s["oldest_updated"] = row["oldest"] if row else None
     s["with_images"] = conn.execute(
         f"SELECT COUNT(*) c FROM materials WHERE image_url <> '' AND {_cat}"
     ).fetchone()["c"]
@@ -417,7 +426,13 @@ def snapshot_history(conn: sqlite3.Connection, supplier_id: int, snapshot_date: 
              (snapshot_date, supplier_id, material_key, name_norm, thickness,
               material_type, color, slabs, image_url)
            SELECT ?, supplier_id, MAX(material_key), name_norm, thickness,
-                  MAX(material_type), MAX(color), SUM(available_slabs), MAX(image_url)
+                  MAX(material_type), MAX(color),
+                  -- Slabs only: a TILE row's available_slabs is square feet (or a
+                  -- piece count), and a restock alert reading "9,446 slabs" for a
+                  -- tile listing would be flatly wrong. Same rule as the search UI.
+                  SUM(CASE WHEN UPPER(COALESCE(product_form,'')) LIKE '%TILE%'
+                           THEN 0 ELSE COALESCE(available_slabs,0) END),
+                  MAX(image_url)
            FROM materials WHERE supplier_id = ?
            GROUP BY name_norm, thickness, finish, product_form""",
         (snapshot_date, supplier_id),
@@ -444,9 +459,27 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
+
+    def _hours(ts: str | None) -> float | None:
+        if not ts:
+            return None
+        try:
+            t = datetime.fromisoformat(ts)
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            return (now - t).total_seconds() / 3600
+        except ValueError:
+            return None
+
+    # When each supplier's DATA was collected — distinct from last_crawled, which is
+    # the last crawl ATTEMPT and is stamped on failures too. A stale supplier can show
+    # "last crawl: just now" beside data that is weeks old; both belong on the page.
+    data_ts = {r["supplier_id"]: r["t"] for r in conn.execute(
+        "SELECT supplier_id, MAX(crawled_at) t FROM materials GROUP BY supplier_id")}
+
     out = []
     for r in conn.execute(
-        """SELECT host, COALESCE(NULLIF(company,''), host) AS name, item_count,
+        """SELECT id, host, COALESCE(NULLIF(company,''), host) AS name, item_count,
                   slab_count, last_crawled, last_error
            FROM suppliers ORDER BY name"""
     ):
@@ -454,16 +487,8 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         err = bool(d["last_error"])
         has = (d["item_count"] or 0) > 0
         d["status"] = ("ok" if not err else "stale") if has else ("broken" if err else "empty")
-        age_h = None
-        if d["last_crawled"]:
-            try:
-                t = datetime.fromisoformat(d["last_crawled"])
-                if t.tzinfo is None:
-                    t = t.replace(tzinfo=timezone.utc)
-                age_h = (now - t).total_seconds() / 3600
-            except ValueError:
-                pass
-        d["age_hours"] = age_h
+        d["age_hours"] = _hours(d["last_crawled"])
+        d["data_age_hours"] = _hours(data_ts.get(d["id"]))
         out.append(d)
     return out
 

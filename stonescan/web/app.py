@@ -207,8 +207,6 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     if supplier:
         where.append("(s.company = ? OR s.host = ?)"); params.extend([supplier, supplier])
 
-    if location:
-        where.append("m.locations LIKE ?"); params.append(f"%{location}%")
     if min_length:
         where.append("m.avg_length >= ?"); params.append(min_length)
     if min_width:
@@ -216,12 +214,23 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     if new_only:
         where.append("m.new_arrival = 1")
 
+    # Location filters are kept SEPARATE from the other clauses so the coverage
+    # survey below can ask "what matched everything except location". They also
+    # fall back to the SUPPLIER's known yards when the material has no slab-level
+    # location of its own: slab locations only exist after a deep (--slabs) refresh,
+    # so without the fallback these filters silently dropped 41% of the catalog —
+    # including entire suppliers — with no hint anything was missing.
+    _LOC = "COALESCE(NULLIF(m.locations,''), s.locations)"
+    loc_where, loc_params = [], []
+    if location:
+        loc_where.append(f"{_LOC} LIKE ?"); loc_params.append(f"%{location}%")
+
     # Proximity: keep only material with a stocking location inside the radius.
     near_active = bool(near) and radius_mi > 0
     if near_active:
         loc_miles = geocode.locations_within(conn, near[0], near[1], radius_mi)
         _register_nearest(conn, loc_miles)
-        where.append("nearest_miles(m.locations) IS NOT NULL")
+        loc_where.append(f"nearest_miles({_LOC}) IS NOT NULL")
 
     form = parsed["form"]
     if form == "slab":
@@ -241,7 +250,9 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
 
     base_where, base_params = list(where), list(params)
     tw, tp = term_sql([[t] for t in parsed["terms"]])
-    where, params = base_where + tw, base_params + tp
+    sel_tw, sel_tp = tw, tp  # the term clauses actually in effect (fuzzy may swap)
+    where = base_where + loc_where + tw
+    params = base_params + loc_params + tp
 
     # Group ACROSS suppliers: one row per material (its cross-supplier material_key),
     # so "Calacatta Gold" is a single card carrying a supplier count + a total slab
@@ -255,7 +266,7 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     # what lets "slabs" mean the deepest single yard — MAX of the per-supplier sums —
     # instead of a cross-supplier SUM that reads as one buyable pile when it is really
     # N separate yards. The per-supplier tile guard rides along for free.
-    sup_miles = ", MIN(nearest_miles(m.locations)) AS sup_miles" if near_active else ""
+    sup_miles = (f", MIN(nearest_miles({_LOC})) AS sup_miles" if near_active else "")
 
     def inner_sql(clause: str) -> str:
         return f"""
@@ -307,12 +318,34 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
                     for t in parsed["terms"]]
         if any(len(v) > 1 for v in variants):
             tw, tp = term_sql(variants)
-            fclause = " AND ".join(base_where + tw)
-            fparams = base_params + tp
+            fclause = " AND ".join(base_where + loc_where + tw)
+            fparams = base_params + loc_params + tp
             ftotal = count(fclause, fparams)
             if ftotal > total:
                 clause, params, total = fclause, fparams, ftotal
+                sel_tw, sel_tp = tw, tp
                 parsed["fuzzy"] = sorted({w for v in variants for w in v[1:]})
+
+    # Coverage survey: when a location filter is active, say out loud what it CANNOT
+    # see. Suppliers with no cached slab galleries have no location data at all, so
+    # their materials fail every location clause — before this, a "within 150 mi"
+    # search would confidently report N results while silently omitting the largest
+    # supplier's entire catalog. The count of unplaceable matches is surfaced as a
+    # chip beside the results instead of pretending the filter covered everything.
+    if loc_where:
+        sq = " AND ".join(
+            base_where + sel_tw
+            + ["COALESCE(NULLIF(m.locations,''), NULLIF(s.locations,''), '') = ''"])
+        r = conn.execute(
+            f"""SELECT COUNT(DISTINCT m.supplier_id) AS sups,
+                       COUNT(DISTINCT CASE WHEN COALESCE(m.material_key,'') = ''
+                             THEN 'id:' || m.id ELSE m.material_key END) AS mats
+                FROM materials m JOIN suppliers s ON s.id = m.supplier_id
+                WHERE {sq}""",
+            base_params + sel_tp,
+        ).fetchone()
+        if r["sups"]:
+            parsed["unlocated"] = {"suppliers": r["sups"], "materials": r["mats"]}
 
     # Outer rollup across suppliers. available_slabs = deepest single yard (MAX of the
     # per-supplier sums); total_slabs keeps the grand total for anything that wants it.
@@ -474,6 +507,8 @@ def index(
         "near": near,
         "near_label": near_label,
         "near_ok": bool(origin),
+        # Matches the other filters but has no location data — shown, not hidden.
+        "unlocated": parsed.get("unlocated"),
         "radius": radius or (str(int(radius_mi)) if near else ""),
         "min_sqft": min_sqft or "",
         "view": view,
@@ -883,36 +918,69 @@ async def photo_search(request: Request, photo: UploadFile = File(...),
     return templates.TemplateResponse(request, "photo.html", ctx)
 
 
-def _restock_since_last(conn) -> list[dict]:
-    """Products newly in stock at the latest snapshot vs the previous one."""
-    dates = [r["snapshot_date"] for r in conn.execute(
-        "SELECT DISTINCT snapshot_date FROM history ORDER BY snapshot_date DESC LIMIT 2"
-    )]
-    if len(dates) < 2:
-        return []
-    latest, prev = dates[0], dates[1]
+def _stock_changes(conn) -> tuple[list[dict], list[dict], bool]:
+    """What changed, compared PER SUPPLIER — each supplier's newest snapshot
+    against that same supplier's own previous one.
+
+    Snapshots are written per-supplier as each is crawled, so any two *global*
+    dates rarely cover the same suppliers. The first fix guarded against that by
+    requiring presence in both of the two most recent dates — which honestly
+    returned zero, forever, because those two dates shared no suppliers while real
+    signal (a supplier crawled today with its own baseline from three days ago)
+    was discarded. The comparison each supplier actually supports is against its
+    own history, so that is the one we run.
+
+    Two distinct kinds of change, and the split matters:
+      restock — the product was LISTED at the previous snapshot with zero stock
+                everywhere, and has stock now. "Back in stock" means it.
+      listed  — the product was ABSENT from the previous snapshot: a new listing,
+                not a restock. These used to be silently dropped (the supplier-
+                flagged New Arrivals section only shows what suppliers mark NEW),
+                so real detected change went nowhere.
+
+    Returns (restock, newly_listed, has_baseline); has_baseline False means no
+    supplier has two snapshots yet, so the page can explain the empty state.
+    """
+    has_baseline = conn.execute(
+        "SELECT 1 FROM history GROUP BY supplier_id "
+        "HAVING COUNT(DISTINCT snapshot_date) >= 2 LIMIT 1"
+    ).fetchone() is not None
+    if not has_baseline:
+        return [], [], False
     rows = conn.execute(
-        """SELECT h.name_norm, h.material_type, h.color, h.thickness, h.slabs, h.image_url,
+        """WITH latest AS (
+               SELECT supplier_id, MAX(snapshot_date) AS d
+               FROM history GROUP BY supplier_id
+           ), prev AS (
+               SELECT h.supplier_id, MAX(h.snapshot_date) AS d
+               FROM history h JOIN latest l
+                 ON l.supplier_id = h.supplier_id AND h.snapshot_date < l.d
+               GROUP BY h.supplier_id
+           )
+           SELECT h.name_norm, h.material_type, h.color, h.thickness, h.slabs,
+                  h.image_url, pr.d AS since,
                   COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
+                  EXISTS (
+                      SELECT 1 FROM history p WHERE p.snapshot_date = pr.d
+                        AND p.supplier_id = h.supplier_id AND p.name_norm = h.name_norm
+                        AND p.thickness = h.thickness) AS was_listed,
                   (SELECT MIN(mm.id) FROM materials mm
                      WHERE mm.supplier_id = h.supplier_id AND mm.name_norm = h.name_norm
                            AND mm.thickness = h.thickness) AS id
-           FROM history h JOIN suppliers s ON s.id = h.supplier_id
-           WHERE h.snapshot_date = ? AND h.slabs > 0
-                 -- Snapshots are written per-supplier as each one is crawled, so the two
-                 -- most recent dates rarely cover the same suppliers. Without this guard a
-                 -- supplier crawled today but absent from the previous snapshot has its
-                 -- ENTIRE catalog reported as "back in stock" — the restock list was almost
-                 -- entirely this artifact. Only compare suppliers present in both.
-                 AND h.supplier_id IN (SELECT supplier_id FROM history WHERE snapshot_date = ?)
+           FROM history h
+           JOIN latest l ON l.supplier_id = h.supplier_id AND h.snapshot_date = l.d
+           JOIN prev pr ON pr.supplier_id = h.supplier_id
+           JOIN suppliers s ON s.id = h.supplier_id
+           WHERE h.slabs > 0
                  AND NOT EXISTS (
-                     SELECT 1 FROM history p WHERE p.snapshot_date = ?
+                     SELECT 1 FROM history p WHERE p.snapshot_date = pr.d
                        AND p.supplier_id = h.supplier_id AND p.name_norm = h.name_norm
                        AND p.thickness = h.thickness AND p.slabs > 0)
-           ORDER BY h.slabs DESC LIMIT 300""",
-        (latest, prev, prev),
+           ORDER BY h.slabs DESC LIMIT 600""",
     ).fetchall()
-    return [dict(r) for r in rows if r["id"]]
+    restock = [dict(r) for r in rows if r["id"] and r["was_listed"]][:300]
+    listed = [dict(r) for r in rows if r["id"] and not r["was_listed"]][:300]
+    return restock, listed, True
 
 
 @app.get("/new", response_class=HTMLResponse)
@@ -926,12 +994,13 @@ def whats_new(request: Request, page: int = 1):
         new_only=True, limit=limit, offset=offset,
     )
     _attach_rep_photos(conn, rows)
-    restock = _restock_since_last(conn)
+    restock, newly_listed, has_baseline = _stock_changes(conn)
     stats = db.stats(conn)
     conn.close()
     return templates.TemplateResponse(request, "whatsnew.html", {
         "rows": rows, "total": total, "page": page, "pages": (total + limit - 1) // limit,
-        "restock": restock, "stats": stats,
+        "restock": restock, "newly_listed": newly_listed,
+        "has_baseline": has_baseline, "stats": stats,
     })
 
 

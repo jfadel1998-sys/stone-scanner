@@ -4,7 +4,7 @@
 {% block headeraside %}
 <div class="stats">
   {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
-  {% if stats.last_updated %}<span class="fresh" title="Data reflects each supplier's public catalog at last crawl">· updated {{ stats.last_updated[:16].replace('T',' ') }} UTC</span>{% endif %}
+  {% if stats.last_updated %}{% if stats.oldest_updated and stats.oldest_updated[:10] != stats.last_updated[:10] %}<span class="fresh" title="Suppliers are crawled on different days — the oldest supplier's data is from the first date, the newest from the second. Each item page shows its own supplier's crawl time.">· crawled {{ stats.oldest_updated[:10] }} → {{ stats.last_updated[:10] }} UTC</span>{% else %}<span class="fresh" title="Data reflects each supplier's public catalog at last crawl">· updated {{ stats.last_updated[:16].replace('T',' ') }} UTC</span>{% endif %}{% endif %}
 </div>
 <button id="refreshBtn" class="refreshbtn" title="Re-crawl all catalogs (materials only; runs in the background). Shift-click for a deep refresh that also pre-caches slab galleries + locations.">↻ Refresh</button>
 <span id="refreshMsg" class="refreshmsg"></span>
@@ -68,6 +68,7 @@
   {% if total > rows|length %}· showing {{ rows|length }} (page {{ page }} of {{ pages }}){% endif %}
   {% if near_ok %}<span class="ichip">📍 within {{ radius }} mi of {{ near_label }}</span>
   {% elif near %}<span class="okchip warn" title="Not in the offline city dataset — try a bigger city or add 'City ST'">couldn't place “{{ near }}”</span>{% endif %}
+  {% if unlocated %}<span class="ichip" title="These suppliers publish no location data (no cached slab galleries), so distance and location filters can't place them. They may still stock what you're looking for — check their catalogs directly.">⚠ {{ unlocated.suppliers }} supplier{{ '' if unlocated.suppliers == 1 else 's' }} can't be placed ({{ unlocated.materials }} matching material{{ '' if unlocated.materials == 1 else 's' }} not shown)</span>{% endif %}
   {% if min_sqft %}<span class="ichip">≥ {{ min_sqft }} ft²</span>{% endif %}
   {% if interpreted %}<span class="interp">understood as:{% for c in interpreted %} <span class="ichip">{{ c }}</span>{% endfor %}</span>{% endif %}
   {% if added == 1 %}<span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span>
@@ -110,7 +111,7 @@
   <thead>
     <tr>
       <th></th><th>Material</th><th>Type</th><th>Color</th>
-      <th class="num">Suppliers</th><th class="num" title="Slabs at the single best-stocked supplier — not a total across yards">Slabs / yard</th>{% if near_ok %}<th class="num">Nearest</th>{% endif %}
+      <th class="num">Suppliers</th><th class="num" title="Slabs at the single best-stocked supplier — not a total across yards">Slabs / yard</th>{% if near_ok %}<th class="num" title="Distance to the nearest yard known to stock it (falls back to the supplier's yards when a slab-level location isn't cached)">Nearest</th>{% endif %}
     </tr>
   </thead>
   <tbody>
