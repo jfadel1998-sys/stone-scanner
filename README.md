@@ -8,8 +8,16 @@ materials across suppliers when sourcing.
 > **Scope:** this only indexes catalogs that suppliers have deliberately published
 > for the public (the same pages Google indexes and customers browse). It never
 > logs in, never touches private/authenticated data, and crawls politely
-> (rate-limited, identifiable user-agent). Edit `suppliers.json` to control exactly
-> which catalogs are indexed.
+> (rate-limited, identifiable user-agent). **It honors `robots.txt`** — enforced in
+> code on every request, against the rules of the origin actually being fetched.
+>
+> Edit `suppliers.json` to choose which catalogs are indexed. To *remove* one for
+> good, use the denylist rather than deleting the entry — discovery re-adds anything
+> it finds that isn't already listed, so a deletion alone doesn't hold:
+>
+> ```powershell
+> python -m stonescan.denylist add example.com --reason "removal requested by email"
+> ```
 
 ## How it works
 
@@ -166,7 +174,10 @@ PyObjC) instead of WebView2; no .NET is involved. Three things to know:
 | File | Purpose |
 |------|---------|
 | `suppliers.json` | Editable allow-list of public catalogs to index |
+| `denylist.json` | Hosts that must never be crawled or re-discovered (removal requests) |
 | `stonescan/crawler.py` | Playwright crawler (captures each catalog's JSON) |
+| `stonescan/robots.py` | robots.txt enforcement — every fetch checked against its own origin |
+| `stonescan/denylist.py` | Durable removals: honored by discovery, ingest, and the probes |
 | `stonescan/normalize.py` | Category unification + cross-supplier material matching |
 | `stonescan/db.py` | SQLite schema and storage |
 | `stonescan/discover.py` | Multi-source discovery of public catalogs (passive DNS + search) |
