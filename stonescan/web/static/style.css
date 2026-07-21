@@ -744,6 +744,8 @@ footer {
 .provline { font-size: 11px; margin: 6px 0 0; }
 /* The reference card standalone on the canonical material page (not in the two-up factgrid) */
 .matref { margin: 22px 0 0; max-width: 680px; }
+/* "· live as of 3:42 PM" beside the slab-gallery heading once a live read lands */
+.livestamp { font-size: 12.5px; font-weight: 600; color: var(--accent-ink); }
 .lookupform { margin-top: 10px; }
 .lookupform button { font-size: 13px; }
 .factcard .btn { margin-top: 12px; }

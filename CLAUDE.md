@@ -20,7 +20,7 @@ commercial ask, not a code change.
 ```powershell
 # dev: activate venv first (.\.venv\Scripts\Activate.ps1) or call the venv python directly
 .\.venv\Scripts\python.exe -m uvicorn stonescan.web.app:app --port 8000   # search UI at 127.0.0.1:8000
-.\.venv\Scripts\python.exe -m stonescan.ingest --slabs                    # crawl all suppliers (+ slab galleries)
+.\.venv\Scripts\python.exe -m stonescan.ingest --slabs                    # crawl all (+ slab galleries; add --slab-cap N to bound the deep pre-fetch — nightly uses 40)
 .\.venv\Scripts\python.exe -m stonescan.ingest --only host1,host2 --slabs # crawl specific suppliers
 .\.venv\Scripts\python.exe -m stonescan.discover                          # find more public catalogs
 .\.venv\Scripts\python.exe -m stonescan.geocode                           # resolve locations for the map (--recheck to redo)
@@ -52,7 +52,7 @@ build/packaging details.
 | `stonescan/smartsearch.py` | Natural-language query parser ("blue marble slabs" → filters) |
 | `stonescan/db.py` | SQLite schema + all query/storage helpers (materials, slabs, history, watchlist) |
 | `stonescan/ingest.py` | Orchestrator: crawl → normalize → store → history snapshot |
-| `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached) |
+| `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached 10min). Item pages paint the nightly cache instantly, then background-refresh to a **live** read via `/api/slabs?live=1` and stamp "live as of …", so the qty you see on open is current even between crawls. The nightly only pre-caches each supplier's top-`--slab-cap` items (default 40) — enough to seed the map's yard locations; everything else is fetched live on open |
 | `stonescan/imagesearch.py` | Search-by-photo: CLIP ViT-B/32 vision encoder (ONNX, CPU, no torch). Embeds catalog images into `image_vectors` (keyed by image_url); `search()` cosine-ranks against an uploaded photo and carries per-material agreement counts; `identify()` turns those into a named verdict + confidence. Model at `stonescan/models/clip/clip_vision.onnx` (git-ignored, `--download-model`). |
 | `stonescan/reference.py` | What a stone *is* — origin, quarries, market price — none of which exists in the catalog (see Gotchas). Cited facts in `stone_reference.json`; `lookup_live()` fills gaps from the Wikipedia API on demand. Unsourced facts are stripped on import, so the UI says "not established" rather than inventing one. |
 | `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) distributor **vanity / white-label** Stone Profits catalogs on the distributor's own domain (slabs.nsrstone.com, inventory.acegraniteusa.com, outlet.ckfco.com — drop-in on the default provider, any subdomain prefix, invisible to the subdomain sweep). `discover_sps_embeds()` finds them via urlscan (pages that load a Stone Profits resource → fingerprint-verify); `probe_sps_vanity()` fingerprints `<prefix>.<apex>` over a curated apex list. UMI/StoneTrash single sites stay hand-seeded |

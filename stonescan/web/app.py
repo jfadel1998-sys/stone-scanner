@@ -751,9 +751,15 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
 
 
 @app.get("/api/slabs")
-async def api_slabs(id: int):
-    """Per-slab gallery for a material: pre-cached from the nightly crawl if
-    available, otherwise fetched live from the supplier's catalog."""
+async def api_slabs(id: int, live: int = 0):
+    """Per-slab gallery for a material.
+
+    Default: serve the nightly pre-cache if present (instant), else fetch live.
+    `?live=1` skips the cache and reads the supplier's catalog now, so the item
+    page can paint the cached gallery immediately and then refresh it to a live,
+    time-stamped reading. `n_items` (how many item_ids this product spans) lets the
+    client tell whether it can safely restate the header slab count as live.
+    """
     conn = db.connect()
     row = conn.execute(
         """SELECT m.item_id, m.supplier_id, m.name_norm, m.thickness, m.finish,
@@ -773,14 +779,15 @@ async def api_slabs(id: int):
                  AND item_id <> ''""",
         (row["supplier_id"], row["name_norm"], row["thickness"], row["finish"]),
     )] or [row["item_id"]]
-    ph = ",".join("?" for _ in item_ids)
-    cached = conn.execute(
-        f"""SELECT slab_no, location, length, width, qty, uom, barcode, image_url
-            FROM slabs WHERE supplier_id = ? AND item_id IN ({ph})
-            ORDER BY (image_url = '' OR image_url IS NULL), slab_no""",
-        (row["supplier_id"], *item_ids),
-    ).fetchall()
-    cached = [dict(c) for c in cached]
+    cached = []
+    if not live:
+        ph = ",".join("?" for _ in item_ids)
+        cached = [dict(c) for c in conn.execute(
+            f"""SELECT slab_no, location, length, width, qty, uom, barcode, image_url
+                FROM slabs WHERE supplier_id = ? AND item_id IN ({ph})
+                ORDER BY (image_url = '' OR image_url IS NULL), slab_no""",
+            (row["supplier_id"], *item_ids),
+        ).fetchall()]
     conn.close()
     if cached:
         slab_list = [{
@@ -789,14 +796,14 @@ async def api_slabs(id: int):
             "length": c["length"], "width": c["width"],
             "qty": c["qty"], "uom": c["uom"], "barcode": c["barcode"],
         } for c in cached]
-        return JSONResponse({"slabs": slab_list, "cached": True})
+        return JSONResponse({"slabs": slab_list, "cached": True, "n_items": len(item_ids)})
 
-    # Not pre-cached (or nightly crawl didn't include slabs) -> fetch live.
+    # Forced live (?live=1), or nothing pre-cached -> read the supplier's catalog now.
     try:
         found = await slabs.fetch_slabs(row["host"], row["item_id"], row["image_base"] or "")
-        return JSONResponse({"slabs": found, "cached": False})
+        return JSONResponse({"slabs": found, "cached": False, "n_items": len(item_ids)})
     except Exception as e:  # noqa: BLE001 - never 500 the detail page over a gallery fetch
-        return JSONResponse({"slabs": [], "error": str(e)})
+        return JSONResponse({"slabs": [], "error": str(e), "cached": False})
 
 
 _refresh = {"running": False, "done": False, "summary": "", "done_count": 0, "total": 0}
@@ -819,12 +826,13 @@ def _run_refresh_job(with_slabs: bool) -> None:
     try:
         # run_all, not run: suppliers.json is no longer all Stone Profits, and a
         # UMI/SlabWare entry sent to the Playwright crawler just fails.
-        # Materials only by default — slab galleries load on demand (see /api/slabs),
-        # so prefetching every gallery would turn a click into a multi-hour job now
-        # that the catalog is ~130k materials. `with_slabs` is the opt-in deep refresh.
+        # Materials only by default — slab galleries load on demand (see /api/slabs).
+        # `with_slabs` is the opt-in deep refresh, and even then it's bounded
+        # (slab_item_cap): only each supplier's most-stocked items are pre-cached, so
+        # the deep refresh stays quick while still seeding the map's yard locations.
         asyncio.run(run_all(
             entries, concurrency=4, delay=1.0, headless=True,
-            db_path=str(db.DEFAULT_DB), with_slabs=with_slabs,
+            db_path=str(db.DEFAULT_DB), with_slabs=with_slabs, slab_item_cap=40,
             retry_errored=True, progress=progress,
         ))
         conn = db.connect()

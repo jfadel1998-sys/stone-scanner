@@ -29,10 +29,12 @@ if (-not (Test-Path $py)) {
 }
 
 Write-Log "===== refresh started ====="
-# --discover finds newly-listed suppliers; --slabs pre-caches every in-stock item's
-# full slab gallery so detail pages open instantly during the day. --retry gives
+# --discover finds newly-listed suppliers; --slabs --slab-cap 40 pre-caches the slab
+# galleries of only the 40 most-stocked items per supplier (plenty to seed the map's
+# yard locations) rather than every in-stock item — the single biggest speedup, since
+# any un-cached gallery is fetched live when a user opens that item. --retry gives
 # anything that trips a Cloudflare challenge one more attempt in the same run.
-& $py -u -m stonescan.ingest --discover --slabs --retry --concurrency 4 --delay 1.0 2>&1 |
+& $py -u -m stonescan.ingest --discover --slabs --slab-cap 40 --retry --concurrency 4 --delay 1.0 2>&1 |
     ForEach-Object { Add-Content -Path $log -Value ([string]$_) -Encoding utf8; Write-Host $_ }
 $code = $LASTEXITCODE
 Write-Log "===== refresh finished (exit $code) ====="

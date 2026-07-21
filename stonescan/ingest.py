@@ -139,7 +139,7 @@ def _errored_hosts(db_path: str, hosts: list[str]) -> set[str]:
 
 
 async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
-                         with_slabs, provider_limit, progress=None) -> None:
+                         with_slabs, provider_limit, slab_item_cap=0, progress=None) -> None:
     """Crawl a mixed entry list once, routing each to Stone Profits or its provider."""
     from . import providers
     sps = [e["host"] for e in entries
@@ -149,7 +149,8 @@ async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
     if sps:
         print(f"Crawling {len(sps)} Stone Profits catalog(s)...\n")
         await run(sps, concurrency=concurrency, delay=delay, headless=headless,
-                  db_path=db_path, with_slabs=with_slabs, progress=progress)
+                  db_path=db_path, with_slabs=with_slabs, slab_item_cap=slab_item_cap,
+                  progress=progress)
     if other:
         kinds = ", ".join(sorted({providers.provider_of(e) for e in other}))
         print(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
@@ -163,7 +164,7 @@ async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
 async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1.5,
                   headless: bool = True, db_path: str = "", with_slabs: bool = False,
                   provider_limit: int = 0, retry_errored: bool = False,
-                  progress=None) -> None:
+                  slab_item_cap: int = 0, progress=None) -> None:
     """Crawl a mixed supplier list, routing each entry to its provider.
 
     Every caller that crawls "everything in suppliers.json" must come through here:
@@ -185,7 +186,8 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
 
     await _crawl_entries(entries, concurrency=concurrency, delay=delay,
                          headless=headless, db_path=db_path, with_slabs=with_slabs,
-                         provider_limit=provider_limit, progress=progress)
+                         provider_limit=provider_limit, slab_item_cap=slab_item_cap,
+                         progress=progress)
 
     if retry_errored:
         failed = _errored_hosts(db_path, [e["host"] for e in entries])
@@ -195,7 +197,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             await _crawl_entries(retry, concurrency=concurrency, delay=delay,
                                  headless=headless, db_path=db_path,
                                  with_slabs=with_slabs, provider_limit=provider_limit,
-                                 progress=progress)
+                                 slab_item_cap=slab_item_cap, progress=progress)
             still = _errored_hosts(db_path, [e["host"] for e in retry])
             print(f"\n  retry recovered {len(retry) - len(still)} of {len(retry)}; "
                   f"{len(still)} still failing.")
@@ -211,14 +213,16 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
 
 
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
-              db_path: str, with_slabs: bool = False, progress=None) -> None:
+              db_path: str, with_slabs: bool = False, slab_item_cap: int = 0,
+              progress=None) -> None:
     conn = db.init_db(db_path)
     total_items = 0
     total_slabs = 0
     ok_suppliers = 0
 
     async for result in crawl_hosts(
-        hosts, concurrency=concurrency, delay_s=delay, headless=headless, with_slabs=with_slabs
+        hosts, concurrency=concurrency, delay_s=delay, headless=headless,
+        with_slabs=with_slabs, slab_item_cap=slab_item_cap
     ):
         n = 0
         supplier_id = db.upsert_supplier(
@@ -292,6 +296,10 @@ def main() -> None:
                     help="Incremental refresh: skip suppliers successfully crawled within this many hours.")
     ap.add_argument("--slabs", action="store_true",
                     help="Also pre-fetch and cache each in-stock item's full slab gallery (slower).")
+    ap.add_argument("--slab-cap", type=int, default=0,
+                    help="With --slabs, pre-cache only the N most-stocked items per supplier "
+                         "(0 = all). Bounds the slowest part of the crawl; un-cached galleries "
+                         "are fetched live when a user opens the item.")
     ap.add_argument("--provider-limit", type=int, default=0,
                     help="Cap materials per non-StoneProfits supplier (0 = all; handy for smoke tests).")
     ap.add_argument("--retry-errored", action="store_true",
@@ -354,6 +362,7 @@ def main() -> None:
             with_slabs=args.slabs,
             provider_limit=args.provider_limit,
             retry_errored=args.retry,
+            slab_item_cap=args.slab_cap,
         )
     )
 

@@ -253,7 +253,7 @@ async def _fetch_all_slabs(page, item_ids: list[str]) -> dict[str, list]:
 
 async def crawl_host(
     browser: Browser, host: str, *, timeout_ms: int = 45000, with_slabs: bool = False,
-    robots_cache=None,
+    robots_cache=None, slab_item_cap: int = 0,
 ) -> CrawlResult:
     res = CrawlResult(host=host)
 
@@ -360,21 +360,29 @@ async def crawl_host(
         if not res.ok and not res.error:
             res.error = "no items returned (empty or non-public catalog)"
 
-        # Optionally pre-fetch each in-stock item's slab gallery.
+        # Optionally pre-fetch in-stock items' slab galleries, bounded by
+        # slab_item_cap (0 = all). The deep getItemInventory call is the crawl's
+        # single biggest cost, and any un-cached gallery is fetched live on open
+        # anyway (see web app /api/slabs -> slabs.fetch_slabs). So we keep only the
+        # most-stocked items: enough to seed each supplier's yard locations for the
+        # map — a supplier has a handful of yards, well covered by its busiest
+        # items — without paying to pre-cache the long tail every night.
         if res.ok and with_slabs:
-            ids = []
+            in_stock = []
             seen = set()
             for it in res.items:
                 iid = str(it.get("ItemID") or "")
-                slabs_avail = it.get("AvailableSlabs") or 0
                 try:
-                    slabs_avail = float(slabs_avail)
+                    slabs_avail = float(it.get("AvailableSlabs") or 0)
                 except (TypeError, ValueError):
                     slabs_avail = 0
                 if iid and iid not in seen and slabs_avail > 0:
                     seen.add(iid)
-                    ids.append(iid)
-            res.slabs = await _fetch_all_slabs(page, ids)
+                    in_stock.append((slabs_avail, iid))
+            in_stock.sort(reverse=True)  # busiest items first
+            if slab_item_cap > 0:
+                in_stock = in_stock[:slab_item_cap]
+            res.slabs = await _fetch_all_slabs(page, [iid for _, iid in in_stock])
     except PWTimeout:
         res.error = "timeout loading catalog"
     except Exception as e:  # noqa: BLE001 - report any crawl failure per-host
@@ -394,7 +402,7 @@ def _largest_array(candidates: list) -> list:
 
 async def crawl_hosts(
     hosts: list[str], *, concurrency: int = 3, delay_s: float = 1.5,
-    headless: bool = True, with_slabs: bool = False,
+    headless: bool = True, with_slabs: bool = False, slab_item_cap: int = 0,
 ):
     """Crawl hosts with limited concurrency and a polite per-host delay.
 
@@ -409,7 +417,7 @@ async def crawl_hosts(
         async def worker(h: str) -> CrawlResult:
             async with sem:
                 r = await crawl_host(browser, h, with_slabs=with_slabs,
-                                     robots_cache=cache)
+                                     robots_cache=cache, slab_item_cap=slab_item_cap)
                 await asyncio.sleep(delay_s)  # be gentle
                 return r
 

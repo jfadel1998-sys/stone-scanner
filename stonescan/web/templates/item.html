@@ -40,7 +40,7 @@
       {% elif is_tile %}
       <div class="inv-stat"><b>Tile</b><span>sold as {{ (m.product_form or 'tile')|lower }}</span></div>
       {% else %}
-      <div class="inv-stat"><b>{{ m.available_slabs or 0 }}</b><span>slabs available</span></div>
+      <div class="inv-stat"><b id="hdrslabs">{{ m.available_slabs or 0 }}</b><span id="hdrslabslbl">slabs available</span></div>
       {% endif %}
       {% if m.avg_length and m.avg_width %}
       <div class="inv-stat"><b>{{ m.avg_length|int }}×{{ m.avg_width|int }}</b><span>avg size (in)</span></div>{% endif %}
@@ -85,7 +85,7 @@
 </div>
 
 <section class="block" id="slabgallery">
-  <h2>Slabs in stock <span id="slabcount" class="muted"></span></h2>
+  <h2>Slabs in stock <span id="slabcount" class="muted"></span> <span id="slabstamp" class="livestamp"></span></h2>
   <div id="slablist" class="slabgrid">
     <div class="slabloading"><span class="spin"></span> Loading live slab photos from {{ m.supplier_name }}…</div>
   </div>
@@ -166,10 +166,22 @@
   var host = "{{ m.supplier_host }}";
   var list = document.getElementById('slablist');
   var countEl = document.getElementById('slabcount');
+  var stampEl = document.getElementById('slabstamp');
+  var hdrSlabs = document.getElementById('hdrslabs');
+  var hdrLbl = document.getElementById('hdrslabslbl');
   var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
-  fetch('/api/slabs?id='+id).then(function(r){return r.json();}).then(function(d){
-    var slabs = (d && d.slabs) || [];
-    if(!slabs.length){ list.innerHTML = '<div class="slabloading">No individual slab photos are published right now. '+liveLink+'</div>'; return; }
+
+  function nowLabel(){
+    try { return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+    catch(e){ return ''; }
+  }
+
+  function render(slabs){
+    if(!slabs.length){
+      list.innerHTML = '<div class="slabloading">No individual slab photos are published right now. '+liveLink+'</div>';
+      countEl.textContent = '';
+      return;
+    }
     countEl.textContent = '· '+slabs.length+' slab'+(slabs.length===1?'':'s');
     list.innerHTML = '';
     slabs.forEach(function(s){
@@ -189,6 +201,33 @@
       });
       list.appendChild(card);
     });
+  }
+
+  function markLive(slabs, nItems){
+    if(stampEl) stampEl.textContent = '· live as of '+nowLabel();
+    // Restate the header slab count from the live reading only when this product is
+    // a single batch (unambiguous). Multi-batch products keep the crawl-time total.
+    if(hdrSlabs && nItems === 1){
+      hdrSlabs.textContent = slabs.length;
+      if(hdrLbl) hdrLbl.textContent = 'slabs available now';
+    }
+  }
+
+  // 1) Paint immediately from the default endpoint (the nightly cache if present).
+  fetch('/api/slabs?id='+id).then(function(r){return r.json();}).then(function(d){
+    var slabs = (d && d.slabs) || [];
+    render(slabs);
+    if(d && d.cached === false){
+      if(slabs.length) markLive(slabs, d.n_items);      // already a live reading
+    } else {
+      // 2) Served from cache -> refresh to a live reading in the background.
+      fetch('/api/slabs?id='+id+'&live=1').then(function(r){return r.json();}).then(function(d2){
+        var live = (d2 && d2.slabs) || [];
+        // Only replace when the live read returns slabs, so a transient fetch
+        // failure (which yields []) can never wipe a good cached gallery.
+        if(live.length){ render(live); markLive(live, d2.n_items); }
+      }).catch(function(){});
+    }
   }).catch(function(){
     list.innerHTML = '<div class="slabloading">Couldn\'t load slab photos just now. '+liveLink+'</div>';
   });

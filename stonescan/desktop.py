@@ -236,7 +236,7 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
     # must reach its own provider rather than the Playwright crawler.
     asyncio.run(run_all(
         entries, concurrency=4, delay=1.0, headless=True,
-        db_path=os.environ["STONESCAN_DB"], with_slabs=with_slabs,
+        db_path=os.environ["STONESCAN_DB"], with_slabs=with_slabs, slab_item_cap=40,
         retry_errored=True,  # give same-run transient failures a second chance
     ))
 
