@@ -13,6 +13,12 @@
         <img src="{{ m.image_url }}" alt="{{ m.item_name }}" loading="eager"
              onerror="this.closest('.detail-photo').classList.add('noimg')">
       </a>
+    {% elif rep_photo %}
+      <a href="{{ rep_photo }}" target="_blank" rel="noopener" title="Representative photo of this stone">
+        <img src="{{ rep_photo }}" alt="{{ m.item_name }}" loading="eager"
+             onerror="this.closest('.detail-photo').classList.add('noimg')">
+        <span class="repbadge" title="This supplier published no photo of its own — showing a representative photo of this stone">≈ representative</span>
+      </a>
     {% else %}<div class="bigph">🪨<span>No photo published</span></div>{% endif %}
   </div>
 
@@ -170,6 +176,7 @@
   var hdrSlabs = document.getElementById('hdrslabs');
   var hdrLbl = document.getElementById('hdrslabslbl');
   var sps = {{ 'true' if m.supplier_token else 'false' }};   // only StoneProfits has a live per-slab feed
+  var repPhoto = "{{ rep_photo }}";   // labeled fallback for slabs with no photo of their own
   var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
 
   function nowLabel(){
@@ -188,7 +195,16 @@
     slabs.forEach(function(s){
       var card = document.createElement('div'); card.className='slabcard';
       var size = (s.length && s.width) ? Math.round(s.length)+'×'+Math.round(s.width) : '';
-      var img = s.thumb ? '<img loading="lazy" src="'+s.thumb+'" data-full="'+s.photo+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">' : '<span class="thumb noimg"></span>';
+      var img;
+      if(s.thumb){
+        img = '<img loading="lazy" src="'+s.thumb+'" data-full="'+s.photo+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">';
+      } else if(repPhoto){
+        // No photo of this exact slab -> show a labeled representative of the stone.
+        img = '<img loading="lazy" class="repimg" src="'+repPhoto+'" data-full="'+repPhoto+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">'
+            + '<span class="repbadge" title="No photo of this exact slab was published — showing a representative photo of this stone">≈ representative</span>';
+      } else {
+        img = '<span class="thumb noimg"></span>';
+      }
       card.innerHTML = img + '<div class="slabmeta"><b>'+(s.slab_no||'Slab')+'</b>'
         + (size?'<span>'+size+' '+(s.uom||'in')+'</span>':'')
         + (s.location?'<span>'+s.location+'</span>':'')
@@ -220,10 +236,11 @@
     render(slabs);
     if(d && d.cached === false){
       if(slabs.length) markLive(slabs, d.n_items);      // already a live reading
-    } else if(sps){
-      // 2) Served from cache -> refresh to a live reading in the background. Only
-      // StoneProfits catalogs have a live per-slab feed (fetch_slabs); providers
-      // don't, so we skip the doomed ~30s call and just keep the cached gallery.
+    } else if(sps && d.n_items === 1){
+      // 2) Served from cache -> refresh to a live reading in the background. Only for
+      // StoneProfits catalogs (providers have no live per-slab feed) AND only when the
+      // product is a single lot: fetch_slabs reads one item_id, so re-rendering a
+      // multi-lot product from it would drop the other lots' slabs (and photos).
       fetch('/api/slabs?id='+id+'&live=1').then(function(r){return r.json();}).then(function(d2){
         var live = (d2 && d2.slabs) || [];
         // Replace only when the live read returns slabs WITH photos, so a transient

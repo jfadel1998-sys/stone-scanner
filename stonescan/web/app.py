@@ -741,13 +741,17 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
         (m["material_type"], m["material_key"], m["color"] or "\0",
          first_word, f"{first_word}%"),
     ).fetchall()
+    # Fallback image for slabs (and the hero) with no photo of their own: the item's
+    # own product photo, else a labeled representative from the same trade name.
+    base = _base_name(m["material_key"])
+    rep_photo = m["image_url"] or _representative_photos(conn, [base]).get(base, "")
     lists_avail = db.get_lists(conn)
     conn.close()
     return templates.TemplateResponse(
         request, "item.html",
         {"m": m, "others": [dict(o) for o in others],
          "variants": [dict(v) for v in variants], "similar": [dict(x) for x in similar],
-         "lists": lists_avail, "added": added, "added_list": list},
+         "lists": lists_avail, "added": added, "added_list": list, "rep_photo": rep_photo},
     )
 
 
