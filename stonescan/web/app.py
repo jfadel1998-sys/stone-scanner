@@ -682,7 +682,8 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
         """SELECT m.*, COALESCE(NULLIF(s.company,''), s.host) AS supplier_name,
                   s.host AS supplier_host, s.products AS supplier_products,
                   s.last_crawled AS supplier_updated,
-                  s.phone AS supplier_phone, s.email AS supplier_email
+                  s.phone AS supplier_phone, s.email AS supplier_email,
+                  s.token AS supplier_token
            FROM materials m JOIN suppliers s ON s.id = m.supplier_id
            WHERE m.id = ?""",
         (id,),
@@ -763,7 +764,7 @@ async def api_slabs(id: int, live: int = 0):
     conn = db.connect()
     row = conn.execute(
         """SELECT m.item_id, m.supplier_id, m.name_norm, m.thickness, m.finish,
-                  s.host, s.image_base
+                  s.host, s.image_base, s.token
            FROM materials m JOIN suppliers s ON s.id = m.supplier_id WHERE m.id = ?""",
         (id,),
     ).fetchone()
@@ -797,6 +798,13 @@ async def api_slabs(id: int, live: int = 0):
             "qty": c["qty"], "uom": c["uom"], "barcode": c["barcode"],
         } for c in cached]
         return JSONResponse({"slabs": slab_list, "cached": True, "n_items": len(item_ids)})
+
+    # slabs.fetch_slabs is StoneProfits-only (it reads the page's SPSWebToken and the
+    # SPS API). A provider supplier — UMI/SlabWare/SlabCloud/StoneTrash, no SPS token —
+    # has no live per-slab feed, so don't burn ~30s driving a browser to a doomed fetch
+    # (which returns nothing and could blank a good cached gallery). Say so instead.
+    if not row["token"]:
+        return JSONResponse({"slabs": [], "cached": False, "live_supported": False})
 
     # Forced live (?live=1), or nothing pre-cached -> read the supplier's catalog now.
     try:

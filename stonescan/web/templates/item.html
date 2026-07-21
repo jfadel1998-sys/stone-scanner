@@ -169,6 +169,7 @@
   var stampEl = document.getElementById('slabstamp');
   var hdrSlabs = document.getElementById('hdrslabs');
   var hdrLbl = document.getElementById('hdrslabslbl');
+  var sps = {{ 'true' if m.supplier_token else 'false' }};   // only StoneProfits has a live per-slab feed
   var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
 
   function nowLabel(){
@@ -219,13 +220,16 @@
     render(slabs);
     if(d && d.cached === false){
       if(slabs.length) markLive(slabs, d.n_items);      // already a live reading
-    } else {
-      // 2) Served from cache -> refresh to a live reading in the background.
+    } else if(sps){
+      // 2) Served from cache -> refresh to a live reading in the background. Only
+      // StoneProfits catalogs have a live per-slab feed (fetch_slabs); providers
+      // don't, so we skip the doomed ~30s call and just keep the cached gallery.
       fetch('/api/slabs?id='+id+'&live=1').then(function(r){return r.json();}).then(function(d2){
         var live = (d2 && d2.slabs) || [];
-        // Only replace when the live read returns slabs, so a transient fetch
-        // failure (which yields []) can never wipe a good cached gallery.
-        if(live.length){ render(live); markLive(live, d2.n_items); }
+        // Replace only when the live read returns slabs WITH photos, so a transient
+        // failure or a photoless read can never blank a good cached gallery.
+        var withPhoto = live.filter(function(s){ return s.thumb; }).length;
+        if(live.length && withPhoto){ render(live); markLive(live, d2.n_items); }
       }).catch(function(){});
     }
   }).catch(function(){
