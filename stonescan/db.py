@@ -184,6 +184,31 @@ CREATE TABLE IF NOT EXISTS list_items (
     UNIQUE(list_id, supplier_id, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_listitem_list ON list_items(list_id);
+
+-- Materialized per-product rollup: one row per search 'grp' (material_key, or
+-- 'id:<id>' for empty-key products), holding the cross-supplier aggregates the
+-- search's outer query computes. Lets the default/type browse be an index scan
+-- instead of a two-level GROUP BY over the whole materials table. A derived cache:
+-- safe to drop and rebuild, and rebuilt after every crawl / reclassify / merge.
+CREATE TABLE IF NOT EXISTS product_rollup (
+    grp             TEXT PRIMARY KEY,
+    id              INTEGER,
+    material_key    TEXT,
+    item_name       TEXT,
+    material_type   TEXT,
+    color           TEXT,
+    new_arrival     INTEGER,
+    suppliers       INTEGER,
+    available_slabs INTEGER,
+    total_slabs     INTEGER,
+    tile_sf         REAL,
+    has_tile        INTEGER,
+    avg_length      REAL,
+    avg_width       REAL,
+    total_sqft      REAL,
+    image_url       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rollup_type ON product_rollup(material_type);
 """
 
 
@@ -465,6 +490,74 @@ def distinct_locations(conn: sqlite3.Connection) -> list[str]:
         "SELECT DISTINCT location FROM slabs WHERE location <> '' ORDER BY location"
     ).fetchall()
     return [r["location"] for r in rows]
+
+
+# --- Materialized per-product rollup (search fast path) ------------------------
+#
+# The SELECT below MUST stay in lockstep with _search's inner/outer aggregation in
+# web/app.py: it reproduces exactly what the live outer query computes per product,
+# so the fast path can read this table and return byte-identical rows.
+# tests/test_quality.py::ProductRollupTests asserts that parity across the matrix.
+_ROLLUP_IS_TILE = "UPPER(COALESCE(m.product_form,'')) LIKE '%TILE%'"
+_ROLLUP_REBUILD = f"""
+INSERT INTO product_rollup
+    (grp, id, material_key, item_name, material_type, color, new_arrival, suppliers,
+     available_slabs, total_slabs, tile_sf, has_tile, avg_length, avg_width,
+     total_sqft, image_url)
+SELECT grp, MIN(id), COALESCE(MAX(material_key), ''), MIN(item_name), MAX(material_type),
+       MAX(color), MAX(new_arrival), COUNT(*),
+       MAX(sup_slabs), SUM(sup_slabs), SUM(sup_tile_sf), MAX(sup_has_tile),
+       MAX(avg_length), MAX(avg_width), MAX(sup_sqft),
+       COALESCE(MAX(real_img), MAX(any_img))
+FROM (
+    SELECT
+        CASE WHEN COALESCE(m.material_key,'') = '' THEN 'id:' || m.id
+             ELSE m.material_key END AS grp,
+        MIN(m.id) AS id, MAX(m.material_key) AS material_key,
+        MIN(m.item_name) AS item_name, MAX(m.material_type) AS material_type,
+        MAX(m.color) AS color, MAX(m.new_arrival) AS new_arrival,
+        MAX(m.avg_length) AS avg_length, MAX(m.avg_width) AS avg_width,
+        SUM(CASE WHEN {_ROLLUP_IS_TILE} THEN 0 ELSE COALESCE(m.available_slabs,0) END) AS sup_slabs,
+        SUM(CASE WHEN {_ROLLUP_IS_TILE} AND UPPER(COALESCE(m.uom,'')) = 'SF'
+                 THEN COALESCE(m.available_slabs,0) ELSE 0 END) AS sup_tile_sf,
+        MAX(CASE WHEN {_ROLLUP_IS_TILE} THEN 1 ELSE 0 END) AS sup_has_tile,
+        SUM(CASE WHEN {_ROLLUP_IS_TILE} THEN 0 ELSE COALESCE(m.available_slabs,0)
+                 * COALESCE(m.avg_length,0) * COALESCE(m.avg_width,0) END) / 144.0 AS sup_sqft,
+        MAX(CASE WHEN COALESCE(m.image_url,'') <> ''
+                 AND m.image_url NOT LIKE '%slabcloud.com/slabs/%'
+                 THEN m.image_url END) AS real_img,
+        MAX(m.image_url) AS any_img
+    FROM materials m JOIN suppliers s ON s.id = m.supplier_id
+    GROUP BY grp, m.supplier_id
+)
+GROUP BY grp
+"""
+
+
+def rebuild_product_rollup(conn: sqlite3.Connection) -> int:
+    """Rebuild the product_rollup materialized table from materials, in one pass.
+
+    Returns the number of product rows written. Idempotent and cheap enough to run
+    after every crawl / reclassify / merge — a single INSERT…SELECT. The rows are
+    inserted in GROUP BY (grp) order, which is the same order the live outer query
+    feeds its ORDER BY, so the fast path's tie-breaking matches the live path's.
+    """
+    conn.execute("DELETE FROM product_rollup")
+    conn.execute(_ROLLUP_REBUILD)
+    conn.commit()
+    return int(conn.execute("SELECT COUNT(*) FROM product_rollup").fetchone()[0])
+
+
+def ensure_product_rollup(conn: sqlite3.Connection) -> int:
+    """Build the rollup only if it is empty while materials exist — e.g. a shipped
+    seed DB that predates this table. Returns rows built, or 0 when it is already
+    present or there is nothing to roll up. The search fast path falls back to the
+    live query until this has run, so an empty rollup never means an empty page."""
+    if conn.execute("SELECT 1 FROM product_rollup LIMIT 1").fetchone():
+        return 0
+    if not conn.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
+        return 0
+    return rebuild_product_rollup(conn)
 
 
 def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:

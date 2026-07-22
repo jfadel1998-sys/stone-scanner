@@ -37,6 +37,9 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     if folded:
         print(f"Re-applied {folded} row(s) from {db.quality_stats(conn)['aliases']} confirmed merge(s).")
 
+    # Rebuild the per-product rollup so the search fast path reflects the new keys.
+    db.rebuild_product_rollup(conn)
+
     s = db.stats(conn)
     print(f"Done. {s['materials']} materials, {s['unique_materials']} unique.")
     print("Top types:")
