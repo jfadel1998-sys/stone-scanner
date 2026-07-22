@@ -191,6 +191,61 @@ def summarize(entry: dict | None) -> dict:
     }
 
 
+# --- general care, by material category -----------------------------------------
+
+# Care guidance keyed on MATERIAL CATEGORY, not trade name. This is established
+# material-category knowledge (marble is calcite-based and acid-sensitive; quartz is
+# non-porous) — never a claim about a specific quarry or slab — so, unlike origin/price,
+# it needs no per-stone citation. The UI labels it "general, by material type" to keep
+# it visibly distinct from the cited reference facts. Unknown type -> no panel shown.
+_CARE_BY_TYPE: dict[str, dict[str, str]] = {
+    "marble": {"porosity": "Porous, calcite-based", "sealing": "Seal periodically",
+               "durability": "Acid-sensitive — etches from citrus, wine, vinegar",
+               "best_for": "Vanities, low-traffic counters, feature walls, floors"},
+    "granite": {"porosity": "Dense, low porosity", "sealing": "Seal yearly (some lines rarely need it)",
+                "durability": "Acid-resistant, very hard, heat-tolerant",
+                "best_for": "Kitchen counters, high-traffic and outdoor surfaces"},
+    "quartzite": {"porosity": "Dense but variable porosity", "sealing": "Seal on install, re-test yearly",
+                  "durability": "Acid-resistant, harder than granite",
+                  "best_for": "Kitchen counters and high-use surfaces"},
+    "quartz": {"porosity": "Non-porous (engineered)", "sealing": "No sealing needed",
+               "durability": "Stain-resistant, but not heat- or UV-proof — no hot pans or direct sun",
+               "best_for": "Indoor kitchen and bath counters"},
+    "dolomite": {"porosity": "Porous — between marble and quartzite", "sealing": "Seal periodically",
+                 "durability": "Mildly acid-sensitive", "best_for": "Counters and vanities, with some care"},
+    "soapstone": {"porosity": "Non-porous", "sealing": "No sealing; oil to even the patina",
+                  "durability": "Acid- and heat-proof, but softer — scratches show",
+                  "best_for": "Kitchen counters, sinks, hearths, lab tops"},
+    "limestone": {"porosity": "Very porous", "sealing": "Seal well and often",
+                  "durability": "Acid-sensitive and softer", "best_for": "Floors, walls, exterior cladding"},
+    "travertine": {"porosity": "Porous, naturally pitted", "sealing": "Seal; consider a filled finish",
+                   "durability": "Acid-sensitive", "best_for": "Floors, walls, pool decks, exteriors"},
+    "sandstone": {"porosity": "Porous", "sealing": "Seal for stain resistance",
+                  "durability": "Moderately durable outdoors", "best_for": "Paving, cladding, exteriors"},
+    "onyx": {"porosity": "Porous, soft, often translucent", "sealing": "Seal and handle gently",
+             "durability": "Acid-sensitive and delicate",
+             "best_for": "Backlit features and accents — not working counters"},
+    "slate": {"porosity": "Low porosity", "sealing": "Optional sealing enhances color",
+              "durability": "Durable, naturally cleft", "best_for": "Floors, roofing, exteriors"},
+    "sintered stone": {"porosity": "Non-porous (fired)", "sealing": "No sealing needed",
+                       "durability": "Acid-, heat-, scratch- and UV-proof",
+                       "best_for": "Indoor and outdoor counters, facades, high-use surfaces"},
+    "porcelain": {"porosity": "Non-porous", "sealing": "No sealing needed",
+                  "durability": "Acid- and heat-resistant, UV-stable",
+                  "best_for": "Counters, floors, walls, exteriors"},
+    "terrazzo": {"porosity": "Depends on binder (cement porous, resin non-porous)",
+                 "sealing": "Seal cement-based; resin needs none",
+                 "durability": "Cement-based can etch from acids", "best_for": "Floors, counters, features"},
+}
+
+
+def care_by_type(stone_type: str) -> dict:
+    """General care guidance for a MATERIAL CATEGORY (not a specific stone): porosity,
+    sealing, acid/heat tolerance, typical uses. Category-level material science, so it
+    carries no per-stone citation. Empty dict when we have no guidance for the type."""
+    return _CARE_BY_TYPE.get((stone_type or "").strip().lower(), {})
+
+
 # --- live lookup ----------------------------------------------------------------
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"

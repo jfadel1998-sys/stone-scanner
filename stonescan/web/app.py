@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -35,6 +35,32 @@ def _ensure_schema() -> None:
         db.init_db().close()
     except Exception:  # noqa: BLE001 - a read-only DB shouldn't stop the UI opening
         pass
+    # Warm the result caches off-thread so the FIRST Search / What's-New view is
+    # instant too, not just repeats — without ever delaying the window opening.
+    threading.Thread(target=_warm_caches, daemon=True).start()
+
+
+def _warm_caches() -> None:
+    """Precompute the expensive default views (stats, the landing search, fuzzy
+    vocabulary, stock changes) so they're already cached when the user first clicks."""
+    try:
+        conn = db.connect()
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        db.stats(conn)
+        _name_words(conn)
+        # Same params the default landing page uses, so the cache key matches its request.
+        _search(conn, q="", material_type="", color="", thickness="", supplier="",
+                limit=60, offset=0)
+        _stock_changes(conn)
+    except Exception:  # noqa: BLE001 - warming is best-effort; a cold cache still works
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @app.on_event("shutdown")
@@ -184,9 +210,11 @@ _RESULT_TTL = 60.0
 def _invalidate_caches() -> None:
     """Drop the page-result caches after any data mutation (a crawl, or a merge/reject
     that changes cross-supplier grouping) so the UI reflects it immediately."""
+    global _NAME_WORDS
     _search_cache.clear()
     _stock_cache.clear()
     _quality_cache.clear()
+    _NAME_WORDS = None  # the fuzzy-match vocabulary is derived from the catalog too
     db._stats_cache.clear()
 
 
@@ -481,6 +509,15 @@ def _to_float(v) -> float:
         return 0.0
 
 
+def _filter_qs(request: Request, drop: tuple[str, ...] = ("page", "view", "added", "list")) -> str:
+    """Rebuild the query string from the request itself, minus transient keys, so a
+    pager or view-toggle link carries EVERY active filter forward — including any filter
+    param added to the route later, which a hand-built string would silently drop."""
+    from urllib.parse import urlencode
+    return urlencode([(k, v) for k, v in request.query_params.multi_items()
+                      if k not in drop and v != ""])
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
@@ -551,6 +588,8 @@ def index(
         "radius": radius or (str(int(radius_mi)) if near else ""),
         "min_sqft": min_sqft or "",
         "view": view,
+        # Every active filter, ready to prefix onto pager / view-toggle links.
+        "qs": _filter_qs(request),
         "lists": db.get_lists(conn),
         "added": added,
         "added_list": list,
@@ -705,10 +744,15 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
     # to a stone. lookup() matches on trade name, so a supplier type disagreement
     # ("Taj Mahal" as marble vs quartzite) still resolves to the one researched entry.
     ref = reference.summarize(reference.lookup(material_key=key, name=name))
+    # General, category-level care guidance (not a per-stone fact) — the canonical type
+    # is the part after the '|' in the material_key, falling back to the row's type.
+    ctype = (key.split("|", 1)[1] if "|" in key else "") or mtype
+    care = reference.care_by_type(ctype)
     return templates.TemplateResponse(request, "material.html", {
         "rows": rows, "name": name, "key": key, "suppliers_list": suppliers_list,
         "facts": facts, "photos": photos, "rep_photo": rep_photo, "similar": similar,
         "lists": lists, "added": added, "added_list": list, "ref": ref,
+        "care": care, "care_type": ctype,
     })
 
 
@@ -939,6 +983,48 @@ def api_search(
                          "near": near_label if origin else None,
                          "near_unresolved": bool(near) and not origin,
                          "interpreted": smartsearch.summary(parsed) if q else []})
+
+
+def _csv_response(filename: str, header: list[str], rows: list[list]) -> Response:
+    """A downloadable CSV. Excel-friendly (UTF-8 BOM) so accented stone names render."""
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(header)
+    w.writerows(rows)
+    return Response("﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/export.csv")
+def export_search_csv(
+    q: str = "", material_type: str = "", color: str = "", thickness: str = "",
+    supplier: str = "", location: str = "", min_length: str = "", min_width: str = "",
+    new_only: int = 0, in_stock: int = 0, sort: str = "relevance",
+    near: str = "", radius: str = "", min_sqft: str = "",
+):
+    """The current search, one row per material, as a spreadsheet."""
+    conn = db.connect()
+    origin, _ = _resolve_near(near)
+    _t, rows, _p = _search(
+        conn, q=q, material_type=material_type, color=color, thickness=thickness,
+        supplier=supplier, location=location, min_length=_to_float(min_length),
+        min_width=_to_float(min_width), new_only=bool(new_only),
+        in_stock=bool(in_stock), sort=sort if sort in SORTS else "relevance",
+        near=origin, radius_mi=(_to_float(radius) or 150.0) if origin else 0.0,
+        min_sqft=_to_float(min_sqft), limit=5000, offset=0,
+    )
+    conn.close()
+    header = ["Material", "Type", "Color", "Suppliers", "Slabs (best yard)",
+              "Total ft²", "New", "Material key"]
+    out = [[
+        ((r.get("material_key") or "").split("|")[0].title() or r.get("item_name", "")),
+        r.get("material_type", ""), r.get("color", ""), r.get("suppliers", 0),
+        r.get("available_slabs", 0) or 0, round(r.get("total_sqft") or 0, 1),
+        "yes" if r.get("new_arrival") else "", r.get("material_key", ""),
+    ] for r in rows]
+    return _csv_response("stone-search.csv", header, out)
 
 
 @app.get("/photo", response_class=HTMLResponse)
@@ -1245,10 +1331,10 @@ def health(request: Request):
                    for s in discover.load_suppliers()}
     for r in rows:
         r["provider"] = provider_of.get(r["host"], "stoneprofits")
-    order = {"broken": 0, "stale": 1, "empty": 2, "ok": 3}
+    order = {"broken": 0, "stale": 1, "empty": 2, "blocked": 3, "ok": 4}
     rows.sort(key=lambda r: (order[r["status"]], -(r["item_count"] or 0)))
     counts = {k: sum(1 for r in rows if r["status"] == k)
-              for k in ("ok", "stale", "broken", "empty")}
+              for k in ("ok", "stale", "broken", "empty", "blocked")}
     stats = db.stats(conn)
     conn.close()
     return templates.TemplateResponse(request, "health.html", {
@@ -1451,9 +1537,16 @@ def watchlist(request: Request):
             new_only=True, limit=1, offset=0,
         )
         items.append({"watch": w, "total": total, "preview": rows, "new_count": new_total})
+    # Turn the passive watchlist into an active digest: what changed across the whole
+    # catalog since each supplier's previous crawl (restocks + brand-new listings).
+    restock, listed, has_baseline = _stock_changes(conn)
+    digest = {"restock": restock[:8], "listed": listed[:8],
+              "n_restock": len(restock), "n_listed": len(listed),
+              "has_baseline": has_baseline}
     stats = db.stats(conn)
     conn.close()
-    return templates.TemplateResponse(request, "watchlist.html", {"items": items, "stats": stats})
+    return templates.TemplateResponse(request, "watchlist.html",
+                                      {"items": items, "stats": stats, "digest": digest})
 
 
 def _now() -> str:
@@ -1561,6 +1654,27 @@ def list_print(request: Request, id: int):
     return templates.TemplateResponse(request, "list_print.html", {
         "meta": meta, "items": items, "printed": _now()[:10],
     })
+
+
+@app.get("/list/export")
+def list_export(id: int):
+    """A sourcing list as a spreadsheet: one row per item, with live stock + contacts."""
+    conn = db.connect()
+    meta = db.get_list(conn, id)
+    if not meta:
+        conn.close()
+        return Response("List not found", status_code=404)
+    items = db.get_list_items(conn, id)
+    conn.close()
+    header = ["Supplier", "Material", "Thickness", "Slabs now", "Status",
+              "Note", "Email", "Phone"]
+    out = [[
+        it.get("supplier_name", ""), it.get("item_name", ""), it.get("thickness", ""),
+        it.get("live_slabs") or 0, "gone" if it.get("gone") else "in catalog",
+        it.get("note", ""), it.get("supplier_email", ""), it.get("supplier_phone", ""),
+    ] for it in items]
+    slug = re.sub(r"[^a-z0-9]+", "-", (meta["name"] or "list").lower()).strip("-") or "list"
+    return _csv_response(f"{slug}.csv", header, out)
 
 
 @app.get("/list/rfq", response_class=HTMLResponse)

@@ -15,6 +15,7 @@
   <div class="actions">
     <a class="btn" href="/list/print?id={{ meta.id }}" target="_blank">🖨 Print / Save as PDF</a>
     <a class="btn ghost" href="/list/rfq?id={{ meta.id }}">✉ Request quotes</a>
+    {% if items %}<a class="btn ghost" href="/list/export?id={{ meta.id }}">⬇ Export CSV</a>{% endif %}
   </div>
   {% if added == 0 %}<p class="hintline muted">That item was already on this list.</p>{% endif %}
 </div>

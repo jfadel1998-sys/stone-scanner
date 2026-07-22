@@ -16,6 +16,7 @@
   <span class="hstat stale"><b>{{ counts.stale }}</b> stale (errored, old data)</span>
   <span class="hstat broken"><b>{{ counts.broken }}</b> broken (no data)</span>
   <span class="hstat empty"><b>{{ counts.empty }}</b> empty</span>
+  {% if counts.blocked %}<span class="hstat blocked"><b>{{ counts.blocked }}</b> blocked (robots.txt)</span>{% endif %}
 </div>
 
 <table class="materials healthtable">
@@ -25,7 +26,7 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><span class="statuspill {{ r.status }}">{{ {'ok':'OK','stale':'STALE','broken':'BROKEN','empty':'EMPTY'}[r.status] }}</span></td>
+      <td><span class="statuspill {{ r.status }}">{{ {'ok':'OK','stale':'STALE','broken':'BROKEN','empty':'EMPTY','blocked':'BLOCKED'}[r.status] }}</span></td>
       <td class="name">{{ r.name }}<div class="muted hhost">{{ r.host }}</div></td>
       <td class="muted">{{ r.provider }}</td>
       <td class="num">{{ r.item_count or '—' }}</td>

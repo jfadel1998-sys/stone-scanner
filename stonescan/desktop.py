@@ -240,6 +240,20 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
         retry_errored=True,  # give same-run transient failures a second chance
     ))
 
+    # Best-effort: embed any newly-crawled images so search-by-photo covers them too.
+    # Only when the CLIP model is present (git-ignored, not bundled) — never fatal.
+    try:
+        from stonescan import db, imagesearch
+        if imagesearch.available():
+            conn = db.connect(os.environ["STONESCAN_DB"])
+            try:
+                n = imagesearch.index_missing(conn)
+                print(f"Indexed {n} new image(s) for search-by-photo.")
+            finally:
+                conn.close()
+    except Exception as e:  # noqa: BLE001 - indexing is optional; a crawl still succeeded
+        print(f"(image indexing skipped: {e})")
+
 
 def _ensure_std_streams() -> None:
     """A windowed (no-console) exe has sys.stdout/stderr == None; some libraries

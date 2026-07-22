@@ -134,27 +134,34 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.5,
                 except Exception:  # noqa: BLE001
                     continue
                 for p in _products(html):
-                    name = (p.get("name") or "").strip()
-                    if not name:
+                    try:
+                        name = (p.get("name") or "").strip()
+                        if not name:
+                            continue
+                        material = p.get("material") or ""
+                        out.materials.append(material_row(
+                            name=name, crawled_at=crawled_at,
+                            item_id=str(p.get("sku") or p.get("productID") or ""),
+                            category=material,          # "Basalt" -> Basalt, etc.
+                            subcategory=str(p.get("category") or ""),
+                            color=p.get("color") or "",
+                            product_form=_form(name),
+                            sku=str(p.get("sku") or ""),
+                            price_range=_price(p.get("offers")),
+                            image_url=(p.get("image") if isinstance(p.get("image"), str)
+                                       else (p.get("image") or [""])[0] if p.get("image") else ""),
+                            source_url=u,
+                        ))
+                    except Exception:  # noqa: BLE001 - one malformed product isn't fatal
                         continue
-                    material = p.get("material") or ""
-                    out.materials.append(material_row(
-                        name=name, crawled_at=crawled_at,
-                        item_id=str(p.get("sku") or p.get("productID") or ""),
-                        category=material,          # "Basalt" -> Basalt, etc.
-                        subcategory=str(p.get("category") or ""),
-                        color=p.get("color") or "",
-                        product_form=_form(name),
-                        sku=str(p.get("sku") or ""),
-                        price_range=_price(p.get("offers")),
-                        image_url=(p.get("image") if isinstance(p.get("image"), str)
-                                   else (p.get("image") or [""])[0] if p.get("image") else ""),
-                        source_url=u,
-                    ))
                 await asyncio.sleep(delay)
         out.ok = bool(out.materials)
         if not out.ok:
             out.error = "no products found via sitemap/JSON-LD"
     except Exception as e:  # noqa: BLE001 - one provider must not kill the crawl
+        # Preserve whatever was already collected: a failure partway through must not
+        # discard hundreds of good rows. Marking ok when we have rows lets ingest store
+        # them (with the error recorded) instead of throwing the crawl away.
         out.error = f"{type(e).__name__}: {e}"
+        out.ok = out.ok or bool(out.materials)
     return out

@@ -178,16 +178,37 @@ def drop_if_numeric(raw: Any) -> str:
     return "" if (not c or c.replace(".", "").isdigit()) else c
 
 
-def normalize_thickness(raw_thickness: str | None, name: str) -> str:
-    """Return thickness like '3cm'. Prefer the structured field, fall back to name."""
-    if raw_thickness:
-        t = str(raw_thickness).strip().lower().replace("cm", "").strip()
-        if t:
-            try:
-                num = float(t)
-                return f"{num:g}cm"
-            except ValueError:
-                pass
+# Thickness units → centimetres (the catalog's canonical display unit). Anything not
+# a length (SF/EA/…) is a *selling* unit, not a thickness unit, and is ignored below.
+_THK_UNIT_CM = {"mm": 0.1, "cm": 1.0, "in": 2.54, "inch": 2.54, '"': 2.54}
+_THICKNESS_VAL_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(mm|cm|in|inch|\")?\s*$", re.IGNORECASE)
+
+
+def thickness_unit(uom: str) -> str:
+    """Read a length unit out of a UOM field, else '' (SF/EA aren't lengths)."""
+    u = (uom or "").strip().lower().rstrip(".")
+    if u in ('"', "inch"):
+        return "in"
+    return u if u in _THK_UNIT_CM else ""
+
+
+def normalize_thickness(raw_thickness: str | None, name: str, uom: str = "") -> str:
+    """Return thickness like '3cm', converting from the item's thickness unit.
+
+    Prefer the structured field, falling back to reading '<n>cm' from the name. The
+    unit comes from the value itself ('30mm') or the item's thickness UOM; without one
+    we assume cm. This is what keeps a 30 mm sintered slab from being stored — as it
+    was — as an absurd '30cm' (the old code blindly appended 'cm' to the bare number).
+    """
+    if raw_thickness is not None and str(raw_thickness).strip() != "":
+        m = _THICKNESS_VAL_RE.match(str(raw_thickness))
+        if m:
+            num = float(m.group(1))
+            unit = (m.group(2) or "").lower() or thickness_unit(uom) or "cm"
+            if unit == "inch":
+                unit = "in"
+            cm = num * _THK_UNIT_CM.get(unit, 1.0)
+            return f"{round(cm, 2):g}cm"
     m = _THICKNESS_RE.search(name or "")
     if m:
         return f"{float(m.group(1)):g}cm"
@@ -261,7 +282,12 @@ def normalize_item(
     category = _text(item.get("CategoryName"))
     subcategory = _text(_pick(item, "SubCategoryName", "SubCategory"))
     mtype = canonical_type(category, subcategory, name)
-    thickness = normalize_thickness(_pick(item, "ProductThickness", "Thickness"), name)
+    # The thickness unit is whichever of ThicknessUOM / UOM is actually a length —
+    # the general UOM is often a *selling* unit (SF/EA) that must not be read as cm/mm.
+    thk_uom = next((u for u in (_text(item.get("ThicknessUOM")), _text(item.get("UOM")))
+                    if thickness_unit(u)), "")
+    thickness = normalize_thickness(
+        _pick(item, "ProductThickness", "Thickness"), name, thk_uom)
 
     def num(v):
         try:

@@ -100,5 +100,9 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.4,
         if not out.ok:
             out.error = "no stone listings returned"
     except Exception as e:  # noqa: BLE001 - one provider must not kill the crawl
+        # Preserve partial results: a failure partway through must not discard the rows
+        # already collected. ingest stores them (with the error recorded) rather than
+        # throwing the whole supplier away over one bad page.
         out.error = f"{type(e).__name__}: {e}"
+        out.ok = out.ok or bool(out.materials)
     return out

@@ -77,7 +77,7 @@ def material_row(
     Stone Profits path does."""
     nm = clean_name(name)
     mtype = canonical_type(category, subcategory, nm)
-    thk = normalize_thickness(thickness, nm)
+    thk = normalize_thickness(thickness, nm, uom)
     return {
         "item_id": str(item_id or ""),
         "item_name": nm,

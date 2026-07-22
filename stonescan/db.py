@@ -475,8 +475,11 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
       stale   — has data but the last refresh errored (old data still serving)
       broken  — errored and no data at all
       empty   — no error, but the catalog returned nothing (may be legitimately empty)
+      blocked — the supplier's robots.txt disallows crawling; not a failure, a decision
     """
     from datetime import datetime, timezone
+
+    from .robots import BLOCK_MARKER
     now = datetime.now(timezone.utc)
 
     def _hours(ts: str | None) -> float | None:
@@ -505,7 +508,11 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         d = dict(r)
         err = bool(d["last_error"])
         has = (d["item_count"] or 0) > 0
-        d["status"] = ("ok" if not err else "stale") if has else ("broken" if err else "empty")
+        if (d["last_error"] or "").startswith(BLOCK_MARKER):
+            # robots.txt said no — the supplier's own answer, not a crawl fault.
+            d["status"] = "blocked"
+        else:
+            d["status"] = ("ok" if not err else "stale") if has else ("broken" if err else "empty")
         d["age_hours"] = _hours(d["last_crawled"])
         d["data_age_hours"] = _hours(data_ts.get(d["id"]))
         out.append(d)

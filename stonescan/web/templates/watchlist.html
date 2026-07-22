@@ -12,6 +12,26 @@
      Each shows its current match count and how many are newly arrived.</p>
 </div>
 
+{% if digest and (digest.n_restock or digest.n_listed) %}
+<div class="block digest">
+  <div class="digesthead">
+    <h2>Since the last crawl</h2>
+    <div class="digeststats">
+      {% if digest.n_restock %}<span class="dgstat restock"><b>{{ digest.n_restock }}</b> back in stock</span>{% endif %}
+      {% if digest.n_listed %}<span class="dgstat listed"><b>{{ digest.n_listed }}</b> newly listed</span>{% endif %}
+      <a class="dgmore" href="/new">All changes in What's New →</a>
+    </div>
+  </div>
+  <div class="watchprev">
+    {% for r in (digest.restock + digest.listed)[:12] %}
+      <a class="pvthumb" href="/item?id={{ r.id }}" title="{{ r.name_norm|title }} — {{ r.supplier_name }}{% if r.slabs %} · {{ r.slabs }} slabs{% endif %}">
+        {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.style.display='none'">{% else %}🪨{% endif %}
+      </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="block">
   {% for it in items %}
   <div class="watchrow">

@@ -26,6 +26,15 @@ Get-ChildItem $src -Directory |
         Write-Output "   + $($_.Name)"
     }
 
+# Ship the nightly-refresh scripts INTO the app folder. refresh.ps1 detects it's next
+# to StoneScanner.exe (no venv) and drives the exe's --refresh; install-refresh-task.ps1
+# registers it. Without these here, a packaged install has no way to stay current.
+Write-Output "== Copying refresh scripts into the app =="
+foreach ($f in @("refresh.ps1", "install-refresh-task.ps1")) {
+    Copy-Item (Join-Path $PSScriptRoot $f) (Join-Path $dist $f) -Force
+    Write-Output "   + $f"
+}
+
 $size = "{0:N0} MB" -f ((Get-ChildItem $dist -Recurse | Measure-Object Length -Sum).Sum / 1MB)
 Write-Output ""
 Write-Output "Done. App folder: $dist  ($size)"

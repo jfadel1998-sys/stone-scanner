@@ -119,6 +119,23 @@
   {% endif %}
 </section>
 
+{% if care %}
+{# General care by MATERIAL CATEGORY, not a per-stone fact — labeled as such so it stays
+   distinct from the cited reference above. Category-level material science needs no cite. #}
+<section class="factcard care">
+  <h3>General care
+    <span class="srcbadge cattag" title="General guidance for this material category — not specific to this stone. Natural stone varies; confirm with the supplier.">{{ care_type|title }}, in general</span>
+  </h3>
+  <dl class="factlist">
+    {% if care.porosity %}<dt>Porosity</dt><dd>{{ care.porosity }}</dd>{% endif %}
+    {% if care.sealing %}<dt>Sealing</dt><dd>{{ care.sealing }}</dd>{% endif %}
+    {% if care.durability %}<dt>Durability</dt><dd>{{ care.durability }}</dd>{% endif %}
+    {% if care.best_for %}<dt>Typical use</dt><dd>{{ care.best_for }}</dd>{% endif %}
+  </dl>
+  <p class="gapnote muted">Applies to {{ care_type|lower }} as a category — individual stones vary. Confirm porosity and finish with the supplier before specifying.</p>
+</section>
+{% endif %}
+
 <div class="block">
   <h2>Where to buy it</h2>
   <table class="materials">

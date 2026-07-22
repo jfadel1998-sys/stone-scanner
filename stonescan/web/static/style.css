@@ -313,6 +313,9 @@ header,
 .milechip { display: inline-block; padding: 1px 8px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-soft-ink); font-size: 11px; font-weight: 600; white-space: nowrap; }
 
 /* view toggle (table / showroom) */
+.csvlink { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 11px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--panel); }
+.csvlink:hover { background: var(--accent-soft); color: var(--accent-soft-ink); text-decoration: none; }
+.csvlink + .viewtoggle { margin-left: 8px; }
 .viewtoggle { margin-left: auto; display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--panel); }
 .viewtoggle a { padding: 4px 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 600; color: var(--muted); transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
 .viewtoggle a:hover { background: var(--accent-soft); text-decoration: none; }
@@ -525,6 +528,21 @@ footer {
 .watchcount { color: var(--muted); font-size: 13px; }
 .rmbtn { border: 0; background: transparent; color: var(--muted); font-size: 15px; cursor: pointer; padding: 2px 7px; border-radius: var(--r-xs); transition: color var(--dur) var(--ease), background var(--dur) var(--ease); }
 .rmbtn:hover { color: var(--brick); background: var(--brick-soft); }
+.digest { border: 1px solid var(--line); border-radius: var(--r); padding: 15px 16px; margin-bottom: 18px; background: var(--panel); box-shadow: var(--shadow-sm); }
+.digesthead { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.digesthead h2 { font-size: 16px; margin: 0; }
+.digeststats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dgstat { font-size: 13px; color: var(--muted); padding: 3px 11px; border-radius: var(--r-pill); border: 1px solid var(--line); }
+.dgstat b { color: var(--ink); font-size: 15px; margin-right: 3px; }
+.dgstat.restock { border-color: #b9d3bd; background: #eef6f0; }
+.dgstat.listed { border-color: #b7cbe0; background: #eef3f9; }
+.dgmore { font-size: 12px; font-weight: 600; }
+:root[data-theme="dark"] .dgstat.restock { border-color: #315a3c; background: #1c2a20; }
+:root[data-theme="dark"] .dgstat.listed { border-color: #2c4460; background: #16202c; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dgstat.restock { border-color: #315a3c; background: #1c2a20; }
+  :root:not([data-theme="light"]) .dgstat.listed { border-color: #2c4460; background: #16202c; }
+}
 .watchprev { display: flex; gap: 8px; flex-wrap: wrap; }
 .pvthumb { width: 48px; height: 48px; border-radius: var(--r-xs); overflow: hidden; background: var(--chip); display: flex; align-items: center; justify-content: center; border: 1px solid var(--line); transition: transform var(--dur) var(--ease); }
 .pvthumb:hover { transform: scale(1.06); }
@@ -545,6 +563,8 @@ footer {
 .statuspill.stale { background: #c99a3a; color: #fff; }
 .statuspill.broken { background: #b0532b; color: #fff; }
 .statuspill.empty { background: var(--chip); color: var(--muted); }
+.statuspill.blocked { background: #4b5563; color: #fff; }
+.hstat.blocked { border-color: #c3c9d2; background: #eef0f3; }
 
 /* dark health-stat tints — explicit toggle */
 :root[data-theme="dark"] .hstat.ok { border-color: #315a3c; background: #1c2a20; }
@@ -744,6 +764,10 @@ footer {
 .provline { font-size: 11px; margin: 6px 0 0; }
 /* The reference card standalone on the canonical material page (not in the two-up factgrid) */
 .matref { margin: 22px 0 0; max-width: 680px; }
+/* General category-care card — visually a sibling of the reference card, but a neutral
+   (grey) accent + "in general" badge so it never reads as a cited per-stone fact. */
+.factcard.care { margin: 14px 0 0; max-width: 680px; border-top: 3px solid var(--line-strong); }
+.srcbadge.cattag { background: var(--chip); color: var(--muted); border: 1px solid var(--line-strong); }
 /* "· live as of 3:42 PM" beside the slab-gallery heading once a live read lands */
 .livestamp { font-size: 12.5px; font-weight: 600; color: var(--accent-ink); }
 /* Labeled fallback: a representative photo shown when a slab/listing has none of its own */
