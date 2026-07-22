@@ -35,3 +35,7 @@ Thumbs.db
 # Claude Code local/session files
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+
+# Stray files at repo root (not project assets): sw.html is a saved page, distributed is an empty leftover
+/sw.html
+/distributed
