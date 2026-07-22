@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -171,12 +172,45 @@ def _register_nearest(conn, loc_miles: dict[str, float]):
     conn.create_function("nearest_miles", 1, nearest, deterministic=True)
 
 
+# Search / What's-New results change only on a crawl, but the search view is a two-level
+# GROUP BY over ~130k materials that was recomputed on every tab click. A short TTL cache
+# makes repeat loads (especially the default Search tab) instant; a crawl shows within TTL.
+_search_cache: dict = {}
+_stock_cache: dict = {}
+_quality_cache: dict = {}
+_RESULT_TTL = 60.0
+
+
+def _invalidate_caches() -> None:
+    """Drop the page-result caches after any data mutation (a crawl, or a merge/reject
+    that changes cross-supplier grouping) so the UI reflects it immediately."""
+    _search_cache.clear()
+    _stock_cache.clear()
+    _quality_cache.clear()
+    db._stats_cache.clear()
+
+
+def _db_path(conn) -> str:
+    """The connection's main DB file, so the result caches key PER database and never
+    serve one DB's results for another (e.g. across tests' temporary DBs)."""
+    try:
+        return (conn.execute("PRAGMA database_list").fetchone() or ("", "", ""))[2] or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset,
             location="", min_length=0.0, min_width=0.0, new_only=False,
             sort="relevance", in_stock=False, fuzzy=True,
             near=None, radius_mi=0.0, min_sqft=0.0):
     """Free-text-aware search. The query box understands phrases like
     'blue marble slabs'; explicit dropdown filters take precedence."""
+    _ck = (_db_path(conn), q, material_type, color, thickness, supplier, location,
+           min_length, min_width, new_only, sort, in_stock, fuzzy, near, radius_mi,
+           min_sqft, limit, offset)
+    _h = _search_cache.get(_ck)
+    if _h and time.time() - _h[0] < _RESULT_TTL:
+        return _h[1]
     parsed = smartsearch.parse_query(q)
     where, params = ["1=1"], []
 
@@ -369,7 +403,11 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
             LIMIT ? OFFSET ?""",
         (*params, *having_params, limit, offset),
     ).fetchall()
-    return total, [dict(r) for r in rows], parsed
+    _result = (total, [dict(r) for r in rows], parsed)
+    _search_cache[_ck] = (time.time(), _result)
+    if len(_search_cache) > 64:  # bound: evict the oldest entry
+        _search_cache.pop(min(_search_cache, key=lambda k: _search_cache[k][0]), None)
+    return _result
 
 
 def _base_name(material_key) -> str:
@@ -847,6 +885,9 @@ def _run_refresh_job(with_slabs: bool) -> None:
             db_path=str(db.DEFAULT_DB), with_slabs=with_slabs, slab_item_cap=40,
             retry_errored=True, progress=progress,
         ))
+        # The crawl changed the data — drop the page caches so the UI reflects it now
+        # rather than after the TTL, including the "Done — N materials" line below.
+        _invalidate_caches()
         conn = db.connect()
         s = db.stats(conn)
         conn.close()
@@ -1087,12 +1128,17 @@ def _stock_changes(conn) -> tuple[list[dict], list[dict], bool]:
     Returns (restock, newly_listed, has_baseline); has_baseline False means no
     supplier has two snapshots yet, so the page can explain the empty state.
     """
+    _sk = _db_path(conn)
+    _h = _stock_cache.get(_sk)
+    if _h and time.time() - _h[0] < _RESULT_TTL:
+        return _h[1]
     has_baseline = conn.execute(
         "SELECT 1 FROM history GROUP BY supplier_id "
         "HAVING COUNT(DISTINCT snapshot_date) >= 2 LIMIT 1"
     ).fetchone() is not None
     if not has_baseline:
-        return [], [], False
+        _stock_cache[_sk] = (time.time(), ([], [], False))
+        return _stock_cache[_sk][1]
     rows = conn.execute(
         """WITH latest AS (
                SELECT supplier_id, MAX(snapshot_date) AS d
@@ -1126,7 +1172,8 @@ def _stock_changes(conn) -> tuple[list[dict], list[dict], bool]:
     ).fetchall()
     restock = [dict(r) for r in rows if r["id"] and r["was_listed"]][:300]
     listed = [dict(r) for r in rows if r["id"] and not r["was_listed"]][:300]
-    return restock, listed, True
+    _stock_cache[_sk] = (time.time(), (restock, listed, True))
+    return _stock_cache[_sk][1]
 
 
 @app.get("/new", response_class=HTMLResponse)
@@ -1224,9 +1271,15 @@ def quality(request: Request):
     """Data-quality hub: how clean the cross-supplier grouping is, and what's left to
     curate — type conflicts, spelling variants, the Other bucket, missing colours."""
     conn = db.connect()
-    qs = db.quality_stats(conn)
-    conflicts = dedupe.conflict_clusters(conn, limit=100000)
-    fuzzy = dedupe.fuzzy_clusters(conn, limit=100000)
+    _qk = _db_path(conn)
+    _h = _quality_cache.get(_qk)
+    if _h and time.time() - _h[0] < _RESULT_TTL:
+        qs, conflicts, fuzzy = _h[1]
+    else:
+        qs = db.quality_stats(conn)
+        conflicts = dedupe.conflict_clusters(conn, limit=100000)
+        fuzzy = dedupe.fuzzy_clusters(conn, limit=100000)
+        _quality_cache[_qk] = (time.time(), (qs, conflicts, fuzzy))
     ctx = {
         "request": request,
         "qs": qs,
@@ -1279,6 +1332,7 @@ def quality_merge_apply(
         folded += 1
     db.apply_aliases(conn)
     conn.close()
+    _invalidate_caches()  # merges change cross-supplier grouping -> search/quality/stats
     return _merge_redirect(kind if kind in ("conflict", "fuzzy") else "conflict", page, folded)
 
 
@@ -1289,6 +1343,7 @@ def quality_merge_reject(sig: str = Form(...), kind: str = Form("conflict"),
     conn = db.connect()
     db.add_rejection(conn, sig)
     conn.close()
+    _invalidate_caches()
     return _merge_redirect(kind if kind in ("conflict", "fuzzy") else "conflict", page, 0)
 
 
@@ -1299,6 +1354,7 @@ def quality_alias_remove(alias_key: str = Form(...)):
     conn = db.connect()
     db.remove_alias(conn, alias_key)
     conn.close()
+    _invalidate_caches()
     return RedirectResponse("/quality", status_code=303)
 
 

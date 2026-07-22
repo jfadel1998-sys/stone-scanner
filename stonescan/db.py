@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -357,7 +358,23 @@ def get_slabs(conn: sqlite3.Connection, supplier_id: int, item_id: str) -> list[
     return [dict(r) for r in rows]
 
 
-def stats(conn: sqlite3.Connection) -> dict[str, Any]:
+_stats_cache: dict[str, tuple[float, dict]] = {}
+_STATS_TTL = 30.0  # stats change only on a crawl; a page view never needs them fresher
+
+
+def stats(conn: sqlite3.Connection, *, use_cache: bool = True) -> dict[str, Any]:
+    # This recomputes six aggregates over ~130k materials and runs on nearly every page,
+    # yet only changes on a crawl — so cache it briefly, keyed by DB file. That alone
+    # takes ~200ms off every tab load. use_cache=False forces a fresh recompute.
+    path = ""
+    if use_cache:
+        try:
+            path = (conn.execute("PRAGMA database_list").fetchone() or ("", "", ""))[2] or ""
+        except sqlite3.Error:
+            path = ""
+        hit = _stats_cache.get(path)
+        if hit and time.monotonic() - hit[0] < _STATS_TTL:
+            return hit[1]
     s = {}
     s["suppliers"] = conn.execute("SELECT COUNT(*) c FROM suppliers WHERE item_count > 0").fetchone()["c"]
     # User-facing counts are the stone/tile CATALOG — the accessory/non-slab bucket
@@ -389,6 +406,8 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     s["with_images"] = conn.execute(
         f"SELECT COUNT(*) c FROM materials WHERE image_url <> '' AND {_cat}"
     ).fetchone()["c"]
+    if use_cache:
+        _stats_cache[path] = (time.monotonic(), s)
     return s
 
 
