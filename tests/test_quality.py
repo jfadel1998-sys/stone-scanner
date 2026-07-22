@@ -386,6 +386,73 @@ class FtsSearchTests(unittest.TestCase):
         self.assertEqual(len(self._keys(q="unobtainium")), 5)
 
 
+class DataSafetyTests(unittest.TestCase):
+    """A refresh rewrites stonescan.db in place (the file also holds the user's
+    watchlist/lists), so it must snapshot the DB first and record its outcome durably."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=3)
+        _insert(self.conn, 1, "Taj Mahal", "Quartzite", slabs=5)
+        _insert(self.conn, 2, "Absolute Black", "Granite", slabs=3)
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _log_text(self):
+        log = os.path.join(self.tmp, "refresh-history.log")
+        return Path(log).read_text(encoding="utf-8") if os.path.exists(log) else ""
+
+    def test_backup_creates_valid_copy(self):
+        self.assertTrue(db.backup_database(self.path))
+        bak = self.path + ".bak"
+        self.assertTrue(os.path.exists(bak))
+        c = db.connect(bak)
+        n = c.execute("SELECT COUNT(*) FROM materials").fetchone()[0]
+        c.close()
+        self.assertEqual(n, 2, "the backup must be a complete, openable copy")
+
+    def test_backup_missing_source_returns_false(self):
+        self.assertFalse(db.backup_database(os.path.join(self.tmp, "nope.db")))
+
+    def test_backup_failure_leaves_old_bak_intact(self):
+        from unittest.mock import patch
+        self.assertTrue(db.backup_database(self.path))         # good backup: 2 materials
+        _insert(self.conn, 3, "New Stone", "Marble", slabs=1)  # DB now has 3
+        self.conn.commit()
+        with patch("stonescan.db.os.replace", side_effect=OSError("boom")):
+            with self.assertRaises(OSError):
+                db.backup_database(self.path)
+        c = db.connect(self.path + ".bak")
+        n = c.execute("SELECT COUNT(*) FROM materials").fetchone()[0]
+        c.close()
+        self.assertEqual(n, 2, "a failed backup must not corrupt the previous good one")
+        self.assertFalse(os.path.exists(self.path + ".bak.tmp"), "the temp file is cleaned up")
+
+    def test_run_all_backs_up_and_logs_outcome(self):
+        import asyncio
+        from stonescan.ingest import run_all
+        # Empty entry list = no network: exercises the backup + logging around a no-op crawl.
+        asyncio.run(run_all([], db_path=self.path))
+        self.assertTrue(os.path.exists(self.path + ".bak"), "run_all snapshots before writing")
+        text = self._log_text()
+        self.assertIn("refresh started", text)
+        self.assertIn("Done", text, "a successful refresh is recorded durably")
+
+    def test_run_all_proceeds_when_backup_fails(self):
+        import asyncio
+        from unittest.mock import patch
+        from stonescan.ingest import run_all
+        with patch("stonescan.db.backup_database", side_effect=OSError("disk full")):
+            asyncio.run(run_all([], db_path=self.path))  # must NOT raise
+        text = self._log_text()
+        self.assertIn("backup failed", text)
+        self.assertIn("Done", text, "the refresh still completes without a backup")
+
+
 class StockChangesTests(unittest.TestCase):
     """'Back in stock' must compare each supplier against ITS OWN previous
     snapshot — the original compared two global dates that shared no suppliers,

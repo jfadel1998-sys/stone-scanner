@@ -176,3 +176,10 @@ build/packaging details.
 - Latest crawl: ~68 suppliers, ~88k materials, ~84k slabs, ~20k unique.
 - `stonescan.db` is git-ignored (large/regenerable). Re-crawl to rebuild it.
 - Material row IDs are reassigned every crawl (replace-insert) — don't hardcode them.
+- **Every refresh snapshots the DB first** to `stonescan.db.bak` (single rolling backup,
+  via `db.backup_database` at the top of `ingest.run_all` — a WAL checkpoint + atomic file
+  copy, deliberately NOT the online backup API / `VACUUM INTO`, both of which ran for
+  minutes on the ~300 MB catalog) and appends its start/outcome (or error+traceback) to
+  `refresh-history.log` beside the DB (`data/` in the packaged app). Restore = swap the
+  `.bak` in with the app closed. A backup failure warns to the log and proceeds — it never
+  blocks the crawl (staleness is the worse cost). Separate from `refresh.ps1`'s own stdout log.

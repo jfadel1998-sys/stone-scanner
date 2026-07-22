@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import time
 from pathlib import Path
@@ -251,6 +252,47 @@ def init_db(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     _ensure_fts(conn)
     conn.commit()
     return conn
+
+
+def backup_database(db_path: str | Path = DEFAULT_DB) -> bool:
+    """Write a consistent snapshot of the DB to `<db_path>.bak`.
+
+    Checkpoints the WAL into the main file, then copies it. This is WAL-safe (the copy
+    isn't a torn read of a live WAL database) and — unlike SQLite's page-by-page online
+    backup API or `VACUUM INTO` (which rebuilds every index) — fast enough to run before
+    every refresh even on a large DB on a slow disk: on the ~300 MB catalog on an external
+    drive, both of those ran for minutes while a checkpoint+copy is ~15 s. Safe because a
+    refresh takes the snapshot BEFORE it writes, so no writer is active; the app's reader
+    connections don't block a file copy. The copy goes to a temp file and is atomically
+    renamed over any existing `.bak`, so a failed backup never corrupts the previous good one.
+
+    Returns True on success, or False when there's no DB to back up yet (first run). Raises
+    on a real failure (disk full, permission) so the caller can warn and proceed rather
+    than silently skip the safety net.
+    """
+    src = Path(db_path)
+    if not src.exists():
+        return False
+    bak = src.with_name(src.name + ".bak")
+    tmp = src.with_name(src.name + ".bak.tmp")
+    ok = False
+    try:
+        # Flush committed WAL frames into the main file so the plain copy is complete.
+        cx = sqlite3.connect(str(src))
+        try:
+            cx.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            cx.close()
+        shutil.copy2(src, tmp)
+        os.replace(tmp, bak)  # atomic within the same directory
+        ok = True
+        return True
+    finally:
+        if not ok and tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def upsert_supplier(conn: sqlite3.Connection, host: str, **fields: Any) -> int:

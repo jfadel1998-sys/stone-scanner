@@ -13,6 +13,9 @@ dist/
 stonescan.db
 stonescan.db-journal
 stonescan.db-wal
+stonescan.db.bak
+stonescan.db.bak.tmp
+refresh-history.log
 
 # CLIP search-by-photo model (~81MB; fetch with `python -m stonescan.imagesearch --download-model`)
 stonescan/models/**/*.onnx
