@@ -230,6 +230,14 @@ def _db_path(conn) -> str:
         return ""
 
 
+def _fts_match(terms) -> str:
+    """Build an FTS5 prefix-AND query from parsed name terms: every term must appear as a
+    word or word-prefix (implicit AND). Sanitized to bare tokens so the MATCH can never be
+    a syntax error; returns '' when nothing usable is left, so the caller uses the live path."""
+    toks = [re.sub(r"[^a-z0-9]", "", (t or "").lower()) for t in terms]
+    return " ".join(f"{t}*" for t in toks if t)
+
+
 def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset,
             location="", min_length=0.0, min_width=0.0, new_only=False,
             sort="relevance", in_stock=False, fuzzy=True,
@@ -282,6 +290,51 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
         if len(_search_cache) > 64:
             _search_cache.pop(min(_search_cache, key=lambda k: _search_cache[k][0]), None)
         return _result
+
+    # FTS5 fast path: a free-text NAME query (q terms) with no row-filter / color /
+    # location / proximity resolves candidate products from the FTS5 name index and
+    # aggregates them via product_rollup — replacing the per-row LIKE scan. It hands back
+    # to the live query when: FTS5 is absent/empty; the query carries a parsed color /
+    # thickness / form (which the live path matches specially); or the match is low-recall
+    # (< 5 hits), where the live LIKE + fuzzy near-miss recall may do better. So q never
+    # returns worse-than-today results (see FtsSearchTests). Word/prefix matching means the
+    # result SET may differ from the old substring LIKE — better for whole-word/prefix.
+    fts_ok = (parsed["terms"] and not color and not parsed["color"]
+              and not thickness and not parsed["thickness"] and not parsed["form"]
+              and not supplier and not location and not near
+              and not min_length and not min_width and not new_only)
+    if fts_ok and db._has_fts(conn) and conn.execute("SELECT 1 FROM product_fts LIMIT 1").fetchone():
+        match = _fts_match(parsed["terms"])
+        if match:
+            fw = ["grp IN (SELECT grp FROM product_fts WHERE product_fts MATCH ?)"]
+            fp = [match]
+            mt = material_type or parsed["material_type"]
+            if mt:
+                fw.append("material_type = ?"); fp.append(mt)
+            if mt != "Accessory / Non-Slab":
+                fw.append("material_type <> 'Accessory / Non-Slab'")
+            if in_stock or min_sqft:
+                fw.append("(total_slabs > 0 OR has_tile = 1)")
+            if min_sqft:
+                fw.append("total_sqft >= ?"); fp.append(min_sqft)
+            fclause = " AND ".join(fw)
+            fsort = "relevance" if sort == "distance" else sort
+            forder = SORTS.get(fsort, SORTS["relevance"])
+            f_total = conn.execute(
+                f"SELECT COUNT(*) c FROM product_rollup WHERE {fclause}", fp).fetchone()["c"]
+            if f_total >= 5:  # high recall: trust FTS5; else fall through for LIKE + fuzzy
+                f_rows = conn.execute(
+                    f"""SELECT id, material_key, item_name, material_type, color, new_arrival,
+                               suppliers, available_slabs, total_slabs, tile_sf, has_tile,
+                               avg_length, avg_width, total_sqft, image_url
+                        FROM product_rollup WHERE {fclause}
+                        ORDER BY {forder} LIMIT ? OFFSET ?""",
+                    (*fp, limit, offset)).fetchall()
+                _result = (f_total, [dict(r) for r in f_rows], parsed)
+                _search_cache[_ck] = (time.time(), _result)
+                if len(_search_cache) > 64:
+                    _search_cache.pop(min(_search_cache, key=lambda k: _search_cache[k][0]), None)
+                return _result
 
     where, params = ["1=1"], []
 
