@@ -253,6 +253,23 @@ app is built to stay current:
 
 The UI header shows when the data was last refreshed.
 
+### Backup & restore
+
+Every refresh — the in-app **Refresh** button, the nightly task, or a CLI crawl — first
+writes a consistent snapshot of the database to **`stonescan.db.bak`** (a single rolling
+backup, replaced each run) right beside `stonescan.db`. That file also holds your watchlist
+and sourcing lists, so the snapshot protects those too. Each refresh's start and outcome —
+or its error and traceback on failure — is appended to **`refresh-history.log`** in the
+same folder, so a failed refresh leaves a durable record instead of a message that vanishes
+when the app closes.
+
+In the packaged app both files live in the **`data/`** folder next to `StoneScanner.exe`;
+in a source checkout they sit at the project root beside `stonescan.db`.
+
+**To restore:** close the app, copy `stonescan.db.bak` over `stonescan.db` (same folder),
+and reopen. A backup that fails (e.g. a full disk) never blocks a refresh — it's logged as a
+warning and the crawl proceeds.
+
 ## Notes & limits
 
 - **Discovery** can't enumerate every tenant (the platform uses one wildcard

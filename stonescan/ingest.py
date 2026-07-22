@@ -12,10 +12,25 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from pathlib import Path
 
 from . import db, denylist, discover
 from .crawler import crawl_hosts, utc_now_iso
 from .normalize import normalize_item
+
+
+def _refresh_log(db_path: str, msg: str) -> None:
+    """Append a timestamped line to refresh-history.log next to the DB — a durable record
+    of every refresh's start and outcome, unlike the web app's in-memory `_refresh`
+    summary which vanishes on restart. Never raises: logging must not break a refresh."""
+    from datetime import datetime, timezone
+    try:
+        path = Path(db_path).resolve().parent / "refresh-history.log"
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{stamp}Z  {msg}\n")
+    except Exception:  # noqa: BLE001 - a logging failure must not fail the crawl
+        pass
 
 
 def _build_slab_rows(result, supplier_id: int, crawled_at: str) -> list[dict]:
@@ -176,44 +191,65 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
     without re-crawling the whole list. Persistent failures just stay flagged.
     """
     db_path = db_path or str(db.DEFAULT_DB)
+    _refresh_log(db_path, f"refresh started — {len(entries)} supplier "
+                          f"entr{'y' if len(entries) == 1 else 'ies'}")
 
-    # Last line of defence for a removal request: even a hand-re-added entry, or
-    # one restored from an old suppliers.json, does not get crawled.
-    entries, denied = denylist.filter_entries(entries)
-    for e in denied:
-        print(f"  [deny] {e.get('name') or e['host']:<34} "
-              f"{denylist.reason_for(e['host']) or 'on the denylist'}")
+    # Data safety: snapshot the DB before we modify it, so a crash or disk error mid-
+    # refresh leaves a restore point — the file also holds the user's watchlist/lists.
+    # A backup failure must NEVER block the refresh: a stale catalog is the worse cost.
+    try:
+        if db.backup_database(db_path):
+            _refresh_log(db_path, f"backed up to {Path(db_path).name}.bak")
+        else:
+            _refresh_log(db_path, "nothing to back up yet (no existing DB)")
+    except Exception as e:  # noqa: BLE001 - proceed without a backup, but say so
+        _refresh_log(db_path, f"WARNING: backup failed, proceeding without one: {e}")
 
-    await _crawl_entries(entries, concurrency=concurrency, delay=delay,
-                         headless=headless, db_path=db_path, with_slabs=with_slabs,
-                         provider_limit=provider_limit, slab_item_cap=slab_item_cap,
-                         progress=progress)
+    try:
+        # Last line of defence for a removal request: even a hand-re-added entry, or
+        # one restored from an old suppliers.json, does not get crawled.
+        entries, denied = denylist.filter_entries(entries)
+        for e in denied:
+            print(f"  [deny] {e.get('name') or e['host']:<34} "
+                  f"{denylist.reason_for(e['host']) or 'on the denylist'}")
 
-    if retry_errored:
-        failed = _errored_hosts(db_path, [e["host"] for e in entries])
-        retry = [e for e in entries if e["host"] in failed]
-        if retry:
-            print(f"\nRetrying {len(retry)} catalog(s) that errored this run...\n")
-            await _crawl_entries(retry, concurrency=concurrency, delay=delay,
-                                 headless=headless, db_path=db_path,
-                                 with_slabs=with_slabs, provider_limit=provider_limit,
-                                 slab_item_cap=slab_item_cap, progress=progress)
-            still = _errored_hosts(db_path, [e["host"] for e in retry])
-            print(f"\n  retry recovered {len(retry) - len(still)} of {len(retry)}; "
-                  f"{len(still)} still failing.")
+        await _crawl_entries(entries, concurrency=concurrency, delay=delay,
+                             headless=headless, db_path=db_path, with_slabs=with_slabs,
+                             provider_limit=provider_limit, slab_item_cap=slab_item_cap,
+                             progress=progress)
 
-    # Re-apply curator-confirmed merges LAST: every crawl (and retry) recomputes
-    # material_key from scratch, so without this each /quality merge silently undoes.
-    conn = db.init_db(db_path)
-    folded = db.apply_aliases(conn)
-    n_aliases = db.quality_stats(conn)["aliases"]
-    # Refresh the per-product rollup LAST, after material_key is final (aliases folded),
-    # so the search fast path reflects this crawl.
-    n_rollup = db.rebuild_product_rollup(conn)
-    conn.close()
-    if folded:
-        print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
-    print(f"  product rollup: {n_rollup} products indexed for fast browse.")
+        if retry_errored:
+            failed = _errored_hosts(db_path, [e["host"] for e in entries])
+            retry = [e for e in entries if e["host"] in failed]
+            if retry:
+                print(f"\nRetrying {len(retry)} catalog(s) that errored this run...\n")
+                await _crawl_entries(retry, concurrency=concurrency, delay=delay,
+                                     headless=headless, db_path=db_path,
+                                     with_slabs=with_slabs, provider_limit=provider_limit,
+                                     slab_item_cap=slab_item_cap, progress=progress)
+                still = _errored_hosts(db_path, [e["host"] for e in retry])
+                print(f"\n  retry recovered {len(retry) - len(still)} of {len(retry)}; "
+                      f"{len(still)} still failing.")
+
+        # Re-apply curator-confirmed merges LAST: every crawl (and retry) recomputes
+        # material_key from scratch, so without this each /quality merge silently undoes.
+        conn = db.init_db(db_path)
+        folded = db.apply_aliases(conn)
+        n_aliases = db.quality_stats(conn)["aliases"]
+        # Refresh the per-product rollup LAST, after material_key is final (aliases folded),
+        # so the search fast path reflects this crawl.
+        n_rollup = db.rebuild_product_rollup(conn)
+        s = db.stats(conn, use_cache=False)
+        conn.close()
+        if folded:
+            print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
+        print(f"  product rollup: {n_rollup} products indexed for fast browse.")
+        _refresh_log(db_path, f"Done — {s['materials']} materials, {s['suppliers']} suppliers.")
+    except Exception as e:  # noqa: BLE001 - record durably, then let the caller handle it
+        import traceback
+        _refresh_log(db_path, f"FAILED: {type(e).__name__}: {e}\n"
+                              f"{traceback.format_exc().rstrip()}")
+        raise
 
 
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
