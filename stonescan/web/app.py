@@ -49,6 +49,9 @@ def _warm_caches() -> None:
         return
     try:
         db.stats(conn)
+        # Build the rollup if a shipped/older DB predates it, so the fast path is
+        # available on first load (until then _search falls back to the live query).
+        db.ensure_product_rollup(conn)
         _name_words(conn)
         # Same params the default landing page uses, so the cache key matches its request.
         _search(conn, q="", material_type="", color="", thickness="", supplier="",
@@ -240,6 +243,46 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     if _h and time.time() - _h[0] < _RESULT_TTL:
         return _h[1]
     parsed = smartsearch.parse_query(q)
+
+    # Fast path: the default browse and the material-type facet — plus in_stock /
+    # min_sqft / sort / pagination — are all PRODUCT-level (no filter changes a
+    # product's cross-supplier aggregates), so they read the precomputed
+    # product_rollup instead of the two-level GROUP BY over every material. Anything
+    # that filters at the ROW level (q, color, thickness, supplier, location, near,
+    # min_length/width, new_only) still runs the live query below, and an unbuilt or
+    # empty rollup (e.g. a fresh seed DB) also falls through. Results are identical to
+    # the live path for the cases handled here — see ProductRollupTests.
+    fast_ok = (not (q or "").strip() and not color and not thickness and not supplier
+               and not location and not near and not min_length and not min_width
+               and not new_only)
+    if fast_ok and conn.execute("SELECT 1 FROM product_rollup LIMIT 1").fetchone():
+        rw, rp = ["1=1"], []
+        if material_type:
+            rw.append("material_type = ?"); rp.append(material_type)
+        if material_type != "Accessory / Non-Slab":
+            rw.append("material_type <> 'Accessory / Non-Slab'")
+        if in_stock or min_sqft:
+            rw.append("(total_slabs > 0 OR has_tile = 1)")
+        if min_sqft:
+            rw.append("total_sqft >= ?"); rp.append(min_sqft)
+        rclause = " AND ".join(rw)
+        rsort = "relevance" if sort == "distance" else sort  # no proximity on this path
+        rorder = SORTS.get(rsort, SORTS["relevance"])
+        r_total = conn.execute(
+            f"SELECT COUNT(*) c FROM product_rollup WHERE {rclause}", rp).fetchone()["c"]
+        r_rows = conn.execute(
+            f"""SELECT id, material_key, item_name, material_type, color, new_arrival,
+                       suppliers, available_slabs, total_slabs, tile_sf, has_tile,
+                       avg_length, avg_width, total_sqft, image_url
+                FROM product_rollup WHERE {rclause}
+                ORDER BY {rorder} LIMIT ? OFFSET ?""",
+            (*rp, limit, offset)).fetchall()
+        _result = (r_total, [dict(r) for r in r_rows], parsed)
+        _search_cache[_ck] = (time.time(), _result)
+        if len(_search_cache) > 64:
+            _search_cache.pop(min(_search_cache, key=lambda k: _search_cache[k][0]), None)
+        return _result
+
     where, params = ["1=1"], []
 
     mt = material_type or parsed["material_type"]
@@ -1417,6 +1460,7 @@ def quality_merge_apply(
         db.add_alias(conn, ak, canonical_key, canonical_type or None, note="curated")
         folded += 1
     db.apply_aliases(conn)
+    db.rebuild_product_rollup(conn)  # grouping changed -> refresh the fast-path table
     conn.close()
     _invalidate_caches()  # merges change cross-supplier grouping -> search/quality/stats
     return _merge_redirect(kind if kind in ("conflict", "fuzzy") else "conflict", page, folded)
@@ -1428,6 +1472,7 @@ def quality_merge_reject(sig: str = Form(...), kind: str = Form("conflict"),
     """Mark a cluster 'not the same' so it stops being proposed."""
     conn = db.connect()
     db.add_rejection(conn, sig)
+    db.rebuild_product_rollup(conn)  # keep the fast-path table current with the queue
     conn.close()
     _invalidate_caches()
     return _merge_redirect(kind if kind in ("conflict", "fuzzy") else "conflict", page, 0)
@@ -1439,6 +1484,7 @@ def quality_alias_remove(alias_key: str = Form(...)):
     (we can't un-rewrite the rows in place), so note that in the UI."""
     conn = db.connect()
     db.remove_alias(conn, alias_key)
+    db.rebuild_product_rollup(conn)  # unmerge changes grouping -> refresh the fast-path table
     conn.close()
     _invalidate_caches()
     return RedirectResponse("/quality", status_code=303)

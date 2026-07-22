@@ -207,9 +207,13 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
     conn = db.init_db(db_path)
     folded = db.apply_aliases(conn)
     n_aliases = db.quality_stats(conn)["aliases"]
+    # Refresh the per-product rollup LAST, after material_key is final (aliases folded),
+    # so the search fast path reflects this crawl.
+    n_rollup = db.rebuild_product_rollup(conn)
     conn.close()
     if folded:
         print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
+    print(f"  product rollup: {n_rollup} products indexed for fast browse.")
 
 
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,

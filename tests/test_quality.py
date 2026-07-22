@@ -141,6 +141,150 @@ class SlabCountTests(unittest.TestCase):
         self.assertNotIn("empty stone|granite", keys)
 
 
+class ProductRollupTests(unittest.TestCase):
+    """The materialized product_rollup fast path must return results IDENTICAL to the
+    live two-level query for the cases it handles (default browse, material-type facet,
+    in_stock / min_sqft, sorts, pagination), and must rebuild when the data changes."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=10)
+
+    def tearDown(self):
+        from stonescan.web import app
+        app._search_cache.clear()
+        self.conn.close()
+
+    def _mat(self, sid, key, *, slabs=0, form="SLAB", uom="", length=0, width=0,
+             image="", new=0, mtype=None, name=None):
+        base = key.rsplit("|", 1)[0] if key else "nameless"
+        mt = mtype or (key.rsplit("|", 1)[1].title() if "|" in key else "Other")
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key, material_type,
+                  product_form, available_slabs, uom, avg_length, avg_width, image_url, new_arrival)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (sid, f"{sid}-{base}-{form}-{slabs}-{length}", name or base.title(),
+             (name or base).upper(), key, mt, form, slabs, uom, length, width, image, new))
+        self.conn.commit()
+
+    def _seed_catalog(self):
+        # Ties on the relevance keys, a tile, an out-of-stock product, images of both
+        # kinds, and empty-key products — the shapes that stress the rollup's parity.
+        self._mat(1, "alpha|marble", slabs=10, length=120, width=70, image="http://x/a.jpg")
+        self._mat(2, "alpha|marble", slabs=20, length=118, width=66)
+        self._mat(3, "alpha|marble", slabs=30, length=126, width=72)
+        self._mat(1, "eta|marble", slabs=10)   # ties alpha on (suppliers?,slabs) partially
+        self._mat(2, "eta|marble", slabs=20)
+        self._mat(3, "eta|marble", slabs=30, new=1)
+        self._mat(1, "gamma|granite", slabs=5)
+        self._mat(2, "gamma|granite", slabs=5)
+        self._mat(1, "delta|granite", slabs=5)  # same available_slabs as gamma, fewer suppliers
+        self._mat(1, "epsilon|quartzite", slabs=0)  # out of stock
+        # A SlabCloud thumbnail must lose to a real photo (COALESCE(real_img, any_img)).
+        self._mat(1, "kappa|marble", slabs=8, image="http://slabcloud.com/slabs/x.jpg")
+        self._mat(2, "kappa|marble", slabs=3, image="http://real/k.jpg")
+        # Tile: SF quantity must surface as tile_sf/has_tile, never as slabs.
+        self._mat(1, "zeta|porcelain", slabs=500, form="TILE", uom="SF")
+        # An accessory product: excluded by default, returned only when explicitly asked.
+        self._mat(1, "brushpad|accessory / non-slab", slabs=1,
+                  mtype="Accessory / Non-Slab", name="Polishing Pad")
+        # Empty-key products (grp = 'id:<id>'): different slab depth so ordering is
+        # decided before the empty material_key tiebreaker.
+        self._mat(4, "", slabs=7, name="Nameless One", mtype="Marble")
+        self._mat(5, "", slabs=4, name="Nameless Two", mtype="Marble")
+
+    def _search(self, **kw):
+        from stonescan.web import app
+        base = dict(q="", material_type="", color="", thickness="", supplier="",
+                    limit=60, offset=0)
+        base.update(kw)
+        return app._search(self.conn, **base)
+
+    def _live_and_fast(self, **kw):
+        """Same query two ways: with the rollup emptied (live path) and rebuilt (fast
+        path). The cache is cleared between them so the second call really recomputes."""
+        from stonescan.web import app
+        app._search_cache.clear()
+        self.conn.execute("DELETE FROM product_rollup")
+        self.conn.commit()
+        live = self._search(**kw)
+        app._search_cache.clear()
+        n = db.rebuild_product_rollup(self.conn)
+        self.assertGreater(n, 0, "rollup must be populated so the fast path is exercised")
+        fast = self._search(**kw)
+        return live, fast
+
+    def test_fast_path_matches_live_across_the_matrix(self):
+        self._seed_catalog()
+        matrix = [
+            {},                                              # default browse
+            {"sort": "relevance"}, {"sort": "slabs"}, {"sort": "size"},
+            {"sort": "area"}, {"sort": "new"},
+            {"sort": "distance"},                            # must degrade to relevance
+            {"material_type": "Marble"}, {"material_type": "Granite"},
+            {"material_type": "Accessory / Non-Slab"},       # only when explicitly asked
+            {"in_stock": True}, {"min_sqft": 5.0},
+            {"material_type": "Marble", "in_stock": True},
+            {"in_stock": True, "min_sqft": 3.0, "sort": "slabs"},
+            {"limit": 3, "offset": 0}, {"limit": 3, "offset": 3},
+            {"limit": 3, "offset": 6}, {"sort": "slabs", "limit": 4, "offset": 2},
+        ]
+        for kw in matrix:
+            live, fast = self._live_and_fast(**kw)
+            self.assertEqual(live[0], fast[0], f"total differs for {kw}")
+            self.assertEqual(live[1], fast[1], f"rows differ for {kw}")
+
+    def test_default_excludes_accessory_but_filter_includes_it(self):
+        self._seed_catalog()
+        db.rebuild_product_rollup(self.conn)
+        default_keys = {r["material_key"] for r in self._search()[1]}
+        self.assertNotIn("brushpad|accessory / non-slab", default_keys)
+        acc_keys = {r["material_key"]
+                    for r in self._search(material_type="Accessory / Non-Slab")[1]}
+        self.assertIn("brushpad|accessory / non-slab", acc_keys)
+
+    def test_empty_rollup_falls_back_to_live_not_empty(self):
+        # A DB with materials but no rollup yet (e.g. a shipped seed) must still return
+        # results — the fast path falls through to the live query.
+        from stonescan.web import app
+        self._seed_catalog()
+        app._search_cache.clear()
+        self.conn.execute("DELETE FROM product_rollup")
+        self.conn.commit()
+        total, rows, _ = self._search()
+        self.assertGreater(total, 0)
+        self.assertGreater(len(rows), 0)
+
+    def test_ensure_builds_only_when_empty_with_materials(self):
+        self.assertEqual(db.ensure_product_rollup(self.conn), 0, "no materials -> nothing")
+        self._seed_catalog()
+        built = db.ensure_product_rollup(self.conn)
+        self.assertGreater(built, 0, "materials but empty rollup -> builds")
+        self.assertEqual(db.ensure_product_rollup(self.conn), 0, "already built -> no-op")
+
+    def test_empty_catalog_returns_nothing_without_error(self):
+        db.rebuild_product_rollup(self.conn)          # empty materials -> empty rollup
+        total, rows, _ = self._search()
+        self.assertEqual((total, rows), (0, []))
+
+    def test_rebuild_reflects_a_merge(self):
+        # Two same-named products of different type; merging folds them, and the rollup
+        # rebuilt afterward must show a single product with the combined supplier count.
+        self._mat(1, "taj mahal|granite", slabs=4)
+        self._mat(2, "taj mahal|quartzite", slabs=9)
+        db.add_alias(self.conn, "taj mahal|granite", "taj mahal|quartzite", "Quartzite")
+        db.apply_aliases(self.conn)
+        db.rebuild_product_rollup(self.conn)
+        rows = {r["material_key"]: r for r in self._search()[1]}
+        self.assertIn("taj mahal|quartzite", rows)
+        self.assertNotIn("taj mahal|granite", rows)
+        self.assertEqual(rows["taj mahal|quartzite"]["suppliers"], 2)
+        self.assertEqual(rows["taj mahal|quartzite"]["available_slabs"], 9)
+
+
 class StockChangesTests(unittest.TestCase):
     """'Back in stock' must compare each supplier against ITS OWN previous
     snapshot — the original compared two global dates that shared no suppliers,
