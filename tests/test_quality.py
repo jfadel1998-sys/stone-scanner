@@ -285,6 +285,107 @@ class ProductRollupTests(unittest.TestCase):
         self.assertEqual(rows["taj mahal|quartzite"]["available_slabs"], 9)
 
 
+class FtsSearchTests(unittest.TestCase):
+    """The FTS5 name index accelerates free-text q queries, falling back to the live
+    LIKE + fuzzy path for low-recall / misspelled / row-filtered queries and when FTS5
+    is unavailable — so q never returns worse-than-today results."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.conn = db.init_db(os.path.join(self.tmp, "t.db"))
+        _seed_suppliers(self.conn, upto=10)
+        self.fts = db._has_fts(self.conn)
+        # >= 5 'calacatta' products so the FTS fast path (threshold 5) actually engages.
+        for i, key in enumerate([
+            "calacatta gold|marble", "calacatta borghini|marble", "calacatta oro|marble",
+            "calacatta vagli|marble", "calacatta michelangelo|marble",
+            "calacatta lincoln|quartz"], start=1):
+            self._mat(i, key, slabs=3 + i)
+        self._mat(1, "taj mahal|quartzite", slabs=9)
+        self._mat(2, "absolute black|granite", slabs=4)
+        db.rebuild_product_rollup(self.conn)
+        from stonescan.web import app
+        app._NAME_WORDS = None
+        app._search_cache.clear()
+
+    def tearDown(self):
+        from stonescan.web import app
+        app._NAME_WORDS = None
+        app._search_cache.clear()
+        self.conn.close()
+
+    def _mat(self, sid, key, *, slabs=0, thickness="3cm"):
+        base = key.rsplit("|", 1)[0]
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key, material_type,
+                  product_form, available_slabs, thickness)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (sid, f"{sid}-{base}-{thickness}", base.title(), base.upper(), key,
+             key.rsplit("|", 1)[1].title(), "SLAB", slabs, thickness))
+        self.conn.commit()
+
+    def _keys(self, **kw):
+        from stonescan.web import app
+        base = dict(q="", material_type="", color="", thickness="", supplier="",
+                    limit=60, offset=0)
+        base.update(kw)
+        app._search_cache.clear()
+        _t, rows, _ = app._search(self.conn, **base)
+        return {r["material_key"] for r in rows}
+
+    def test_word_query_returns_all_matches(self):
+        if not self.fts:
+            self.skipTest("FTS5 not available in this SQLite build")
+        keys = self._keys(q="calacatta")
+        self.assertEqual(len([k for k in keys if k.startswith("calacatta")]), 6)
+        self.assertNotIn("taj mahal|quartzite", keys)
+
+    def test_prefix_query_matches(self):
+        if not self.fts:
+            self.skipTest("FTS5 not available")
+        keys = self._keys(q="calac")   # word-prefix
+        self.assertEqual(len([k for k in keys if k.startswith("calacatta")]), 6)
+
+    def test_query_with_material_type_filters(self):
+        if not self.fts:
+            self.skipTest("FTS5 not available")
+        keys = self._keys(q="calacatta", material_type="Marble")
+        self.assertNotIn("calacatta lincoln|quartz", keys)   # quartz one filtered out
+        self.assertIn("calacatta gold|marble", keys)
+
+    def test_misspelling_falls_back_to_fuzzy(self):
+        # 'calacata' yields no FTS token match (< 5) -> live path -> fuzzy near-miss recall.
+        keys = self._keys(q="calacata")
+        self.assertTrue(any(k.startswith("calacatta") for k in keys),
+                        "misspelling should still resolve via the live fuzzy fallback")
+
+    def test_row_filter_with_q_falls_back_and_is_correct(self):
+        # thickness is a row-filter -> fall back to live; only the matching thickness returns.
+        self._mat(1, "calacatta gold|marble", slabs=2, thickness="2cm")  # a 2cm variant
+        db.rebuild_product_rollup(self.conn)
+        self.assertIn("calacatta gold|marble", self._keys(q="calacatta", thickness="3cm"))
+        self.assertIn("calacatta gold|marble", self._keys(q="calacatta", thickness="2cm"))
+        self.assertEqual(self._keys(q="calacatta", thickness="9cm"), set())
+
+    def test_fts_absent_falls_back_without_error(self):
+        # Simulate a SQLite without FTS5: drop the index; q must still work via live.
+        if self.fts:
+            self.conn.execute("DROP TABLE product_fts")
+            self.conn.commit()
+        keys = self._keys(q="calacatta")
+        self.assertTrue(any(k.startswith("calacatta") for k in keys))
+
+    def test_new_material_indexed_on_rebuild(self):
+        if not self.fts:
+            self.skipTest("FTS5 not available")
+        self.assertEqual(self._keys(q="unobtainium"), set())
+        for i in range(1, 6):
+            self._mat(i, f"unobtainium {i}|quartzite", slabs=2)
+        db.rebuild_product_rollup(self.conn)
+        self.assertEqual(len(self._keys(q="unobtainium")), 5)
+
+
 class StockChangesTests(unittest.TestCase):
     """'Back in stock' must compare each supplier against ITS OWN previous
     snapshot — the original compared two global dates that shared no suppliers,

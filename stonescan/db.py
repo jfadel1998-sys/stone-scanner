@@ -248,6 +248,7 @@ def init_db(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
     conn = connect(db_path)
     conn.executescript(SCHEMA)
     _migrate(conn)
+    _ensure_fts(conn)
     conn.commit()
     return conn
 
@@ -533,27 +534,63 @@ FROM (
 GROUP BY grp
 """
 
+# FTS5 name index for the free-text (q) fast path. One row per product `grp` (same key
+# as product_rollup), whose `name` column is every distinct name variant of that product
+# — so an FTS5 word/prefix MATCH resolves straight back to a set of grps to aggregate via
+# the rollup. Kept in lockstep with the rollup's grp definition.
+_FTS_REBUILD = """
+INSERT INTO product_fts (grp, name)
+SELECT CASE WHEN COALESCE(material_key,'') = '' THEN 'id:' || id ELSE material_key END AS grp,
+       GROUP_CONCAT(DISTINCT name_norm)
+FROM materials
+GROUP BY grp
+"""
+
+
+def _has_fts(conn: sqlite3.Connection) -> bool:
+    """Whether the FTS5 name index exists — it doesn't when the runtime SQLite was built
+    without FTS5, in which case q keeps using the live LIKE path."""
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'product_fts'").fetchone() is not None
+
+
+def _ensure_fts(conn: sqlite3.Connection) -> None:
+    """Create the FTS5 name index if this SQLite build has FTS5. Deliberately NOT part of
+    SCHEMA/executescript: a missing fts5 module would abort the whole schema. Here a
+    failure is swallowed and simply means the FTS table never exists (q falls back)."""
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS product_fts USING fts5(grp UNINDEXED, name)")
+    except sqlite3.OperationalError:
+        pass  # FTS5 not compiled in
+
 
 def rebuild_product_rollup(conn: sqlite3.Connection) -> int:
-    """Rebuild the product_rollup materialized table from materials, in one pass.
+    """Rebuild the product_rollup materialized table (and, when present, the FTS5 name
+    index) from materials, in one pass.
 
-    Returns the number of product rows written. Idempotent and cheap enough to run
-    after every crawl / reclassify / merge — a single INSERT…SELECT. The rows are
-    inserted in GROUP BY (grp) order, which is the same order the live outer query
-    feeds its ORDER BY, so the fast path's tie-breaking matches the live path's.
+    Returns the number of product rows written. Idempotent and cheap enough to run after
+    every crawl / reclassify / merge — a single INSERT…SELECT each. The rollup rows are
+    inserted in GROUP BY (grp) order, which is the same order the live outer query feeds
+    its ORDER BY, so the fast path's tie-breaking matches the live path's.
     """
     conn.execute("DELETE FROM product_rollup")
     conn.execute(_ROLLUP_REBUILD)
+    if _has_fts(conn):
+        conn.execute("DELETE FROM product_fts")
+        conn.execute(_FTS_REBUILD)
     conn.commit()
     return int(conn.execute("SELECT COUNT(*) FROM product_rollup").fetchone()[0])
 
 
 def ensure_product_rollup(conn: sqlite3.Connection) -> int:
-    """Build the rollup only if it is empty while materials exist — e.g. a shipped
-    seed DB that predates this table. Returns rows built, or 0 when it is already
-    present or there is nothing to roll up. The search fast path falls back to the
-    live query until this has run, so an empty rollup never means an empty page."""
-    if conn.execute("SELECT 1 FROM product_rollup LIMIT 1").fetchone():
+    """Build the search fast-path tables when they're empty while materials exist — e.g.
+    a shipped seed DB predating them, or an install upgraded to add the FTS index after
+    the rollup already existed. Returns rows built, or 0 when nothing is needed. The fast
+    paths fall back to the live query until this has run, so empty never means an empty page."""
+    rollup_empty = conn.execute("SELECT 1 FROM product_rollup LIMIT 1").fetchone() is None
+    fts_empty = _has_fts(conn) and conn.execute("SELECT 1 FROM product_fts LIMIT 1").fetchone() is None
+    if not (rollup_empty or fts_empty):
         return 0
     if not conn.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
         return 0
