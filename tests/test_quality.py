@@ -1185,5 +1185,86 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(app._alert_unread_count(self.conn), 0)
 
 
+class ThicknessRepairTests(unittest.TestCase):
+    """Thicknesses written before normalize_thickness understood units got 'cm' appended
+    to a bare millimetre number ('12mm' -> '12cm'). The repair must be deterministic
+    (driven by the row's own uom), self-limiting (a re-run can't make '3cm' into '0.3cm'),
+    and must leave anything it can't prove alone."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=3)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _mat(self, name, thickness, uom, sid=1):
+        cur = self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key, material_type,
+                  thickness, uom, available_slabs)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (sid, f"{sid}-{name}-{thickness}-{uom}", name, name.upper(),
+             f"{name.lower()}|porcelain", "Porcelain", thickness, uom, 1))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def _thickness(self, rid):
+        return self.conn.execute("SELECT thickness FROM materials WHERE id = ?",
+                                 (rid,)).fetchone()[0]
+
+    def test_converts_mm_values_case_insensitively(self):
+        a = self._mat("Slab A", "30cm", "mm")
+        b = self._mat("Slab B", "12cm", "MM")
+        self.assertEqual(db.fix_mm_thickness(self.conn), 2)
+        self.assertEqual(self._thickness(a), "3cm")
+        self.assertEqual(self._thickness(b), "1.2cm")
+
+    def test_rerun_is_a_no_op_never_compounds(self):
+        a = self._mat("Slab A", "30cm", "mm")
+        self.assertEqual(db.fix_mm_thickness(self.conn), 1)
+        self.assertEqual(self._thickness(a), "3cm")
+        # The >=10cm guard no longer matches, so a second pass must change nothing.
+        self.assertEqual(db.fix_mm_thickness(self.conn), 0)
+        self.assertEqual(self._thickness(a), "3cm", "must never become 0.3cm")
+
+    def test_guard_boundaries(self):
+        plausible = self._mat("Thin", "9cm", "mm")     # below the guard: already sane
+        boundary = self._mat("Ten", "10cm", "mm")      # at the guard: converted
+        db.fix_mm_thickness(self.conn)
+        self.assertEqual(self._thickness(plausible), "9cm")
+        self.assertEqual(self._thickness(boundary), "1cm")
+
+    def test_unprovable_units_are_left_alone(self):
+        blank = self._mat("No Uom", "30cm", "")
+        other = self._mat("Sf Uom", "30cm", "SF")
+        self.assertEqual(db.fix_mm_thickness(self.conn), 0)
+        self.assertEqual(self._thickness(blank), "30cm")
+        self.assertEqual(self._thickness(other), "30cm")
+
+    def test_implausible_result_is_skipped(self):
+        # 300 "mm" -> 30cm, still not a slab: leave it rather than write a wrong number.
+        wild = self._mat("Wild", "300cm", "mm")
+        self.assertEqual(db.fix_mm_thickness(self.conn), 0)
+        self.assertEqual(self._thickness(wild), "300cm")
+
+    def test_init_db_applies_the_repair_automatically(self):
+        rid = self._mat("Auto", "20cm", "mm")
+        # Re-opening through init_db is what a packaged install does on every launch.
+        c2 = db.init_db(self.path)
+        c2.close()
+        self.assertEqual(self._thickness(rid), "2cm")
+
+    def test_reclassify_repairs_and_recomputes_thickness(self):
+        from stonescan.reclassify import reclassify
+        broken = self._mat("Broken", "30cm", "mm")
+        from_name = self._mat("Named 2cm Slab", "", "")   # thickness readable from the name
+        reclassify(self.path)
+        self.assertEqual(self._thickness(broken), "3cm")
+        self.assertEqual(self._thickness(from_name), "2cm")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

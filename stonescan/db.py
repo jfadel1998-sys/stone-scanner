@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import time
@@ -266,6 +267,56 @@ def _migrate(conn: sqlite3.Connection) -> None:
             if col not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
     conn.commit()
+    fixed = fix_mm_thickness(conn)
+    if fixed:
+        print(f"  thickness: repaired {fixed} millimetre-as-centimetre value(s).")
+
+
+# A thickness written before normalize_thickness understood units: the old code appended
+# 'cm' to a bare number, so a 12 mm porcelain slab was stored as '12cm'. The row still
+# carries the catalog's own uom, so this is a deterministic repair, not a guess.
+_THICK_CM_RE = re.compile(r"^\s*([\d.]+)\s*cm\s*$", re.IGNORECASE)
+_MM_FIX_MIN_CM = 10.0    # no slab is >= 10cm thick — the signature of the old bug
+_MM_FIX_LOW, _MM_FIX_HIGH = 0.1, 10.0   # plausible slab thickness, in cm
+
+
+def fix_mm_thickness(conn: sqlite3.Connection) -> int:
+    """Repair thicknesses stored as '<mm value>cm'. Returns the number of rows changed.
+
+    Only touches rows where the catalog said the unit was MILLIMETRES *and* the stored
+    value is >= 10cm — physically impossible for a slab, hence the fingerprint of the bug.
+    Anything whose unit can't be proven (blank or non-mm uom) is left alone rather than
+    guessed at.
+
+    Deliberately self-limiting, which is what makes it safe to run on every startup: after
+    the repair the value is < 10cm, so it no longer matches the guard and a second pass
+    cannot turn '3cm' into '0.3cm'. (That re-run hazard is why this is a targeted repair
+    rather than simply re-running normalize_thickness — the corrupted value already carries
+    an explicit 'cm', which would win over the row's uom and leave it unchanged.)
+    """
+    rows = conn.execute(
+        "SELECT id, thickness FROM materials "
+        "WHERE LOWER(TRIM(COALESCE(uom, ''))) = 'mm' AND thickness LIKE '%cm'"
+    ).fetchall()
+    updates = []
+    for r in rows:
+        m = _THICK_CM_RE.match(r["thickness"] or "")
+        if not m:
+            continue
+        try:
+            val = float(m.group(1))
+        except ValueError:
+            continue
+        if val < _MM_FIX_MIN_CM:
+            continue                      # already plausible — not a corrupted row
+        cm = val / 10.0                   # the number was millimetres all along
+        if not (_MM_FIX_LOW <= cm <= _MM_FIX_HIGH):
+            continue                      # would still be implausible — leave it alone
+        updates.append((f"{round(cm, 2):g}cm", r["id"]))
+    if updates:
+        conn.executemany("UPDATE materials SET thickness = ? WHERE id = ?", updates)
+        conn.commit()
+    return len(updates)
 
 
 def init_db(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
