@@ -1376,6 +1376,43 @@
       "updated": "2026-07-20"
     },
     {
+      "key": "caesarstone|quartz",
+      "display_name": "Caesarstone",
+      "formation": "engineered",
+      "stone_type": "Quartz",
+      "manufacturer": {
+        "name": "Caesarstone Ltd.",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://ir.caesarstone.com/",
+            "title": "Caesarstone Ltd. — Investor Relations"
+          },
+          {
+            "url": "https://www.caesarstoneus.com/about-us/",
+            "title": "About Us | Caesarstone US"
+          },
+          {
+            "url": "https://www.caesarstoneus.com/our-surfaces/",
+            "title": "Premium Surface Materials | Caesarstone US"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "An engineered quartz surface, produced by Caesarstone for worktops and interior surfacing.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
+    },
+    {
       "key": "calacatta apuano|marble",
       "display_name": "Calacatta Apuano",
       "formation": "natural",
@@ -1878,6 +1915,43 @@
       "updated": "2026-07-20"
     },
     {
+      "key": "cambria|quartz",
+      "display_name": "Cambria",
+      "formation": "engineered",
+      "stone_type": "Quartz",
+      "manufacturer": {
+        "name": "Cambria",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://www.cambriausa.com/content/dam/cusa/sales-marketing-collateral/product-technical-information/cambria-safety-data-sheet.pdf",
+            "title": "Cambria Quartz Surface — Safety Data Sheet (v2.1, 2024)"
+          },
+          {
+            "url": "https://www.cambriausa.com/content/dam/cusa/sales-marketing-collateral/product-technical-information/product-specification-sheet-english.pdf",
+            "title": "Cambria Product Specification Sheet (English)"
+          },
+          {
+            "url": "https://www.cambriausa.com/quartz-countertops/",
+            "title": "Quartz Countertops — Cambria Quartz Surfaces"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "An American-made engineered quartz surface, produced in Minnesota.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
+    },
+    {
       "key": "chantilly|quartzite",
       "display_name": "Chantilly",
       "formation": "natural",
@@ -2099,6 +2173,43 @@
       "notes": "Arizona Tile: \"This granite comes from the lower levels of the Café Crème quarry.\" igranites.com additionally narrows the locality to near Melur, Madurai.",
       "provenance": "curated",
       "updated": "2026-07-20"
+    },
+    {
+      "key": "compac|quartz",
+      "display_name": "Compac",
+      "formation": "engineered",
+      "stone_type": "Quartz",
+      "manufacturer": {
+        "name": "Compac",
+        "confidence": "low",
+        "sources": [
+          {
+            "url": "https://us.compac.es/legal-notice/",
+            "title": "Legal Notice - Privacy Policy | COMPAC"
+          },
+          {
+            "url": "https://us.compac.es/corporate/history/",
+            "title": "Once upon a time... | COMPAC corporate history"
+          },
+          {
+            "url": "https://us.compac.es/contact/faqs/",
+            "title": "FAQs | COMPAC"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "A Spanish manufacturer of quartz and marble surface coverings, founded in 1975.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
     },
     {
       "key": "copacabana|granite",
@@ -2498,6 +2609,43 @@
       "notes": "StoneContact.com listings attribute the quarry to operator Toledo Mineração Ltda, with production also linked to Mineração Pancieri Granitos; this is a single marketplace-directory source (page could not be directly re-verified by fetch, which returned 403) and is not independently corroborated, so treat the specific quarry/company names as low confidence even though the Brazil origin itself is well supported elsewhere.",
       "provenance": "curated",
       "updated": "2026-07-20"
+    },
+    {
+      "key": "dekton|sintered stone",
+      "display_name": "Dekton",
+      "formation": "engineered",
+      "stone_type": "Sintered Stone",
+      "manufacturer": {
+        "name": "Cosentino",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://assetstools.cosentino.com/api/v1/bynder/doc/AA100327-5E29-40DC-AB2E4D538DA396F7/dekton-safety-data-sheet-en.pdf?dl=dekton-safety-data-sheet-en.pdf",
+            "title": "Dekton Safety Data Sheet (EN), REV 10 - 09/2022 - Cosentino"
+          },
+          {
+            "url": "https://content.cosentino.com/dekton/documents/technical/Technical%20Manual/dekton-technical-manual-EN.pdf",
+            "title": "Dekton Technical Manual - Cosentino"
+          },
+          {
+            "url": "https://content.cosentino.com/alldocuments/dekton/technical-info/csi-specifications/CSI-Specifications-06-6123-Dekton-USA.pdf",
+            "title": "CSI Specification Section 06 6123 - Ultracompact Surfacing Fabrications (Dekton USA) - Cosentino"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "Cosentino's ultracompact surface, produced by sintering a blend of mineral raw materials under heat and pressure.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
     },
     {
       "key": "delicatus supreme|granite",
@@ -2938,6 +3086,45 @@
       "updated": "2026-07-20"
     },
     {
+      "key": "florim|porcelain",
+      "display_name": "Florim",
+      "formation": "engineered",
+      "stone_type": "Porcelain",
+      "manufacturer": {
+        "name": "Florim S.p.A. SB",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://www.florim.com/en/company",
+            "title": "Florim — Company"
+          },
+          {
+            "url": "https://www.florim.com/en",
+            "title": "Porcelain stoneware and ceramic tiles and slabs | Florim"
+          },
+          {
+            "url": "https://usa.florim.com/florim-stone",
+            "title": "FLORIM Stone — Custom porcelain countertops and coverings"
+          }
+        ]
+      },
+      "also_known_as": [
+        "Florim Stone"
+      ],
+      "summary": "An Italian producer of porcelain stoneware tiles and large-format slabs.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
+    },
+    {
       "key": "fusion|quartzite",
       "display_name": "Fusion",
       "formation": "natural",
@@ -3213,6 +3400,43 @@
       "updated": "2026-07-20"
     },
     {
+      "key": "hanstone|quartz",
+      "display_name": "HanStone",
+      "formation": "engineered",
+      "stone_type": "Quartz",
+      "manufacturer": {
+        "name": "Hyundai L&C",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://www.hanstone.ca/en",
+            "title": "HanStone Quartz (official Canadian site)"
+          },
+          {
+            "url": "https://www.hanstone.ca/en/who-hanstone",
+            "title": "Who is HanStone — HanStone (official)"
+          },
+          {
+            "url": "https://hyundailncusa.com/about",
+            "title": "About — Hyundai L&C USA (official)"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "An engineered quartz surface. Its maker was renamed from Hanwha L&C to Hyundai L&C in 2018.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
+    },
+    {
       "key": "ijen blue|quartzite",
       "display_name": "Ijen Blue",
       "formation": "natural",
@@ -3409,6 +3633,80 @@
       "notes": "Confirmed as a specific commercial granite trade name (colors/finish described consistently), not the animal. Independently re-verified by direct fetch: igranites.com states 'Jaguar granite is quarried in Brazil'; langstone.com corroborates 'imported from Brazil'. However, marble.com's listing for this material (fetched directly and confirmed to be the Jaguar Granite product page) explicitly states 'Country of origin: India' -- a genuine, unresolved conflict, not a data-entry guess. Origin recorded as Brazil per majority agreement (2+ independent supplier pages), confidence held to medium due to this conflict.",
       "provenance": "curated",
       "updated": "2026-07-20"
+    },
+    {
+      "key": "laminam|sintered stone",
+      "display_name": "Laminam",
+      "formation": "engineered",
+      "stone_type": "Sintered Stone",
+      "manufacturer": {
+        "name": "Laminam S.p.A.",
+        "confidence": "high",
+        "sources": [
+          {
+            "url": "https://www.laminam.com/en/faq/",
+            "title": "Frequently asked questions - FAQ | Laminam INTL"
+          },
+          {
+            "url": "https://www.laminam.com/wp-content/uploads/2023/09/EPD_EN_2022.pdf",
+            "title": "Laminam Environmental Product Declaration (EPD), 2022"
+          },
+          {
+            "url": "https://www.laminam.com/wp-content/uploads/2023/09/technical-guide-for-furnishing-and-design-EN.pdf",
+            "title": "Laminam Technical guide for furnishing & design (1620x3240, 12+ | 20+)"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "An Italian producer of large-format sintered ceramic slabs for surfacing and cladding.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
+    },
+    {
+      "key": "lapitec|sintered stone",
+      "display_name": "Lapitec",
+      "formation": "engineered",
+      "stone_type": "Sintered Stone",
+      "manufacturer": {
+        "name": "Lapitec S.p.A.",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://www.greenbooklive.com/pdfdocs/en15804epd/BREGENEPD000708.pdf",
+            "title": "BRE Global BREG EN EPD No. 000708 — 1 kg of Lapitec Sintered Stone (issued 10 June 2025)"
+          },
+          {
+            "url": "https://s3.us-east-2.amazonaws.com/prod-hml/Lapitec-EPD-000236-BRE.pdf",
+            "title": "BRE Global BREG EN EPD No. 000236 — 1 kg of Lapitec Sintered Stone Slab (issued 10 January 2019)"
+          },
+          {
+            "url": "https://www.thestonecollection.com/wp-content/uploads/2024/11/Lapitec-US-Technical-data-sheet-0-2024-2.pdf",
+            "title": "Lapitec Technical data sheet, Vers. US-0/2024 (manufacturer document, distributed by The Stone Collection)"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "An Italian sintered stone slab surface.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
     },
     {
       "key": "lava vecchia|granite",
@@ -3968,6 +4266,43 @@
       "notes": "Both citations re-fetched and directly re-confirmed ('Origin Country: Brazil'); no other named stone, place, or product called Negresco (e.g. the Hotel Negresco in Nice) was found conflated with this material, so confidence raised from medium to high. Removed the prior agent's unsourced trade_type_note claim that some suppliers sell this as 'Negresco Quartzite' — no citation was given for it originally and it could not be independently corroborated during this review, so it has been dropped rather than repeated as fact. A StoneContact quarry listing titled 'Black Negresco Granite Quarry' still returns a 403 and remains unverifiable, so quarries stays empty.",
       "provenance": "curated",
       "updated": "2026-07-20"
+    },
+    {
+      "key": "neolith|sintered stone",
+      "display_name": "Neolith",
+      "formation": "engineered",
+      "stone_type": "Sintered Stone",
+      "manufacturer": {
+        "name": "Thesize Surfaces, S.L.U.",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://www.neolith.com/en/privacy-policy/",
+            "title": "Privacy Policy | Neolith"
+          },
+          {
+            "url": "https://www.neolith.com/us/terms-of-use/",
+            "title": "Terms of Use | Neolith"
+          },
+          {
+            "url": "https://www.neolith.com/en/",
+            "title": "Neolith - official homepage (EN)"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "A sintered stone slab surface produced in Castellón, Spain.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
     },
     {
       "key": "nero marquina|marble",
@@ -5084,6 +5419,44 @@
       "updated": "2026-07-20"
     },
     {
+      "key": "silestone|quartz",
+      "display_name": "Silestone",
+      "formation": "engineered",
+      "stone_type": "Quartz",
+      "manufacturer": {
+        "name": "Cosentino",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://www.cosentino.com/usa/silestone/",
+            "title": "Silestone: the first low-silica surface - Cosentino USA"
+          },
+          {
+            "url": "https://www.cosentino.com/usa/quartz-countertop-mineral-surface/",
+            "title": "Quartz Countertop Mineral Surface - Cosentino USA"
+          },
+          {
+            "url": "https://www.cosentino.com/usa/silestone-xm/",
+            "title": "What is Silestone XM - Cosentino USA"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "Cosentino's engineered slab surface for kitchen and bath worktops, cladding and similar interior uses. Cosentino's own safety data sheet describes it as mineral fillers bound in polyester resin.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23",
+      "trade_type_note": "Catalogued and sold as quartz, but Cosentino now markets Silestone as a low-silica 'mineral surface': its Hybriq+ product grades cap crystalline silica well below a traditional quartz surface."
+    },
+    {
       "key": "silver grey|granite",
       "display_name": "Silver Grey",
       "formation": "natural",
@@ -6083,6 +6456,82 @@
       "notes": "Country of origin (Brazil) is unanimous across sources, but none name a specific state/region. Several suppliers mention the material comes from 'two quarries' with slightly different veining patterns (an older and a more recent one) but do not give either quarry a name or location, so no quarry entry is recorded.",
       "provenance": "curated",
       "updated": "2026-07-20"
+    },
+    {
+      "key": "viatera|quartz",
+      "display_name": "Viatera",
+      "formation": "engineered",
+      "stone_type": "Quartz",
+      "manufacturer": {
+        "name": "LX Hausys",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://www.lxhausys.com/us/blog/who-manufactures-viatera-quartz/",
+            "title": "Who manufactures VIATERA quartz? — LX Hausys"
+          },
+          {
+            "url": "https://www.lxhausys.com/us/blog/who-manufactures-viatera-quartz-and-how-it-is-made/",
+            "title": "Who Manufactures VIATERA Quartz and How It Is Made — LX Hausys"
+          },
+          {
+            "url": "https://www.lxhausys.com/us/blog/lx-hausys-viatera-quartz-the-ultimate-guide/",
+            "title": "LX Hausys VIATERA Quartz — The Ultimate Guide"
+          }
+        ]
+      },
+      "also_known_as": [
+        "LX Viatera"
+      ],
+      "summary": "LX Hausys's engineered quartz surface. The maker was formerly LG Hausys.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
+    },
+    {
+      "key": "vicostone|quartz",
+      "display_name": "Vicostone",
+      "formation": "engineered",
+      "stone_type": "Quartz",
+      "manufacturer": {
+        "name": "Vicostone Joint Stock Company",
+        "confidence": "medium",
+        "sources": [
+          {
+            "url": "https://prosite.vicostone.com/about-us",
+            "title": "About Us — VICOSTONE Quartz Surfaces (manufacturer site)"
+          },
+          {
+            "url": "https://prosite.vicostone.com/professionals",
+            "title": "Professionals — VICOSTONE Quartz Surfaces (manufacturer site)"
+          },
+          {
+            "url": "https://www.eco.vicostone.com/news/vicostone-secures-two-international-iso-greenhouse-gas",
+            "title": "Vicostone ISO greenhouse-gas certification news (manufacturer site)"
+          }
+        ]
+      },
+      "also_known_as": [],
+      "summary": "A Vietnamese manufacturer of engineered quartz surfaces.",
+      "origin": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "price_per_sqft": {
+        "confidence": "unknown",
+        "sources": []
+      },
+      "quarries": [],
+      "provenance": "curated",
+      "updated": "2026-07-23"
     },
     {
       "key": "vincent black|granite",
