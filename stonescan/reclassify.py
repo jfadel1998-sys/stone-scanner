@@ -10,13 +10,19 @@ so you don't have to re-crawl.
 from __future__ import annotations
 
 from . import db
-from .normalize import canonical_type, clean_color, derive_color_from_name, material_key
+from .normalize import (canonical_type, clean_color, derive_color_from_name, material_key,
+                        normalize_thickness)
 
 
 def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     conn = db.connect(db_path)
+    # Repair any millimetre-as-centimetre thicknesses first (idempotent, and this CLI can
+    # run against a DB the app hasn't opened, which is where init_db would have done it).
+    fixed = db.fix_mm_thickness(conn)
+    if fixed:
+        print(f"Repaired {fixed} millimetre-as-centimetre thickness value(s).")
     rows = conn.execute(
-        "SELECT id, item_name, category, subcategory, color FROM materials"
+        "SELECT id, item_name, category, subcategory, color, thickness, uom FROM materials"
     ).fetchall()
     print(f"Reclassifying {len(rows)} materials...")
     updates = []
@@ -24,9 +30,14 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
         mtype = canonical_type(r["category"], r["subcategory"], r["item_name"])
         key = material_key(r["item_name"], mtype)
         color = clean_color(r["color"]) or derive_color_from_name(r["item_name"])
-        updates.append((mtype, key, color, r["id"]))
+        # Re-derive thickness too, so an improved parser reaches stored rows without a
+        # re-crawl. A stored value carries its own unit, so this is a no-op on correct
+        # rows and only fills gaps (e.g. a thickness readable from the name).
+        thickness = normalize_thickness(r["thickness"], r["item_name"], r["uom"] or "")
+        updates.append((mtype, key, color, thickness, r["id"]))
     conn.executemany(
-        "UPDATE materials SET material_type = ?, material_key = ?, color = ? WHERE id = ?",
+        "UPDATE materials SET material_type = ?, material_key = ?, color = ?, "
+        "thickness = ? WHERE id = ?",
         updates,
     )
     conn.commit()
