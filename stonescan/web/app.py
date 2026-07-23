@@ -886,11 +886,15 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
     # is the part after the '|' in the material_key, falling back to the row's type.
     ctype = (key.split("|", 1)[1] if "|" in key else "") or mtype
     care = reference.care_by_type(ctype)
+    # Typical market price for the CATEGORY — cited, and rendered inside the category
+    # panel so it can never be misread as this stone's price or as catalog-observed money.
+    band = reference.price_band_by_type(ctype)
     return templates.TemplateResponse(request, "material.html", {
         "rows": rows, "name": name, "key": key, "suppliers_list": suppliers_list,
         "facts": facts, "photos": photos, "rep_photo": rep_photo, "similar": similar,
         "lists": lists, "added": added, "added_list": list, "ref": ref,
         "care": care, "care_type": ctype,
+        "price_band": band, "price_band_text": reference.price_band_label(band),
     })
 
 

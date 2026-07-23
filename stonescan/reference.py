@@ -110,6 +110,44 @@ def _index(stones: list[dict]) -> dict[str, dict]:
     return idx
 
 
+def _brand_index(stones: list[dict]) -> dict[str, dict]:
+    """Engineered BRAND entries, keyed by every name they answer to.
+
+    Engineered surfaces are branded product lines, not quarried stones: the catalog
+    carries thousands of colours ("Calacatta Gold Silestone", "Dekton Aura") that all
+    share one set of facts — who makes it and what it's made of. So the entry is per
+    brand, and the colour name is matched against it rather than researched separately.
+    """
+    idx: dict[str, dict] = {}
+    for s in stones:
+        if s.get("formation") != "engineered":
+            continue
+        for nm in [s.get("display_name", ""), *(s.get("also_known_as") or [])]:
+            n = _norm(nm)
+            if n:
+                idx.setdefault(n, s)
+    return idx
+
+
+def _brand_match(text: str, stones: list[dict]) -> dict | None:
+    """The engineered brand named inside a product name, or None.
+
+    Matched on WHOLE WORDS of the normalized name, so "Dekton Aura" finds Dekton while
+    a stone that merely contains the letters does not. The longest brand wins, so a
+    two-word brand ("LX Viatera") beats a one-word substring of it.
+    """
+    words = set(_norm(text).split())
+    if not words:
+        return None
+    best: tuple[int, dict] | None = None
+    for brand, entry in _brand_index(stones).items():
+        toks = brand.split()
+        if toks and all(t in words for t in toks):
+            if best is None or len(toks) > best[0]:
+                best = (len(toks), entry)
+    return best[1] if best else None
+
+
 def lookup(material_key: str = "", name: str = "", stones: list[dict] | None = None) -> dict | None:
     """The reference entry for a material, or None if we have not established one.
 
@@ -117,12 +155,17 @@ def lookup(material_key: str = "", name: str = "", stones: list[dict] | None = N
     is sold as marble by some suppliers and quartzite by others, and it is the same
     rock either way. Matching on the trade name is what makes one researched entry
     serve every supplier's spelling of it.
+
+    An engineered BRAND named inside the product name is the last resort, tried only
+    after every exact match fails — so a stone with its own researched entry always
+    wins over the brand it happens to mention.
     """
-    idx = _index(stones if stones is not None else load())
+    st = stones if stones is not None else load()
+    idx = _index(st)
     for probe in (material_key.lower(), _norm(_base_of(material_key)), _norm(name)):
         if probe and probe in idx:
             return idx[probe]
-    return None
+    return _brand_match(name, st) or _brand_match(_base_of(material_key), st)
 
 
 def has_fact(fact: Any) -> bool:
@@ -154,6 +197,20 @@ def price_label(price: dict | None) -> str:
     return f"{span} / sq ft" + (f" · {basis}" if basis else "")
 
 
+def manufacturer_fact(entry: dict) -> dict:
+    """The manufacturer as a SOURCED fact, in the same shape as origin/price.
+
+    For an engineered surface "who makes it" is the load-bearing claim — the equivalent
+    of origin for a quarried stone — so it has to carry citations rather than sit in the
+    file as a bare string. Older entries store a plain string; those still display, but
+    without sources they never pass has_fact and so are never presented as established.
+    """
+    m = entry.get("manufacturer")
+    if isinstance(m, dict):
+        return m
+    return {"name": m, "confidence": "unknown", "sources": []} if m else {}
+
+
 def summarize(entry: dict | None) -> dict:
     """Flatten one entry into what a template needs, with every fact pre-checked
     for displayability so the template never has to decide what is trustworthy."""
@@ -177,7 +234,12 @@ def summarize(entry: dict | None) -> dict:
         "price": price if has_fact(price) else None,
         "price_text": price_label(price),
         "quarries": quarries,
-        "manufacturer": entry.get("manufacturer", ""),
+        # Engineered surfaces have a maker instead of a quarry; the fact form carries its
+        # citations, the plain text keeps older string-only entries rendering.
+        "manufacturer": manufacturer_fact(entry).get("name", ""),
+        "manufacturer_fact": (manufacturer_fact(entry)
+                              if has_fact(manufacturer_fact(entry)) else None),
+        "engineered": entry.get("formation") == "engineered",
         "notes": entry.get("notes", ""),
         "provenance": entry.get("provenance", "curated"),
         "updated": entry.get("updated", ""),
@@ -244,6 +306,73 @@ def care_by_type(stone_type: str) -> dict:
     sealing, acid/heat tolerance, typical uses. Category-level material science, so it
     carries no per-stone citation. Empty dict when we have no guidance for the type."""
     return _CARE_BY_TYPE.get((stone_type or "").strip().lower(), {})
+
+
+# Typical market price per square foot, per MATERIAL CATEGORY. Unlike care guidance —
+# which is material science and needs no citation — a price is a claim about the world,
+# so each band carries its sources and the BASIS it was quoted on. Installed and
+# slab-only differ by roughly 2x, so a band without a stated basis is worthless and is
+# not stored. This is never mixed with `_observed_prices` (real money found in supplier
+# catalogs): that is what THIS catalog says, this is what the market generally says.
+_PRICE_BY_TYPE: dict[str, dict] = {
+    'quartz': {"low": 50, "high": 200, "currency": 'USD', "basis": 'installed',
+        "confidence": 'high',
+        "sources": [{"url": 'https://www.bobvila.com/articles/quartz-countertops-cost/', "title": 'Bob Vila — Quartz Countertops Cost: A Budgeting Guide'},
+                    {"url": 'https://www.fixr.com/costs/install-quartz-countertop', "title": 'Fixr.com — How Much Are Quartz Countertops?'}]},
+    'granite': {"low": 90, "high": 150, "currency": 'USD', "basis": 'installed',
+        "confidence": 'medium',
+        "sources": [{"url": 'https://gwsurfaces.com/comparing-costs-granite-quartz-marble-countertops/', "title": 'GW Surfaces — Comparing Costs: Granite vs. Quartz vs. Marble'},
+                    {"url": 'https://www.homewyse.com/services/cost_to_install_granite_countertops.html', "title": 'Homewyse — Cost to Install Granite Countertops'}]},
+    'marble': {"low": 50, "high": 200, "currency": 'USD', "basis": 'installed',
+        "confidence": 'medium',
+        "sources": [{"url": 'https://www.fixr.com/costs/marble-countertops', "title": 'Fixr.com — Cost to Install a Marble Countertop'},
+                    {"url": 'https://www.homewyse.com/services/cost_to_install_marble_countertop.html', "title": 'Homewyse — Cost to Install Marble Countertop'}]},
+    'quartzite': {"low": 65, "high": 210, "currency": 'USD', "basis": 'installed',
+        "confidence": 'high',
+        "sources": [{"url": 'https://www.fixr.com/costs/quartzite-countertop-installation', "title": 'Fixr — Cost to Install Quartzite Countertops'},
+                    {"url": 'https://marble.com/articles/what-to-expect-from-quartzite-countertop-costs', "title": 'Marble.com — Average Cost of Quartzite Countertops'}]},
+    'sintered stone': {"low": 60, "high": 200, "currency": 'USD', "basis": 'installed',
+        "confidence": 'medium',
+        "sources": [{"url": 'https://www.housedigest.com/1930537/cost-sintered-stone-countertops/', "title": 'House Digest — Sintered Stone Countertops cost'},
+                    {"url": 'https://carmelimports.com/blog/engineered-stone-countertops-cost/', "title": 'Carmel Imports — Engineered Stone Countertops Cost'}]},
+    'soapstone': {"low": 70, "high": 120, "currency": 'USD', "basis": 'slab only',
+        "confidence": 'high',
+        "sources": [{"url": 'https://www.homeadvisor.com/cost/cabinets-and-countertops/soapstone-counter-install/', "title": 'HomeAdvisor — What Do Soapstone Countertops Cost?'},
+                    {"url": 'https://www.bobvila.com/articles/soapstone-countertops-cost/', "title": 'Bob Vila — How Much Do Soapstone Countertops Cost?'}]},
+    'limestone': {"low": 70, "high": 150, "currency": 'USD', "basis": 'installed',
+        "confidence": 'medium',
+        "sources": [{"url": 'https://www.homeadvisor.com/cost/cabinets-and-countertops/limestone-countertops', "title": 'HomeAdvisor — Limestone Countertops Cost'}]},
+    'travertine': {"low": 25, "high": 50, "currency": 'USD', "basis": 'slab only',
+        "confidence": 'medium',
+        "sources": [{"url": 'https://www.homeadvisor.com/cost/cabinets-and-countertops/travertine-countertops/', "title": 'HomeAdvisor — Travertine Countertop Cost'}]},
+    'onyx': {"low": 75, "high": 300, "currency": 'USD', "basis": 'installed',
+        "confidence": 'low',
+        "sources": [{"url": 'https://countertopadvisor.com/types-of-countertops/onyx-countertops/', "title": 'Countertop Advisor — Onyx Countertops'}]},
+    # Porcelain is deliberately absent: the band researched for it did not survive
+    # citation checking, and a category with no defensible source gets no band.
+}
+
+
+def price_band_by_type(stone_type: str) -> dict:
+    """Typical $/sq ft for a MATERIAL CATEGORY, or {} when we have no sourced band.
+
+    Category-level and labeled as such — it must never be read as this stone's price, and
+    never as a price observed in the catalog. Same honesty contract as everything else
+    here: no sources, no band.
+    """
+    band = _PRICE_BY_TYPE.get((stone_type or "").strip().lower())
+    if not band or not band.get("sources"):
+        return {}
+    return band
+
+
+def price_band_label(band: dict | None) -> str:
+    """'$50–$100 / sq ft · installed' — always carries the basis, for the same reason
+    price_label does: an unlabeled figure invites a 2x misread."""
+    if not band:
+        return ""
+    return price_label({**band, "confidence": band.get("confidence", "medium"),
+                        "sources": band.get("sources") or []})
 
 
 # --- live lookup ----------------------------------------------------------------
@@ -363,6 +492,10 @@ def stats() -> dict:
         "with_quarries": sum(1 for s in stones if s.get("quarries")),
         "with_price": sum(1 for s in stones if has_fact(s.get("price_per_sqft"))),
         "with_origin": sum(1 for s in stones if has_fact(s.get("origin"))),
+        # Engineered surfaces are a different shape of entry (a manufacturer, no quarry),
+        # and they were 0 of 175 while being ~28% of the catalog — worth counting apart.
+        "engineered": sum(1 for s in stones if s.get("formation") == "engineered"),
+        "price_bands": sum(1 for b in _PRICE_BY_TYPE.values() if b.get("sources")),
     }
 
 

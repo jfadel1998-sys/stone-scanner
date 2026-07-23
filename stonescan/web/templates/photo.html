@@ -105,7 +105,12 @@
           <dt>{{ 'Made by' if ref.formation == 'engineered' else 'Quarries' }}</dt>
           <dd>
             {% if ref.formation == 'engineered' %}
-              {{ ref.manufacturer or 'not established' }}
+              {% if ref.manufacturer_fact %}
+                {{ ref.manufacturer_fact.name }}
+                <span class="conf conf-{{ ref.manufacturer_fact.confidence }}">{{ ref.manufacturer_fact.confidence }}</span>
+                {% for s in ref.manufacturer_fact.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+              {% elif ref.manufacturer %}{{ ref.manufacturer }}
+              {% else %}<span class="notest">not established</span>{% endif %}
               <div class="muted small">Engineered stone is manufactured, not quarried.</div>
             {% elif ref.quarries %}
               <ul class="quarrylist">

@@ -72,6 +72,10 @@
         {% endif %}
       </dd>
 
+      {# Geological origin is a category error for a factory product — an engineered
+         surface has no quarry to trace, so we say that rather than print an
+         "not established" that implies we simply haven't looked yet. #}
+      {% if not ref.engineered %}
       <dt>Origin</dt>
       <dd>
         {% if ref.origin %}
@@ -80,6 +84,7 @@
           {% for s in ref.origin.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
         {% else %}<span class="notest">not established</span>{% endif %}
       </dd>
+      {% endif %}
 
       <dt>Typical price</dt>
       <dd>
@@ -93,7 +98,12 @@
       <dt>{{ 'Made by' if ref.formation == 'engineered' else 'Quarries' }}</dt>
       <dd>
         {% if ref.formation == 'engineered' %}
-          {{ ref.manufacturer or 'not established' }}
+          {% if ref.manufacturer_fact %}
+            {{ ref.manufacturer_fact.name }}
+            <span class="conf conf-{{ ref.manufacturer_fact.confidence }}">{{ ref.manufacturer_fact.confidence }}</span>
+            {% for s in ref.manufacturer_fact.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+          {% elif ref.manufacturer %}{{ ref.manufacturer }}
+          {% else %}<span class="notest">not established</span>{% endif %}
           <div class="muted small">Engineered stone is manufactured, not quarried.</div>
         {% elif ref.quarries %}
           <ul class="quarrylist">
@@ -132,9 +142,12 @@
   {% endif %}
 </section>
 
-{% if care %}
+{% if care or price_band %}
 {# General care by MATERIAL CATEGORY, not a per-stone fact — labeled as such so it stays
-   distinct from the cited reference above. Category-level material science needs no cite. #}
+   distinct from the cited reference above. Category-level material science needs no cite.
+   The typical-price band lives here for the same reason: it describes the CATEGORY, so
+   putting it beside this badge keeps it from ever reading as this stone's price — or as
+   money observed in the catalog, which is a separate tier entirely. #}
 <section class="factcard care">
   <h3>General care
     <span class="srcbadge cattag" title="General guidance for this material category — not specific to this stone. Natural stone varies; confirm with the supplier.">{{ care_type|title }}, in general</span>
@@ -144,8 +157,17 @@
     {% if care.sealing %}<dt>Sealing</dt><dd>{{ care.sealing }}</dd>{% endif %}
     {% if care.durability %}<dt>Durability</dt><dd>{{ care.durability }}</dd>{% endif %}
     {% if care.best_for %}<dt>Typical use</dt><dd>{{ care.best_for }}</dd>{% endif %}
+    {% if price_band %}
+    <dt>Typical price</dt>
+    <dd>
+      {{ price_band_text }}
+      <span class="conf conf-{{ price_band.confidence }}">{{ price_band.confidence }}</span>
+      {% for s in price_band.sources %}<a class="cite" href="{{ s.url }}" target="_blank" rel="noopener noreferrer" title="{{ s.title }}">source</a>{% endfor %}
+      <div class="gapnote muted">Typical range for {{ care_type|lower }} as a category — not this stone's price, and not a price from any supplier's catalog.</div>
+    </dd>
+    {% endif %}
   </dl>
-  <p class="gapnote muted">Applies to {{ care_type|lower }} as a category — individual stones vary. Confirm porosity and finish with the supplier before specifying.</p>
+  {% if care %}<p class="gapnote muted">Applies to {{ care_type|lower }} as a category — individual stones vary. Confirm porosity and finish with the supplier before specifying.</p>{% endif %}
 </section>
 {% endif %}
 

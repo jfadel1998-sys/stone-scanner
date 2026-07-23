@@ -225,5 +225,113 @@ class LiveGateTests(unittest.TestCase):
             "Taj Mahal is a quartzite quarried in Espirito Santo, Brazil."))
 
 
+def brand_entry(name, maker, stype="Quartz", aka=None):
+    """An engineered BRAND entry: a manufacturer instead of quarries."""
+    return {
+        "key": f"{name.lower()}|{stype.lower()}",
+        "display_name": name,
+        "formation": "engineered",
+        "stone_type": stype,
+        "manufacturer": maker,
+        "also_known_as": aka or [],
+        "summary": f"{name} is an engineered surface made by {maker}.",
+        "origin": {"confidence": "unknown", "sources": []},
+        "price_per_sqft": {"confidence": "unknown", "sources": []},
+        "quarries": [],
+    }
+
+
+class EngineeredBrandTests(unittest.TestCase):
+    """Engineered surfaces are branded product lines, so one entry must answer for every
+    colour in that line — without ever outranking a stone's own researched entry."""
+
+    def setUp(self):
+        self.stones = [
+            entry(),                                                    # natural, per-stone
+            brand_entry("Silestone", "Cosentino"),
+            brand_entry("Dekton", "Cosentino", "Sintered Stone"),
+            brand_entry("Viatera", "LX Hausys", aka=["LX Viatera"]),
+        ]
+
+    def _lookup(self, name="", key=""):
+        return reference.lookup(material_key=key, name=name, stones=self.stones)
+
+    def test_brand_named_in_a_colour_resolves(self):
+        for name in ("Calacatta Gold Silestone", "SILESTONE Blanco Maple 3cm"):
+            hit = self._lookup(name=name)
+            self.assertIsNotNone(hit, name)
+            self.assertEqual(hit["display_name"], "Silestone", name)
+        self.assertEqual(self._lookup(name="Dekton Aura 12mm")["display_name"], "Dekton")
+
+    def test_brand_matches_from_the_material_key_too(self):
+        hit = self._lookup(key="dekton keranium|sintered stone")
+        self.assertEqual(hit["display_name"], "Dekton")
+
+    def test_multiword_alias_wins_over_a_shorter_one(self):
+        hit = self._lookup(name="LX Viatera Minuet 2cm")
+        self.assertEqual(hit["display_name"], "Viatera")
+
+    def test_a_stones_own_entry_beats_a_brand_mention(self):
+        # The exact-name match must win, otherwise a researched stone would be
+        # overwritten by any brand word that happens to appear beside it.
+        self.assertEqual(self._lookup(name="Taj Mahal")["display_name"], "Taj Mahal")
+
+    def test_unrelated_names_match_nothing(self):
+        self.assertIsNone(self._lookup(name="Absolute Black"))
+        self.assertIsNone(self._lookup(name="Blue Bahia Granite"))
+
+    def test_engineered_entry_carries_a_maker_not_quarries(self):
+        s = reference.summarize(brand_entry("Cambria", "Cambria USA"))
+        self.assertEqual(s["manufacturer"], "Cambria USA")
+        self.assertEqual(s["quarries"], [])
+        self.assertEqual(s["origin_text"], "")      # honest blank, not an invented country
+
+
+class CategoryPriceBandTests(unittest.TestCase):
+    """A category price band is a claim about the world, so it obeys the same rule as
+    every other fact here: no source, no band. And it must never be confused with the
+    money actually observed in supplier catalogs."""
+
+    def setUp(self):
+        self._old = dict(reference._PRICE_BY_TYPE)
+        self.addCleanup(lambda: reference._PRICE_BY_TYPE.update(self._old))
+
+    def test_sourced_band_is_returned_with_its_basis(self):
+        reference._PRICE_BY_TYPE["testite"] = {
+            "low": 50, "high": 100, "currency": "USD", "basis": "installed",
+            "confidence": "medium", "sources": SRC}
+        band = reference.price_band_by_type("Testite")
+        self.assertEqual((band["low"], band["high"]), (50, 100))
+        label = reference.price_band_label(band)
+        self.assertIn("/ sq ft", label)
+        self.assertIn("installed", label, "basis must always be shown — installed is ~2x slab-only")
+
+    def test_unsourced_band_is_withheld(self):
+        reference._PRICE_BY_TYPE["nosource"] = {
+            "low": 1, "high": 2, "currency": "USD", "basis": "installed",
+            "confidence": "high", "sources": []}
+        self.assertEqual(reference.price_band_by_type("nosource"), {})
+
+    def test_unknown_category_returns_nothing_not_a_zero(self):
+        self.assertEqual(reference.price_band_by_type("unobtainium"), {})
+        self.assertEqual(reference.price_band_by_type(""), {})
+        self.assertEqual(reference.price_band_label({}), "")
+
+    def test_band_is_separate_from_catalog_observed_prices(self):
+        # The two tiers answer different questions ("what the market charges" vs "what
+        # this catalog lists"), so they must not share a shape that invites merging.
+        from stonescan.web.app import _observed_prices
+        rows = [{"price_range": "$11.90/sf", "supplier_name": "S1"}]
+        observed = _observed_prices(rows)
+        self.assertIn("per_sqft", observed)
+        reference._PRICE_BY_TYPE["testite"] = {
+            "low": 50, "high": 100, "currency": "USD", "basis": "installed",
+            "confidence": "medium", "sources": SRC}
+        band = reference.price_band_by_type("testite")
+        self.assertNotIn("per_sqft", band)
+        self.assertNotIn("slab_total", band)
+        self.assertIn("sources", band, "a band always carries its citation; observed prices never do")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
