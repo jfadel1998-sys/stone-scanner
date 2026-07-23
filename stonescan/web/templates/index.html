@@ -182,9 +182,20 @@
     fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){
       if(s.running){ btn.disabled=true; msg.textContent='⏳ '+(s.summary||'Refreshing…'); }
       else { clearInterval(timer); btn.disabled=false;
-        if(s.done){ msg.textContent='✓ '+(s.summary||'Done')+' — reload to see changes.'; }
+        if(s.done){ showDone(s.summary||'Done'); }
       }
     }).catch(function(){});
+  }
+  // On completion, point at the new alerts (count + link) and relight the 🔔 badge live.
+  // The summary is app-generated (fixed text + numbers), so it's safe to place in innerHTML.
+  function showDone(summary){
+    fetch('/api/alerts/count').then(function(r){return r.json();}).then(function(a){
+      var n=a.unread||0;
+      var extra = n>0 ? ' · '+n+' change'+(n===1?'':'s')+' <a href="/alerts">View alerts</a>' : '';
+      msg.innerHTML='✓ '+summary+' — reload to see changes.'+extra;
+      var badge=document.getElementById('alertNavCount');
+      if(badge){ badge.textContent=n; if(n>0){badge.removeAttribute('hidden');}else{badge.setAttribute('hidden','');} }
+    }).catch(function(){ msg.textContent='✓ '+summary+' — reload to see changes.'; });
   }
   btn && btn.addEventListener('click', function(ev){
     var deep = ev.shiftKey;

@@ -15,10 +15,12 @@
   <div class="brand"><a href="/">🪨 <span>Stone Scanner</span></a></div>
   {% set p = request.url.path %}
   {% set cmp = compare_state() %}
+  {% set alerts = alert_state() %}
   <nav class="topnav">
     <a href="/" class="{{ 'active' if p == '/' }}">Search</a>
     <a href="/photo" class="{{ 'active' if p.startswith('/photo') }}">📷 By Photo</a>
     <a href="/new" class="{{ 'active' if p.startswith('/new') }}">✨ What's New</a>
+    <a href="/alerts" class="{{ 'active' if p.startswith('/alerts') }}">🔔 Alerts <span class="navcount alertcount" id="alertNavCount"{% if not alerts.unread %} hidden{% endif %}>{{ alerts.unread }}</span></a>
     <a href="/locations" class="{{ 'active' if p.startswith('/locations') }}">📍 Locations</a>
     <a href="/lists" class="{{ 'active' if p.startswith('/list') }}">📋 Lists</a>
     <a href="/compare" class="{{ 'active' if p.startswith('/compare') }}">⚖ Compare <span class="navcount" id="cmpNavCount"{% if not cmp.count %} hidden{% endif %}>{{ cmp.count }}</span></a>

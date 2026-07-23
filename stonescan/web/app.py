@@ -113,6 +113,24 @@ def _compare_state() -> dict:
 templates.env.globals["compare_state"] = _compare_state
 
 
+def _alert_state() -> dict:
+    """Unread catalog-change count for base.html's 🔔 nav badge. A template global (like
+    compare_state) so every page shows it without each route passing it in. Opens its own
+    short-lived connection and never raises: a DB predating the alert tables reads as all-
+    unread (the digest itself needs two crawls, so a fresh DB is simply 0)."""
+    try:
+        conn = db.connect()
+        try:
+            return {"unread": _alert_unread_count(conn)}
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return {"unread": 0}
+
+
+templates.env.globals["alert_state"] = _alert_state
+
+
 def _distinct(conn, column: str) -> list[str]:
     # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
     # is stone/tile only (it remains queryable on the Quality audit page).
@@ -229,6 +247,7 @@ def _register_nearest(conn, loc_miles: dict[str, float]):
 _search_cache: dict = {}
 _stock_cache: dict = {}
 _quality_cache: dict = {}
+_alert_cache: dict = {}
 _RESULT_TTL = 60.0
 
 
@@ -239,6 +258,7 @@ def _invalidate_caches() -> None:
     _search_cache.clear()
     _stock_cache.clear()
     _quality_cache.clear()
+    _alert_cache.clear()  # a crawl adds a snapshot -> new change events / badge count
     _NAME_WORDS = None  # the fuzzy-match vocabulary is derived from the catalog too
     db._stats_cache.clear()
 
@@ -1495,6 +1515,119 @@ def _stock_changes(conn) -> tuple[list[dict], list[dict], bool]:
     return _stock_cache[_sk][1]
 
 
+# --- Alerts: catalog-change digest (all four kinds, with unread signatures) ----
+#
+# Separate from _stock_changes (which /new and /watchlist keep using unchanged): the
+# alert digest adds the DOWN direction (sharp drops + sold-outs) and carries a per-change
+# signature for unread tracking. It compares each supplier's latest snapshot against its
+# own previous one at the alert grain (name_norm + thickness), aggregating the finish/form
+# variants that snapshot_history writes as separate rows — so a listing's stock is one
+# number per date and a variant split can't masquerade as a drop.
+
+_ALERT_ROWS_SQL = """
+WITH agg AS (
+    SELECT supplier_id, snapshot_date, name_norm, thickness,
+           SUM(slabs) AS slabs, MAX(material_type) AS material_type,
+           MAX(color) AS color, MAX(image_url) AS image_url
+    FROM history GROUP BY supplier_id, snapshot_date, name_norm, thickness
+),
+latest AS (SELECT supplier_id, MAX(snapshot_date) AS d FROM history GROUP BY supplier_id),
+prev AS (
+    SELECT h.supplier_id, MAX(h.snapshot_date) AS d
+    FROM history h JOIN latest l ON l.supplier_id = h.supplier_id AND h.snapshot_date < l.d
+    GROUP BY h.supplier_id
+)
+SELECT a.supplier_id, a.name_norm, a.thickness, a.material_type, a.color, a.image_url,
+       a.slabs AS latest_slabs, p.slabs AS prev_slabs, l.d AS latest_date, pr.d AS prev_date,
+       COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
+       (SELECT MIN(mm.id) FROM materials mm
+          WHERE mm.supplier_id = a.supplier_id AND mm.name_norm = a.name_norm
+                AND mm.thickness = a.thickness) AS id
+FROM agg a
+JOIN latest l ON l.supplier_id = a.supplier_id AND a.snapshot_date = l.d
+JOIN prev pr  ON pr.supplier_id = a.supplier_id
+LEFT JOIN agg p ON p.supplier_id = a.supplier_id AND p.snapshot_date = pr.d
+              AND p.name_norm = a.name_norm AND p.thickness = a.thickness
+JOIN suppliers s ON s.id = a.supplier_id
+"""
+
+# A sharp drop: fell to <= half AND by at least this many slabs (the absolute floor keeps
+# routine 2->1 sales out). A sold-out (in-stock -> 0) is its own kind, not a "drop".
+_ALERT_DROP_FLOOR = 5
+
+
+def _classify_alert(latest: int, prev):
+    """The alert kind for one listing's latest-vs-previous slab counts, or None.
+    `prev` is None when the listing was absent at the previous snapshot."""
+    if prev is None:
+        return "listed" if latest > 0 else None
+    if prev == 0:
+        return "restock" if latest > 0 else None
+    # prev > 0
+    if latest == 0:
+        return "soldout"
+    if latest * 2 <= prev and (prev - latest) >= _ALERT_DROP_FLOOR:
+        return "dropped"
+    return None
+
+
+_ALERT_KINDS = ("restock", "listed", "dropped", "soldout")
+
+
+def _alert_digest(conn) -> dict:
+    """The full catalog-change digest: {restock, listed, dropped, soldout, has_baseline}.
+    Each change item carries a stable `sig` for unread tracking. TTL-cached per DB (a crawl
+    clears it via _invalidate_caches)."""
+    sk = _db_path(conn)
+    hit = _alert_cache.get(sk)
+    if hit and time.time() - hit[0] < _RESULT_TTL:
+        return hit[1]
+    has_baseline = conn.execute(
+        "SELECT 1 FROM history GROUP BY supplier_id HAVING COUNT(DISTINCT snapshot_date) >= 2 LIMIT 1"
+    ).fetchone() is not None
+    digest = {k: [] for k in _ALERT_KINDS}
+    digest["has_baseline"] = has_baseline
+    if not has_baseline:
+        _alert_cache[sk] = (time.time(), digest)
+        return digest
+    for r in conn.execute(_ALERT_ROWS_SQL).fetchall():
+        latest = r["latest_slabs"] or 0
+        prev = r["prev_slabs"]  # None => absent at previous snapshot
+        kind = _classify_alert(latest, prev)
+        if not kind:
+            continue
+        item = dict(r)
+        item["kind"] = kind
+        item["latest_slabs"] = latest
+        item["prev_slabs"] = prev
+        item["sig"] = f"{kind}|{r['supplier_id']}|{r['name_norm']}|{r['thickness']}|{r['latest_date']}"
+        digest[kind].append(item)
+    # Order each bucket most-significant first, and cap (as _stock_changes does).
+    digest["restock"].sort(key=lambda x: -(x["latest_slabs"] or 0))
+    digest["listed"].sort(key=lambda x: -(x["latest_slabs"] or 0))
+    digest["dropped"].sort(key=lambda x: -((x["prev_slabs"] or 0) - (x["latest_slabs"] or 0)))
+    digest["soldout"].sort(key=lambda x: -(x["prev_slabs"] or 0))
+    for k in _ALERT_KINDS:
+        digest[k] = digest[k][:300]
+    _alert_cache[sk] = (time.time(), digest)
+    return digest
+
+
+def _stock_drops(conn) -> tuple[list[dict], list[dict]]:
+    """The DOWN direction of the digest: (sharp drops, sold outs). A thin view over
+    _alert_digest so the down-direction logic has a named, separately-testable entry point
+    while _stock_changes stays untouched."""
+    d = _alert_digest(conn)
+    return d["dropped"], d["soldout"]
+
+
+def _alert_unread_count(conn) -> int:
+    """How many current digest changes have not been marked seen — the nav badge number."""
+    digest = _alert_digest(conn)
+    seen = db.seen_alert_sigs(conn)
+    return sum(1 for k in _ALERT_KINDS for it in digest[k] if it["sig"] not in seen)
+
+
 @app.get("/new", response_class=HTMLResponse)
 def whats_new(request: Request, page: int = 1):
     """New arrivals (catalog-flagged) plus anything newly back in stock."""
@@ -1514,6 +1647,40 @@ def whats_new(request: Request, page: int = 1):
         "restock": restock, "newly_listed": newly_listed,
         "has_baseline": has_baseline, "stats": stats,
     })
+
+
+@app.get("/alerts", response_class=HTMLResponse)
+def alerts_page(request: Request):
+    """Catalog-change digest since each supplier's previous crawl — restocks, new listings,
+    sharp drops and sold-outs — with per-change unread tracking. Opening the page marks the
+    shown changes as seen (auto-clear), while still flagging which were unread at load."""
+    conn = db.connect()
+    digest = _alert_digest(conn)
+    seen = db.seen_alert_sigs(conn)
+    sigs = []
+    for kind in _ALERT_KINDS:
+        for it in digest[kind]:
+            it["unread"] = it["sig"] not in seen  # captured BEFORE marking, for the NEW badge
+            sigs.append(it["sig"])
+    db.mark_alerts_seen(conn, sigs)  # auto-clear: the nav badge reads 0 on the next render
+    total = sum(len(digest[k]) for k in _ALERT_KINDS)
+    stats = db.stats(conn)
+    conn.close()
+    return templates.TemplateResponse(request, "alerts.html", {
+        "digest": digest, "total": total, "stats": stats,
+    })
+
+
+@app.get("/api/alerts/count")
+def api_alerts_count():
+    """Unread change count for the 🔔 badge — polled by the refresh flow to relight it
+    live when a crawl finishes, without a page reload."""
+    conn = db.connect()
+    try:
+        n = _alert_unread_count(conn)
+    finally:
+        conn.close()
+    return JSONResponse({"unread": n})
 
 
 @app.get("/locations", response_class=HTMLResponse)
