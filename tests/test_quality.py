@@ -1265,6 +1265,26 @@ class ThicknessRepairTests(unittest.TestCase):
         self.assertEqual(self._thickness(broken), "3cm")
         self.assertEqual(self._thickness(from_name), "2cm")
 
+    def test_cli_reclassifies_the_database_it_was_given(self):
+        """The CLI used to drop its path argument and always rewrite the app's own
+        database — so a run aimed at a copy silently mutated live data instead."""
+        from unittest.mock import patch
+        from stonescan import reclassify as rc
+        target = self._mat("Cli Target", "30cm", "mm")
+        # Point the default at a DIFFERENT database: if the argument were ignored, the
+        # pass would land there (or fail) instead of on the file we asked for.
+        other = os.path.join(self.tmp, "untouched.db")
+        db.init_db(other).close()
+        with patch.object(db, "DEFAULT_DB", other):
+            rc.main([self.path])
+        self.assertEqual(self._thickness(target), "3cm", "the given database is the one rewritten")
+        c = db.connect(other)
+        try:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM materials").fetchone()[0], 0,
+                             "the default database must be left alone")
+        finally:
+            c.close()
+
 
 class ClassificationHygieneTests(unittest.TestCase):
     """Classifier keyword gaps, same-name majority-vote recovery, accessory separation,

@@ -4,7 +4,8 @@ Use after improving the classifier in normalize.py — it re-derives the categor
 and cross-supplier match key from each row's stored category/subcategory/name,
 so you don't have to re-crawl.
 
-    python -m stonescan.reclassify
+    python -m stonescan.reclassify                  # the app's database
+    python -m stonescan.reclassify path/to/other.db # a specific database
 """
 
 from __future__ import annotations
@@ -110,5 +111,23 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     conn.close()
 
 
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point.
+
+    Takes an optional database path. Without one it rewrites the app's own database,
+    which is why the argument exists at all: this pass mutates every row in place, so
+    silently ignoring a path the caller supplied — as this did — points a dry run at
+    live data.
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="Re-derive material_type, material_key, colour and thickness in place.")
+    ap.add_argument("db", nargs="?", default=str(db.DEFAULT_DB),
+                    help="database to reclassify (default: the app's database)")
+    args = ap.parse_args(argv)
+    reclassify(args.db)
+
+
 if __name__ == "__main__":
-    reclassify()
+    main()
