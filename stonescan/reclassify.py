@@ -14,6 +14,53 @@ from .normalize import (canonical_type, clean_color, derive_color_from_name, mat
                         normalize_thickness)
 
 
+def recover_by_majority_vote(conn) -> int:
+    """Give an 'Other' row the material type its same-name siblings agree on.
+
+    The classifier reads one row at a time, so a listing whose own name/category carries
+    no type word lands in 'Other' even when the same stone is confidently typed by five
+    other suppliers. This pass is the cross-row view that per-row classification can't
+    have. Only a STRICT majority wins — a tie leaves the row in 'Other' rather than
+    picking arbitrarily, and a row with no typed siblings is never touched. Returns the
+    number of rows recovered.
+
+    material_key is recomputed alongside, because the key embeds the type.
+    """
+    tallies: dict[str, list[tuple[int, str]]] = {}
+    for r in conn.execute(
+        """SELECT m.name_norm AS name_norm, m.material_type AS mtype, COUNT(*) AS n
+             FROM materials m
+            WHERE m.material_type NOT IN ('Other', '')
+              AND COALESCE(m.name_norm, '') <> ''
+              AND m.name_norm IN (SELECT name_norm FROM materials
+                                   WHERE material_type = 'Other'
+                                     AND COALESCE(name_norm, '') <> '')
+            GROUP BY m.name_norm, m.material_type"""
+    ):
+        tallies.setdefault(r["name_norm"], []).append((r["n"], r["mtype"]))
+
+    winners: dict[str, str] = {}
+    for name, votes in tallies.items():
+        votes.sort(key=lambda v: v[0], reverse=True)
+        if len(votes) == 1 or votes[0][0] > votes[1][0]:   # strict majority only
+            winners[name] = votes[0][1]
+    if not winners:
+        return 0
+
+    updates = []
+    for t in conn.execute(
+        "SELECT id, item_name, name_norm FROM materials WHERE material_type = 'Other'"
+    ):
+        win = winners.get(t["name_norm"])
+        if win:
+            updates.append((win, material_key(t["item_name"], win), t["id"]))
+    if updates:
+        conn.executemany(
+            "UPDATE materials SET material_type = ?, material_key = ? WHERE id = ?", updates)
+        conn.commit()
+    return len(updates)
+
+
 def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     conn = db.connect(db_path)
     # Repair any millimetre-as-centimetre thicknesses first (idempotent, and this CLI can
@@ -41,6 +88,10 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
         updates,
     )
     conn.commit()
+
+    voted = recover_by_majority_vote(conn)
+    if voted:
+        print(f"Recovered {voted} 'Other' row(s) from same-name siblings.")
 
     # Re-fold any curator-confirmed merges: reclassify recomputes material_key from
     # scratch, which would otherwise undo every merge until the next crawl.

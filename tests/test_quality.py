@@ -1266,5 +1266,139 @@ class ThicknessRepairTests(unittest.TestCase):
         self.assertEqual(self._thickness(from_name), "2cm")
 
 
+class ClassificationHygieneTests(unittest.TestCase):
+    """Classifier keyword gaps, same-name majority-vote recovery, accessory separation,
+    and the colour/key hygiene rules — with the guarantee that nothing already typed
+    correctly is lost and nothing unclassifiable is forced into a type."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=6)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _mat(self, name, mtype="Other", cat="", sub="", sid=1):
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key, material_type,
+                  category, subcategory, available_slabs)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (sid, f"{sid}-{name}-{mtype}", name, name.upper(),
+             nz.material_key(name, mtype), mtype, cat, sub, 1))
+        self.conn.commit()
+
+    def _type_of(self, name):
+        return self.conn.execute(
+            "SELECT material_type FROM materials WHERE item_name = ?", (name,)).fetchone()[0]
+
+    # --- classifier keyword gaps (AC-1) --------------------------------------
+
+    def test_qtz_abbreviation_is_quartz(self):
+        self.assertEqual(nz.canonical_type("ENGINEERED SLAB", "CALACATTA",
+                                           "SP QTZ FERRARA ORO 128x64x3CM-F"), "Quartz")
+
+    def test_viatera_is_quartz_like_every_other_quartz_brand(self):
+        self.assertEqual(nz.canonical_type("LX Viatera", "", "Minuet"), "Quartz")
+
+    def test_calcite_and_serpentine_get_their_own_types(self):
+        self.assertEqual(nz.canonical_type("Calcite", "", "AQUAMARINE POLISHED CALCITE SLAB"),
+                         "Calcite")
+        self.assertEqual(nz.canonical_type("serpentine", "serpentine", "Verde Alpi Serpentine"),
+                         "Serpentine")
+
+    def test_ceramic_does_not_steal_from_porcelain(self):
+        self.assertEqual(nz.canonical_type("Ceramic", "Ceramic", "Ice White Glossy"), "Ceramic")
+        self.assertEqual(nz.canonical_type("Porcelain", "", "Some Porcelain Slab"), "Porcelain")
+
+    def test_catchall_ceramic_category_never_demotes_a_named_brand(self):
+        # Suppliers file branded sintered slabs under a generic "Ceramic" category; the
+        # name is the better signal, so these must stay Sintered Stone / Mosaic.
+        self.assertEqual(nz.canonical_type("Ceramic", "", "DEKTON KERANIUM"), "Sintered Stone")
+        self.assertEqual(nz.canonical_type("Ceramic", "", "NEOLITH Calacatta"), "Sintered Stone")
+        self.assertEqual(nz.canonical_type("Ceramic", "", "Hexagon Mosaic Blend"), "Mosaic")
+
+    # --- accessories (AC-3) ---------------------------------------------------
+
+    def test_tools_and_kitchen_accessories_are_separated(self):
+        for name, cat, sub in [
+            ("DIAMAR MADE IN ITALY 3mm DREMEL KIT ELECTROPLATED", "", ""),
+            ("IMS MADE IN ITALY TOLL HOLDER CONE 1/2 GAS PARK", "", ""),
+            ("MADE IN ITALY LUPATO ROCKER 115 x 105 mm SCRATCHING TOOL", "", ""),
+            ("Colander For Q6701", "Soci Stainless", "Kitchen Accessories"),
+            ("511 IMPREGNATOR PINT", "OTHER", ""),
+        ]:
+            self.assertEqual(nz.canonical_type(cat, sub, name), "Accessory / Non-Slab", name)
+
+    def test_real_stones_are_not_swept_into_accessories(self):
+        # Guards the over-broad-substring hazard the accessory list already worries about.
+        self.assertEqual(nz.canonical_type("", "", "Steel Grey Granite 3cm"), "Granite")
+        self.assertEqual(nz.canonical_type("", "", "Silestone Blanco Maple SLAB"), "Quartz")
+
+    # --- majority vote (AC-2, AC-4) -------------------------------------------
+
+    def test_majority_vote_recovers_other_rows(self):
+        from stonescan.reclassify import recover_by_majority_vote
+        self._mat("Absolute Black", "Granite", sid=1)
+        self._mat("Absolute Black", "Granite", sid=2)
+        self._mat("Absolute Black", "Other", sid=3)          # the stray
+        self.assertEqual(recover_by_majority_vote(self.conn), 1)
+        types = {r[0] for r in self.conn.execute(
+            "SELECT material_type FROM materials WHERE item_name = 'Absolute Black'")}
+        self.assertEqual(types, {"Granite"})
+
+    def test_tie_leaves_the_row_in_other(self):
+        from stonescan.reclassify import recover_by_majority_vote
+        self._mat("Taj Mahal", "Granite", sid=1)
+        self._mat("Taj Mahal", "Quartzite", sid=2)           # 1-1: no majority
+        self._mat("Taj Mahal", "Other", sid=3)
+        self.assertEqual(recover_by_majority_vote(self.conn), 0)
+        self.assertIn("Other", {r[0] for r in self.conn.execute(
+            "SELECT material_type FROM materials WHERE item_name = 'Taj Mahal'")})
+
+    def test_row_with_no_typed_siblings_stays_other(self):
+        from stonescan.reclassify import recover_by_majority_vote
+        self._mat("Mystery Pattern", "Other", sid=1)
+        self.assertEqual(recover_by_majority_vote(self.conn), 0)
+        self.assertEqual(self._type_of("Mystery Pattern"), "Other")
+
+    def test_majority_vote_recomputes_the_key(self):
+        from stonescan.reclassify import recover_by_majority_vote
+        self._mat("Blue Bahia", "Granite", sid=1)
+        self._mat("Blue Bahia", "Other", sid=2)
+        recover_by_majority_vote(self.conn)
+        keys = {r[0] for r in self.conn.execute(
+            "SELECT material_key FROM materials WHERE item_name = 'Blue Bahia'")}
+        self.assertEqual(keys, {"blue bahia|granite"}, "key must follow the recovered type")
+
+    def test_existing_types_are_never_downgraded(self):
+        from stonescan.reclassify import recover_by_majority_vote
+        self._mat("River White", "Granite", sid=1)
+        recover_by_majority_vote(self.conn)
+        self.assertEqual(self._type_of("River White"), "Granite")
+
+    # --- colour + key hygiene (AC-5, AC-6) ------------------------------------
+
+    def test_color_keeps_real_lists_and_strips_descriptions(self):
+        self.assertEqual(nz.clean_color("Gray, Tan, White, Beige"), "Gray, Tan, White, Beige")
+        self.assertEqual(
+            nz.clean_color("Beige,Shell Reef Brushed 24 X 48 2 Cm Limestone Tile"), "Beige")
+        self.assertEqual(nz.clean_color("Amarillo Santa Cecilia"), "")   # a stone name
+        self.assertEqual(nz.clean_color("1054"), "")                     # numeric id
+        self.assertEqual(nz.clean_color(""), "")
+
+    def test_key_ignores_finish_and_size_noise(self):
+        clean = nz.material_key("Cassablanca", "Quartzite")
+        self.assertEqual(nz.material_key("Cassablanca Polished126.5 x 78.5", "Quartzite"), clean)
+        self.assertEqual(nz.material_key("Cassablanca Unpolished 3cm", "Quartzite"), clean)
+        # The actual defect: the same listing at two sizes split into two materials.
+        # (Descriptive words like "slab" stay — only finish/size noise is stripped.)
+        self.assertEqual(
+            nz.material_key("Baltic Unpolished Porcelain Slab 127.5x63.7x1.2", "Porcelain"),
+            nz.material_key("Baltic Polished Porcelain Slab 120x60x1.2", "Porcelain"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
