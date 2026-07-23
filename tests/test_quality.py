@@ -952,5 +952,133 @@ class ImageSearchTests(unittest.TestCase):
         self.assertAlmostEqual(float(np.linalg.norm(v)), 1.0, places=3)
 
 
+class CompareTests(unittest.TestCase):
+    """The compare tray (persistence, the 4-item cap, idempotence) and /compare column
+    assembly: availability aggregates, observed-price bucketing, alias-follow, gone
+    columns, and winner-mark computation."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=6)
+
+    def tearDown(self):
+        from stonescan.web import app
+        app._search_cache.clear()
+        self.conn.close()
+
+    def _mat(self, sid, key, *, slabs=0, price="", form="SLAB", uom="",
+             length=0, width=0, color="", name=None):
+        base = key.rsplit("|", 1)[0]
+        mt = key.rsplit("|", 1)[1].title() if "|" in key else "Other"
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key, material_type,
+                  color, product_form, uom, available_slabs, avg_length, avg_width, price_range)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (sid, f"{sid}-{base}-{form}-{slabs}", name or base.title(), (name or base).upper(),
+             key, mt, color, form, uom, slabs, length, width, price))
+        self.conn.commit()
+
+    @staticmethod
+    def _now():
+        return "2026-07-23T00:00:00+00:00"
+
+    # --- tray persistence -----------------------------------------------------
+
+    def test_cap_refuses_fifth_and_keeps_four(self):
+        for k in ["a|marble", "b|marble", "c|marble", "d|marble"]:
+            self.assertEqual(db.add_to_compare(self.conn, k, k, "", self._now()), "added")
+        self.assertEqual(db.add_to_compare(self.conn, "e|marble", "e", "", self._now()), "full")
+        self.assertEqual(db.compare_count(self.conn), 4)
+        self.assertEqual([t["material_key"] for t in db.get_compare(self.conn)],
+                         ["a|marble", "b|marble", "c|marble", "d|marble"])
+
+    def test_add_idempotent_and_remove_is_noop(self):
+        self.assertEqual(db.add_to_compare(self.conn, "a|marble", "A", "", self._now()), "added")
+        self.assertEqual(db.add_to_compare(self.conn, "a|marble", "A", "", self._now()), "exists")
+        self.assertEqual(db.compare_count(self.conn), 1)
+        db.remove_from_compare(self.conn, "not|there")   # absent -> no error, no change
+        self.assertEqual(db.compare_count(self.conn), 1)
+        db.remove_from_compare(self.conn, "a|marble")
+        self.assertEqual(db.compare_count(self.conn), 0)
+
+    def test_missing_table_reads_as_empty(self):
+        # connect() does NOT create tables, so compare_tray is absent here.
+        raw = db.connect(os.path.join(self.tmp, "raw.db"))
+        try:
+            self.assertEqual(db.compare_count(raw), 0)
+            self.assertEqual(db.get_compare(raw), [])
+        finally:
+            raw.close()
+
+    # --- column assembly ------------------------------------------------------
+
+    def test_column_availability_and_price_buckets(self):
+        from stonescan.web import app
+        self._mat(1, "alpha|marble", slabs=10, price="$11.90/sf", length=120, width=70, color="White")
+        self._mat(2, "alpha|marble", slabs=25, price="$570")       # whole-slab total, not /sf
+        self._mat(3, "alpha|marble", slabs=5, price="Group 5")     # tier code -> dropped
+        db.add_to_compare(self.conn, "alpha|marble", "Alpha", "", self._now())
+        cols, _ = app._compare_columns(self.conn)
+        self.assertEqual(len(cols), 1)
+        c = cols[0]
+        self.assertFalse(c["gone"])
+        self.assertEqual(c["suppliers"], 3)
+        self.assertEqual(c["deepest_yard"]["slabs"], 25)
+        self.assertTrue(c["deepest_yard"]["supplier"].startswith("s2"))
+        self.assertEqual(c["total_slabs"], 40)
+        # the two real money shapes land in their own buckets; the tier code in neither
+        self.assertAlmostEqual(c["prices"]["per_sqft"]["low"], 11.90)
+        self.assertEqual(c["prices"]["per_sqft"]["n"], 1)
+        self.assertAlmostEqual(c["prices"]["slab_total"]["low"], 570.0)
+        self.assertEqual(c["prices"]["slab_total"]["n"], 1)
+
+    def test_alias_follows_merge_and_gone_column_keeps_snapshot(self):
+        from stonescan.web import app
+        self._mat(1, "taj mahal|quartzite", slabs=9)
+        self._mat(2, "taj mahal|quartzite", slabs=4)
+        db.add_alias(self.conn, "taj mahal|granite", "taj mahal|quartzite", "Quartzite")
+        # Tray holds the OLD merged-away key plus a genuinely-gone key.
+        db.add_to_compare(self.conn, "taj mahal|granite", "Taj Mahal", "", self._now())
+        db.add_to_compare(self.conn, "ghost|marble", "Ghost Stone", "http://x/g.jpg", self._now())
+        cols, _ = app._compare_columns(self.conn)
+        merged, gone = cols[0], cols[1]
+        self.assertFalse(merged["gone"])
+        self.assertEqual(merged["key"], "taj mahal|quartzite")
+        self.assertEqual(merged["suppliers"], 2)
+        self.assertTrue(gone["gone"])
+        self.assertEqual(gone["name"], "Ghost Stone")
+        self.assertEqual(gone["image"], "http://x/g.jpg")
+
+    # --- winner marks ---------------------------------------------------------
+
+    def test_winner_marks_leader_only_never_tie_or_single(self):
+        from stonescan.web import app
+        clear = [{"suppliers": 3}, {"suppliers": 1}, {"gone": True, "suppliers": 9}]
+        self.assertEqual(app._compare_winner(clear, lambda c: c.get("suppliers"), "max"), 0)
+        tie = [{"suppliers": 2}, {"suppliers": 2}]
+        self.assertIsNone(app._compare_winner(tie, lambda c: c.get("suppliers"), "max"))
+        single = [{"v": 5.0}, {"v": None}]
+        self.assertIsNone(app._compare_winner(single, lambda c: c.get("v"), "max"))
+        # 'min' mode: lowest $/sf wins
+        price = [{"v": 20.0}, {"v": 12.0}, {"v": 30.0}]
+        self.assertEqual(app._compare_winner(price, lambda c: c.get("v"), "min"), 1)
+
+    def test_winner_map_over_real_columns(self):
+        from stonescan.web import app
+        self._mat(1, "a|marble", slabs=40)
+        self._mat(2, "a|marble", slabs=5)     # a: 2 suppliers, deepest 40, total 45
+        self._mat(3, "b|marble", slabs=20)    # b: 1 supplier,  deepest 20, total 20
+        db.add_to_compare(self.conn, "a|marble", "A", "", self._now())
+        db.add_to_compare(self.conn, "b|marble", "B", "", self._now())
+        cols, winners = app._compare_columns(self.conn)
+        self.assertEqual(winners["suppliers"], 0)   # a has more suppliers
+        self.assertEqual(winners["deepest"], 0)     # a's deepest yard is bigger
+        self.assertEqual(winners["total"], 0)       # a has more total slabs
+        self.assertIsNone(winners["nearest"])       # no near origin -> no distances
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -69,6 +69,21 @@
          their own real link in source_url. #}
       <a class="btn" href="{{ product_url(m.supplier_host, m.item_id, m.source_url) }}" target="_blank" rel="noopener">View this on {{ m.supplier_name }}'s live catalog ↗</a>
       <a class="btn ghost" href="/material?key={{ m.material_key | urlencode }}">Compare all suppliers</a>
+      {% if m.material_key %}
+      {% set cmp = compare_state() %}
+      <form class="cmpform cmptoggle js-compare" method="post" action="/compare/toggle">
+        <input type="hidden" name="material_key" value="{{ m.material_key }}">
+        <input type="hidden" name="item_name" value="{{ m.item_name }}">
+        <input type="hidden" name="image_url" value="{{ m.image_url or '' }}">
+        <input type="hidden" name="back" value="/item?id={{ m.id }}">
+        <label class="cmpchk cmpchk-btn" title="Add this material to the compare tray">
+          <input type="checkbox" name="on" data-cmpkey="{{ m.material_key }}" onchange="this.form.requestSubmit()" {{ 'checked' if m.material_key in cmp.keyset }}>
+          <span class="cmpchk-face" aria-hidden="true">⚖</span>
+          <span class="cmpchk-text"></span>
+        </label>
+        <noscript><button type="submit" class="btn ghost">± Compare</button></noscript>
+      </form>
+      {% endif %}
       {% if lists %}
       <form class="addform detailadd" method="post" action="/lists/add">
         <input type="hidden" name="material_id" value="{{ m.id }}">

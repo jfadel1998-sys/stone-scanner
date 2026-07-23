@@ -88,10 +88,31 @@
 {% macro mat_href(r) -%}
 {{ ('/material?key=' ~ (r.material_key|urlencode)) if r.material_key else ('/item?id=' ~ r.id) }}
 {%- endmacro %}
+{# Compare checkbox — only for canonical materials (a material_key); empty-key products
+   have nothing to compare against (NG-2). Toggles the tray without reloading (base.html
+   intercepts .js-compare); the <noscript> button is the JS-off fallback. #}
+{% set cmpkeys = compare_state().keyset %}
+{# cmpkeys is passed in explicitly: a Jinja macro can't see a block-local {% set %}. #}
+{% macro cmp_control(r, cmpkeys) -%}
+{% if r.material_key %}
+<form class="cmpform js-compare" method="post" action="/compare/toggle">
+  <input type="hidden" name="material_key" value="{{ r.material_key }}">
+  <input type="hidden" name="item_name" value="{{ mat_name(r)|trim }}">
+  <input type="hidden" name="image_url" value="{{ r.image_url or r.rep_image or '' }}">
+  <input type="hidden" name="back" value="{{ here }}">
+  <label class="cmpchk" title="Add to compare">
+    <input type="checkbox" name="on" data-cmpkey="{{ r.material_key }}" onchange="this.form.requestSubmit()" {{ 'checked' if r.material_key in cmpkeys }}>
+    <span class="cmpchk-face" aria-hidden="true">⚖</span>
+  </label>
+  <noscript><button type="submit" class="cmpchk-fallback">± compare</button></noscript>
+</form>
+{% endif %}
+{%- endmacro %}
 
 {% if view == 'grid' %}
 <div class="cardgrid">
   {% for r in rows %}
+  <div class="matcardwrap">
   <a class="matcard" href="{{ mat_href(r) }}">
     {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'">
     {% elif r.rep_image %}<img loading="lazy" src="{{ r.rep_image }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'"><span class="repbadge" title="A photo of the same-named stone from another listing — representative only; the actual slab varies">representative</span>
@@ -105,6 +126,8 @@
       </span>
     </span>
   </a>
+  {% if r.material_key %}<div class="cmpcard">{{ cmp_control(r, cmpkeys) }}</div>{% endif %}
+  </div>
   {% else %}
   <p class="empty">No materials found. Try a broader search, or run a crawl first.</p>
   {% endfor %}
@@ -126,7 +149,7 @@
         {% elif r.rep_image %}<img class="thumb" loading="lazy" src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone — the actual slab varies" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
         {% else %}<span class="thumb noimg"></span>{% endif %}</a>
       </td>
-      <td class="name"><a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}{% if r.rep_image %} <span class="repchip" title="The shown photo is a representative of the same-named stone from another listing — natural stone varies">≈ ref photo</span>{% endif %}</td>
+      <td class="name">{{ cmp_control(r, cmpkeys) }}<a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}{% if r.rep_image %} <span class="repchip" title="The shown photo is a representative of the same-named stone from another listing — natural stone varies">≈ ref photo</span>{% endif %}</td>
       <td>{{ r.material_type }}</td>
       <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
       <td class="num">{{ r.suppliers }}</td>
