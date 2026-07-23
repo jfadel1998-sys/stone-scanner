@@ -903,3 +903,34 @@ footer {
 .cmp-table td.win { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); font-weight: 700; }
 .cmp-legend { padding: 0 var(--pad-x) 30px; color: var(--muted); font-size: 12px; }
 .cmp-winkey { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); vertical-align: -1px; margin-right: 4px; }
+
+/* ============================================================================
+   Alerts — the 🔔 nav badge + /alerts change digest.
+   ========================================================================== */
+
+/* The alert badge draws the eye more than the neutral compare count: it means
+   "something changed", so it uses the terracotta attention accent. */
+.alertcount { background: var(--brick); color: #fff; }
+
+.alert-head { padding: 16px var(--pad-x) 4px; }
+.alert-head h1 { margin: 0 0 4px; font-family: var(--font-display); font-size: 27px; letter-spacing: -.3px; }
+.alert-head .muted { margin: 0; max-width: 70ch; font-size: 13px; }
+
+.alert-empty { text-align: center; padding: 44px var(--pad-x) 60px; color: var(--ink-soft); }
+.alert-empty-icon { font-size: 40px; margin: 0 0 4px; opacity: .55; }
+.alert-empty h2 { margin: 0 0 8px; font-family: var(--font-display); }
+.alert-empty p { margin: 0 auto; max-width: 52ch; font-size: 13.5px; }
+
+/* Each section gets a colored left edge keyed to its direction. */
+.alert-sec { border-left: 3px solid var(--line-strong); padding-left: 14px; }
+.alert-sec h2 { font-size: 17px; }
+.alert-up   { border-left-color: var(--accent); }
+.alert-new  { border-left-color: var(--gold); }
+.alert-drop { border-left-color: var(--brick); }
+.alert-out  { border-left-color: var(--brick); }
+
+/* Unread rows: a subtle tint + the NEW chip until the page marks them seen. */
+.alert-unread { background: var(--accent-soft); }
+.alert-change { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.alert-drop .alert-change, .alert-out .alert-change { color: var(--brick-ink); font-weight: 600; }
+.alert-up .alert-change { color: var(--accent-soft-ink); font-weight: 600; }

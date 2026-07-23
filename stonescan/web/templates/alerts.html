@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Alerts · Stone Scanner{% endblock %}
+
+{% block headeraside %}
+<div class="stats">{% if stats.last_updated %}{% if stats.oldest_updated and stats.oldest_updated[:10] != stats.last_updated[:10] %}<span title="Suppliers are crawled on different days — oldest data → newest">crawled {{ stats.oldest_updated[:10] }} → {{ stats.last_updated[:10] }} UTC</span>{% else %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}{% endif %}</div>
+{% endblock %}
+
+{# One change row. `change` is the pre-formatted quantity delta for this kind. #}
+{% macro alert_row(it, change) -%}
+<tr class="{{ 'alert-unread' if it.unread }}">
+  <td class="thumbcell">{% if it.id %}<a href="/item?id={{ it.id }}">{% endif %}{% if it.image_url %}<img class="thumb" loading="lazy" src="{{ it.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}{% if it.id %}</a>{% endif %}</td>
+  <td class="name">{% if it.id %}<a class="itemlink" href="/item?id={{ it.id }}">{{ it.name_norm|title }}</a>{% else %}{{ it.name_norm|title }}{% endif %}{% if it.unread %} <span class="new">NEW</span>{% endif %}</td>
+  <td>{{ it.material_type }}</td>
+  <td>{% if it.color %}<span class="chip">{{ it.color }}</span>{% endif %}</td>
+  <td>{{ it.thickness }}</td>
+  <td>{{ it.supplier_name }}</td>
+  <td class="num alert-change">{{ change }}</td>
+</tr>
+{%- endmacro %}
+
+{% macro alert_section(cls, title, hint, items, kind) -%}
+{% if items %}
+<section class="block alert-sec {{ cls }}">
+  <h2>{{ title }} <span class="muted">— {{ hint }} ({{ items|length }})</span></h2>
+  <table class="materials">
+    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th><th>Supplier</th><th class="num">{{ 'Slabs' if kind in ('restock','listed') else 'Change' }}</th></tr></thead>
+    <tbody>
+      {% for it in items %}
+        {% if kind == 'dropped' %}{{ alert_row(it, it.prev_slabs ~ ' → ' ~ it.latest_slabs) }}
+        {% elif kind == 'soldout' %}{{ alert_row(it, it.prev_slabs ~ ' → 0') }}
+        {% elif kind == 'restock' %}{{ alert_row(it, '0 → ' ~ it.latest_slabs) }}
+        {% else %}{{ alert_row(it, it.latest_slabs) }}{% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<div class="alert-head">
+  <h1>🔔 Alerts</h1>
+  <p class="muted">What changed across every catalog since each supplier's previous crawl. Opening this page marks these as seen.</p>
+</div>
+
+{% if not digest.has_baseline %}
+<div class="alert-empty">
+  <p class="alert-empty-icon">🔔</p>
+  <h2>No alerts yet</h2>
+  <p>Alerts compare each supplier's latest crawl against its previous one, so they appear once a supplier has been crawled at least twice. Run <b>↻ Refresh</b> now, and again next time, to start the baseline.</p>
+</div>
+{% elif total == 0 %}
+<div class="alert-empty">
+  <p class="alert-empty-icon">✓</p>
+  <h2>Nothing changed</h2>
+  <p>No restocks, new listings, sharp drops or sold-outs since each supplier's previous crawl.</p>
+</div>
+{% else %}
+{{ alert_section('alert-up', '↑ Restocked', "listed with zero stock at the supplier's previous crawl, in stock now", digest.restock, 'restock') }}
+{{ alert_section('alert-new', '✨ New listings', "first seen in the supplier's latest crawl", digest.listed, 'listed') }}
+{{ alert_section('alert-drop', '↓ Sharp drops', "fell to half or less (and by ≥5 slabs) since the previous crawl", digest.dropped, 'dropped') }}
+{{ alert_section('alert-out', '✖ Sold out', "in stock at the previous crawl, zero now", digest.soldout, 'soldout') }}
+{% endif %}
+{% endblock %}
+
+{% block footer %}Changes are detected by comparing each supplier's two most recent crawls. Quantities are slab counts (tile area is excluded).{% endblock %}

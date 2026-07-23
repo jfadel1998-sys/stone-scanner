@@ -198,6 +198,17 @@ CREATE TABLE IF NOT EXISTS compare_tray (
     added_at     TEXT
 );
 
+-- Seen catalog-change alerts: one row per acknowledged change event, keyed by a stable
+-- signature (kind|supplier_id|name_norm|thickness|latest_snapshot_date). The /alerts page
+-- and the nav badge treat any current digest change whose signature is absent here as
+-- unread; opening /alerts inserts the shown signatures. A later crawl that re-detects the
+-- same product change stamps a new latest_snapshot_date, hence a new signature — so it is
+-- unread again. Derived/prunable: safe to clear.
+CREATE TABLE IF NOT EXISTS alert_seen (
+    sig      TEXT PRIMARY KEY,
+    seen_at  TEXT
+);
+
 -- Materialized per-product rollup: one row per search 'grp' (material_key, or
 -- 'id:<id>' for empty-key products), holding the cross-supplier aggregates the
 -- search's outer query computes. Lets the default/type browse be an index scan
@@ -933,6 +944,31 @@ def resolve_alias(conn: sqlite3.Connection, material_key: str) -> str:
     except sqlite3.OperationalError:
         pass
     return key
+
+
+# --- Alerts: seen-tracking for the catalog-change digest ----------------------
+
+def seen_alert_sigs(conn: sqlite3.Connection) -> set[str]:
+    """Signatures of change events the user has already seen. Returns an empty set
+    (never raises) when the table is absent, so a DB predating it treats everything as
+    unread rather than 500-ing."""
+    try:
+        return {r[0] for r in conn.execute("SELECT sig FROM alert_seen")}
+    except sqlite3.OperationalError:
+        return set()
+
+
+def mark_alerts_seen(conn: sqlite3.Connection, sigs) -> None:
+    """Record change-event signatures as seen (idempotent). A no-op on an empty list."""
+    sigs = [s for s in sigs if s]
+    if not sigs:
+        return
+    now = _now_iso()
+    conn.executemany(
+        "INSERT OR IGNORE INTO alert_seen (sig, seen_at) VALUES (?, ?)",
+        [(s, now) for s in sigs],
+    )
+    conn.commit()
 
 
 # --- Data quality: cross-supplier material_key merges -------------------------

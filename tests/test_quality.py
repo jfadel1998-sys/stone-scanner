@@ -1080,5 +1080,110 @@ class CompareTests(unittest.TestCase):
         self.assertIsNone(winners["nearest"])       # no near origin -> no distances
 
 
+class AlertTests(unittest.TestCase):
+    """The catalog-change digest: the new DOWN direction (sharp drops + sold-outs) with
+    its thresholds, the up direction unchanged, per-change unread signatures + seen
+    tracking, and the no-baseline / missing-table safety nets."""
+
+    PREV = "2026-07-01"
+    LATEST = "2026-07-02"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=4)
+
+    def tearDown(self):
+        from stonescan.web import app
+        app._alert_cache.clear()
+        self.conn.close()
+
+    def _hist(self, sid, date, name, thickness, slabs, mtype="Granite"):
+        self.conn.execute(
+            """INSERT INTO history (snapshot_date, supplier_id, material_key, name_norm,
+                 thickness, material_type, color, slabs, image_url)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (date, sid, f"{name}|{mtype.lower()}", name.upper(), thickness, mtype, "", slabs, ""))
+        self.conn.commit()
+
+    def _digest(self):
+        from stonescan.web import app
+        app._alert_cache.clear()
+        return app._alert_digest(self.conn)
+
+    def _names(self, bucket):
+        return {it["name_norm"] for it in bucket}
+
+    def _seed_two_snapshots(self):
+        # Supplier 1 across a previous and a latest snapshot, one listing per behavior.
+        self._hist(1, self.PREV, "drop big", "3cm", 40);   self._hist(1, self.LATEST, "drop big", "3cm", 6)    # sharp drop
+        self._hist(1, self.PREV, "sold out", "3cm", 8);    self._hist(1, self.LATEST, "sold out", "3cm", 0)    # sold out
+        self._hist(1, self.PREV, "tiny drop", "3cm", 6);   self._hist(1, self.LATEST, "tiny drop", "3cm", 3)   # below the 5-slab floor
+        self._hist(1, self.PREV, "small dip", "3cm", 40);  self._hist(1, self.LATEST, "small dip", "3cm", 39)  # below 50%
+        self._hist(1, self.PREV, "came back", "3cm", 0);   self._hist(1, self.LATEST, "came back", "3cm", 5)   # restock
+        self._hist(1, self.LATEST, "brand new", "3cm", 7)                                                       # new listing (absent prev)
+
+    def test_sharp_drop_and_soldout_thresholds(self):
+        self._seed_two_snapshots()
+        d = self._digest()
+        self.assertIn("DROP BIG", self._names(d["dropped"]))
+        self.assertIn("SOLD OUT", self._names(d["soldout"]))
+        # Below the absolute floor and below 50% are NOT flagged in either down bucket.
+        down = self._names(d["dropped"]) | self._names(d["soldout"])
+        self.assertNotIn("TINY DROP", down)
+        self.assertNotIn("SMALL DIP", down)
+        # The drop carries the real before/after numbers.
+        big = next(it for it in d["dropped"] if it["name_norm"] == "DROP BIG")
+        self.assertEqual((big["prev_slabs"], big["latest_slabs"]), (40, 6))
+
+    def test_up_direction_still_detected(self):
+        self._seed_two_snapshots()
+        d = self._digest()
+        self.assertIn("CAME BACK", self._names(d["restock"]))
+        self.assertIn("BRAND NEW", self._names(d["listed"]))
+
+    def test_signature_is_per_change_event(self):
+        self._seed_two_snapshots()
+        d = self._digest()
+        big = next(it for it in d["dropped"] if it["name_norm"] == "DROP BIG")
+        self.assertEqual(big["sig"], f"dropped|1|DROP BIG|3cm|{self.LATEST}")
+        # A re-drop at a THIRD snapshot is a new event: same product, new date -> new sig.
+        third = "2026-07-03"
+        self._hist(1, third, "drop big", "3cm", 1)  # 6 -> 1: ≤half and ≥5 fewer = sharp drop
+        d2 = self._digest()
+        big2 = next(it for it in d2["dropped"] if it["name_norm"] == "DROP BIG")
+        self.assertEqual(big2["sig"], f"dropped|1|DROP BIG|3cm|{third}")
+        self.assertNotEqual(big["sig"], big2["sig"])
+
+    def test_seen_tracking_and_unread_count(self):
+        from stonescan.web import app
+        self._seed_two_snapshots()
+        app._alert_cache.clear()
+        n0 = app._alert_unread_count(self.conn)
+        self.assertGreater(n0, 0, "a fresh digest is all unread")
+        # Mark exactly the current digest's signatures seen -> unread drops to zero.
+        d = app._alert_digest(self.conn)
+        sigs = [it["sig"] for k in ("restock", "listed", "dropped", "soldout") for it in d[k]]
+        db.mark_alerts_seen(self.conn, sigs)
+        self.assertEqual(app._alert_unread_count(self.conn), 0)
+
+    def test_missing_alert_seen_table_is_safe(self):
+        raw = db.connect(os.path.join(self.tmp, "raw.db"))  # connect() creates no tables
+        try:
+            self.assertEqual(db.seen_alert_sigs(raw), set())
+        finally:
+            raw.close()
+
+    def test_no_baseline_is_empty_and_quiet(self):
+        from stonescan.web import app
+        self._hist(1, self.LATEST, "only once", "3cm", 5)  # a single snapshot, no prior
+        app._alert_cache.clear()
+        d = app._alert_digest(self.conn)
+        self.assertFalse(d["has_baseline"])
+        self.assertEqual([len(d[k]) for k in ("restock", "listed", "dropped", "soldout")], [0, 0, 0, 0])
+        self.assertEqual(app._alert_unread_count(self.conn), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
