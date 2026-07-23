@@ -11,6 +11,19 @@
     {% if facts.slabs %}· {% if facts.suppliers > 1 %}up to {% endif %}{{ facts.slabs }} slab{{ '' if facts.slabs == 1 else 's' }}{% if facts.suppliers > 1 %} at {{ facts.top_yard }}{% else %} in stock{% endif %}{% if facts.total_slabs > facts.slabs %} <span class="muted" title="Total across all {{ facts.suppliers }} suppliers — held at separate yards, not one pile">({{ facts.total_slabs }} across all)</span>{% endif %}{% endif %}
     {% if facts.tile_sf %}· {{ facts.tile_sf|round|int }} ft² tile{% elif facts.has_tile and not facts.slabs %}· sold as tile{% endif %}
   </p>
+  {% set cmp = compare_state() %}
+  <form class="cmpform cmptoggle js-compare" method="post" action="/compare/toggle">
+    <input type="hidden" name="material_key" value="{{ key }}">
+    <input type="hidden" name="item_name" value="{{ name }}">
+    <input type="hidden" name="image_url" value="{{ photos[0] if photos else (rep_photo or '') }}">
+    <input type="hidden" name="back" value="/material?key={{ key|urlencode }}">
+    <label class="cmpchk cmpchk-btn" title="Add this material to the compare tray">
+      <input type="checkbox" name="on" data-cmpkey="{{ key }}" onchange="this.form.requestSubmit()" {{ 'checked' if key in cmp.keyset }}>
+      <span class="cmpchk-face" aria-hidden="true">⚖</span>
+      <span class="cmpchk-text"></span>
+    </label>
+    <noscript><button type="submit" class="btn ghost">± Compare</button></noscript>
+  </form>
   {% if added == 1 %}<p class="hintline"><span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span></p>
   {% elif added == 0 %}<p class="hintline"><span class="okchip warn">Already on that list</span></p>{% endif %}
 </div>

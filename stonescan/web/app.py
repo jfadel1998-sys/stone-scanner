@@ -91,6 +91,28 @@ def _product_url(host: str, item_id, source_url: str) -> str:
 templates.env.globals["product_url"] = _product_url
 
 
+def _compare_state() -> dict:
+    """Compare-tray state for base.html's nav badge + sticky bar and the row checkboxes.
+    Registered as a template global so every page shows the tray without each of the ~20
+    routes having to pass it in. Opens its own short-lived connection and never raises: a
+    DB that predates the compare_tray table (an old snapshot) reads as an empty tray, so
+    the nav shows count 0 rather than 500-ing the page."""
+    try:
+        conn = db.connect()
+        try:
+            tray = db.get_compare(conn)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        tray = []
+    # 'keyset', not 'keys': Jinja attribute access (cmp.keys) would resolve to the dict's
+    # built-in .keys method before the item, breaking `key in cmp.keys`.
+    return {"tray": tray, "keyset": {t["material_key"] for t in tray}, "count": len(tray)}
+
+
+templates.env.globals["compare_state"] = _compare_state
+
+
 def _distinct(conn, column: str) -> list[str]:
     # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
     # is stone/tile only (it remains queryable on the Quality audit page).
@@ -1229,6 +1251,121 @@ def _catalog_evidence(conn, material_key: str) -> dict:
     }
 
 
+# --- Compare: side-by-side canonical materials --------------------------------
+
+def _compare_column(conn, entry: dict, loc_miles: dict | None) -> dict:
+    """Assemble one /compare column for a tray entry, building on _catalog_evidence().
+
+    Follows a Quality merge (material_aliases) to the surviving canonical key first. If the
+    material resolves to no catalog rows (gone from every catalog), returns a `gone` column
+    carrying the stored name/photo snapshot so it still renders — same honesty as a sourcing
+    list. `loc_miles` (location -> distance from a `near` origin) is None unless a near city
+    was given; when present, `miles` is the nearest stocking yard, else None ("—")."""
+    orig_key = entry["material_key"]
+    key = db.resolve_alias(conn, orig_key)
+    ev = _catalog_evidence(conn, key)
+    if not ev:
+        return {"gone": True, "orig_key": orig_key, "key": key,
+                "name": entry.get("item_name") or _base_name(orig_key).title(),
+                "image": entry.get("image_url") or ""}
+
+    # Catalog fields _catalog_evidence doesn't carry (name/photo/colors/forms/size/tile).
+    rows = conn.execute(
+        """SELECT m.item_name, m.color, m.product_form, m.uom, m.available_slabs,
+                  m.avg_length, m.avg_width, m.image_url,
+                  COALESCE(NULLIF(m.locations,''), s.locations) AS locs
+           FROM materials m JOIN suppliers s ON s.id = m.supplier_id
+           WHERE m.material_key = ?""",
+        (key,),
+    ).fetchall()
+
+    names: dict[str, int] = {}
+    for r in rows:
+        if (r["item_name"] or "").strip():
+            names[r["item_name"]] = names.get(r["item_name"], 0) + 1
+    name = max(names, key=names.get) if names else _base_name(key).title()
+
+    # Best photo: a real one wins; SlabCloud "coming soon" placeholders sort last.
+    imgs = sorted((r["image_url"] for r in rows if r["image_url"]),
+                  key=lambda u: "slabcloud.com/slabs/" in u)
+    image = imgs[0] if imgs else (entry.get("image_url") or "")
+
+    # Colors: keep only real color words (some suppliers paste a whole description in).
+    colors: set[str] = set()
+    for r in rows:
+        for part in (r["color"] or "").split(","):
+            part = part.strip()
+            if part and len(part) <= 18 and len(part.split()) <= 2 and not re.search(r"\d", part):
+                colors.add(part.title())
+
+    forms = sorted({(r["product_form"] or "").strip() for r in rows if (r["product_form"] or "").strip()})
+    lengths = [r["avg_length"] for r in rows if r["avg_length"]]
+    widths = [r["avg_width"] for r in rows if r["avg_width"]]
+    size_range = (f"{min(lengths):.0f}×{min(widths):.0f} – {max(lengths):.0f}×{max(widths):.0f}"
+                  if lengths and widths else "")
+    # Tile area, kept separate from slab counts exactly as _catalog_evidence does.
+    tile_sf = sum((r["available_slabs"] or 0) for r in rows
+                  if "TILE" in (r["product_form"] or "").upper() and (r["uom"] or "").upper() == "SF")
+
+    miles = None
+    if loc_miles is not None:
+        for r in rows:
+            for loc in (r["locs"] or "").split(","):
+                d = loc_miles.get(loc.strip().lower())
+                if d is not None and (miles is None or d < miles):
+                    miles = d
+
+    # Canonical type is the part after '|' in the key, falling back to the row type — the
+    # same rule /material uses for the care panel.
+    ctype = (key.split("|", 1)[1] if "|" in key else "") or (ev["types"][0] if ev["types"] else "")
+    ref = reference.summarize(reference.lookup(material_key=key, name=name))
+    care = reference.care_by_type(ctype)
+    return {
+        "gone": False, "orig_key": orig_key, "key": key, "name": name, "image": image,
+        "types": ev["types"], "colors": sorted(colors)[:8], "finishes": ev["finishes"],
+        "thicknesses": ev["thicknesses"], "forms": forms, "size_range": size_range,
+        "suppliers": ev["suppliers"], "deepest_yard": ev["deepest_yard"],
+        "total_slabs": ev["total_slabs"], "tile_sf": tile_sf, "locations": ev["locations"],
+        "prices": ev["prices"], "miles": miles, "ref": ref, "care": care, "care_type": ctype,
+    }
+
+
+def _compare_winner(cols: list[dict], getter, mode: str):
+    """Index of the single column that leads a countable row, or None. None when fewer
+    than two columns carry a value, or when the top value is shared (a tie is not a
+    winner). `mode` is 'max' (more is better) or 'min' (lower $ / nearer is better)."""
+    pairs = []
+    for i, c in enumerate(cols):
+        if c.get("gone"):
+            continue
+        v = getter(c)
+        if v is not None:
+            pairs.append((i, v))
+    if len(pairs) < 2:
+        return None
+    best = (min if mode == "min" else max)(v for _, v in pairs)
+    leaders = [i for i, v in pairs if v == best]
+    return leaders[0] if len(leaders) == 1 else None
+
+
+def _compare_columns(conn, near_origin=None):
+    """Build every compare column plus the winner-highlight map. `near_origin` is a
+    (lat, lon) tuple or None; when set, a nearest-yard distance is computed per column
+    over ALL resolved locations (a large radius, so it informs rather than filters)."""
+    tray = db.get_compare(conn)
+    loc_miles = (geocode.locations_within(conn, near_origin[0], near_origin[1], 1e12)
+                 if near_origin else None)
+    cols = [_compare_column(conn, e, loc_miles) for e in tray]
+    winners = {
+        "suppliers":  _compare_winner(cols, lambda c: c.get("suppliers"), "max"),
+        "deepest":    _compare_winner(cols, lambda c: (c.get("deepest_yard") or {}).get("slabs"), "max"),
+        "total":      _compare_winner(cols, lambda c: c.get("total_slabs") or None, "max"),
+        "price_sqft": _compare_winner(cols, lambda c: (c.get("prices", {}).get("per_sqft") or {}).get("low"), "min"),
+        "nearest":    _compare_winner(cols, lambda c: c.get("miles"), "min"),
+    }
+    return cols, winners
+
+
 @app.post("/photo", response_class=HTMLResponse)
 async def photo_search(request: Request, photo: UploadFile = File(...),
                        material_type: str = Form("")):
@@ -1708,6 +1845,74 @@ def lists_delete(list_id: int = Form(...)):
     db.delete_list(conn, list_id)
     conn.close()
     return RedirectResponse("/lists", status_code=303)
+
+
+# --- Compare -----------------------------------------------------------------
+
+def _safe_back(back: str) -> str:
+    """A submitted `back` is user data: only ever bounce to a path on this app."""
+    return back if (back.startswith("/") and not back.startswith("//")) else "/"
+
+
+@app.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request, near: str = ""):
+    """Side-by-side comparison of the canonical materials in the compare tray."""
+    conn = db.connect()
+    origin, near_label = _resolve_near(near)
+    cols, winners = _compare_columns(conn, origin)
+    conn.close()
+    return templates.TemplateResponse(request, "compare.html", {
+        "cols": cols, "winners": winners, "near": near, "near_label": near_label,
+        "near_ok": bool(origin), "max": db.COMPARE_MAX,
+    })
+
+
+@app.get("/compare/print", response_class=HTMLResponse)
+def compare_print(request: Request, near: str = ""):
+    """Print-optimized board of the comparison — the same columns and rows, minus the
+    nav/tray/checkbox chrome. Browser Print → Save as PDF, like the sourcing-list board."""
+    conn = db.connect()
+    origin, near_label = _resolve_near(near)
+    cols, winners = _compare_columns(conn, origin)
+    conn.close()
+    return templates.TemplateResponse(request, "compare_print.html", {
+        "cols": cols, "winners": winners, "near_ok": bool(origin),
+        "near_label": near_label, "printed": _now()[:10],
+    })
+
+
+@app.post("/compare/toggle")
+def compare_toggle(material_key: str = Form(...), item_name: str = Form(""),
+                   image_url: str = Form(""), on: str = Form(""),
+                   back: str = Form("/"), ajax: str = Form("")):
+    """Set a material's tray membership to the checkbox's new state: `on` present → add
+    (subject to the 4-item cap), absent → remove. Answers with JSON for the background
+    (no-reload) path, or a 303 back to the originating page for the no-JS fallback."""
+    conn = db.connect()
+    if on:
+        status = db.add_to_compare(conn, material_key, item_name, image_url, _now())
+    else:
+        db.remove_from_compare(conn, material_key)
+        status = "removed"
+    tray = db.get_compare(conn)
+    conn.close()
+    if ajax:
+        return JSONResponse({"status": status, "count": len(tray), "tray": tray})
+    back = _safe_back(back)
+    if status == "full":  # surface the refusal on reload for the no-JS path
+        sep = "&" if "?" in back else "?"
+        back = f"{back}{sep}cmp=full"
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/compare/clear")
+def compare_clear(back: str = Form("/"), ajax: str = Form("")):
+    conn = db.connect()
+    db.clear_compare(conn)
+    conn.close()
+    if ajax:
+        return JSONResponse({"status": "cleared", "count": 0, "tray": []})
+    return RedirectResponse(_safe_back(back), status_code=303)
 
 
 def _group_by_supplier(items: list[dict]) -> list[dict]:

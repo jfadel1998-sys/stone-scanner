@@ -792,3 +792,114 @@ footer {
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
+
+/* ============================================================================
+   Compare — a compare tray (nav badge + sticky bar + row/card checkboxes) and
+   the /compare side-by-side table. Reuses the design tokens so it follows
+   light/dark automatically.
+   ========================================================================== */
+
+/* Nav count badge on the ⚖ Compare item */
+.navcount {
+  display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 1px;
+  border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent);
+  font-size: 10.5px; font-weight: 700; text-align: center; vertical-align: 1px;
+}
+.navcount[hidden] { display: none; }
+
+/* No-JS refusal banner (JS path uses the sticky-bar message instead) */
+.cmpfull-banner {
+  margin: 0 var(--pad-x) 8px; padding: 8px 12px; border-radius: var(--r-sm);
+  background: var(--brick-soft); color: var(--brick-ink); font-size: 13px; font-weight: 600;
+}
+
+/* Compare checkbox on result rows / cards / material pages */
+.cmpform { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+.cmpchk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; -webkit-user-select: none; user-select: none; }
+.cmpchk input { position: absolute; opacity: 0; width: 0; height: 0; }
+.cmpchk-face {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: 1px solid var(--line-strong); border-radius: var(--r-xs);
+  background: var(--field-bg); color: var(--muted); font-size: 12px; line-height: 1;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.cmpchk:hover .cmpchk-face { border-color: var(--accent); color: var(--accent-ink); }
+.cmpchk input:checked + .cmpchk-face { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.cmpchk input:focus-visible + .cmpchk-face { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.cmpchk-fallback { font-size: 11px; }
+
+/* Button-style toggle on /material and /item */
+.cmpchk-btn { padding: 7px 12px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--panel); font-size: 13px; font-weight: 600; color: var(--accent-ink); }
+.cmpchk-btn:hover { background: var(--accent-soft); }
+.cmpchk-btn .cmpchk-face { width: auto; height: auto; border: 0; background: none; color: inherit; font-size: 14px; }
+.cmpchk-btn input:checked + .cmpchk-face { background: none; color: var(--accent-ink); }
+.cmpchk-btn .cmpchk-text::after { content: "Compare"; }
+.cmpchk-btn input:checked ~ .cmpchk-text::after { content: "In compare ✓"; }
+.cmptoggle { margin: 8px 0 0; }
+
+/* Card overlay */
+.matcardwrap { position: relative; display: block; }
+.cmpcard { position: absolute; top: 8px; right: 8px; z-index: 2; }
+.cmpcard .cmpchk-face { background: rgba(250, 246, 239, .92); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); box-shadow: var(--shadow-sm); }
+.materials .cmpform { margin-right: 7px; vertical-align: middle; }
+
+/* Sticky tray bar */
+.cmpbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  background: var(--header-bg); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line-strong); box-shadow: var(--shadow-lg);
+}
+.cmpbar[hidden] { display: none; }
+.cmpbar-inner { display: flex; align-items: center; gap: 12px; padding: 9px var(--pad-x); max-width: 1200px; margin: 0 auto; }
+.cmpbar-label { font-weight: 700; font-size: 13px; color: var(--ink); white-space: nowrap; }
+.cmpbar-thumbs { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.cmpthumb { flex: none; width: 34px; height: 34px; border-radius: var(--r-xs); overflow: hidden; background: var(--chip); display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); }
+.cmpthumb img { width: 100%; height: 100%; object-fit: cover; }
+.cmpbar-go { flex: none; padding: 7px 15px; }
+.cmpbar-clear { flex: none; margin: 0; }
+.linklike { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 12.5px; text-decoration: underline; padding: 4px; }
+.linklike:hover { color: var(--brick-ink); }
+.cmpbar-msg { padding: 0 var(--pad-x) 8px; color: var(--brick-ink); font-size: 12.5px; font-weight: 600; max-width: 1200px; margin: 0 auto; }
+.cmpbar-msg[hidden] { display: none; }
+
+/* /compare page */
+.cmp-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; padding: 16px var(--pad-x) 6px; }
+.cmp-head h1 { margin: 4px 0 4px; font-family: var(--font-display); font-size: 27px; letter-spacing: -.3px; }
+.cmp-head .muted { margin: 0; max-width: 68ch; font-size: 13px; }
+.cmp-headtools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cmp-near { display: inline-flex; align-items: center; gap: 6px; }
+.cmp-near input { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--field-bg); color: var(--ink); font-size: 13px; }
+.cmp-near button { padding: 7px 12px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--panel); color: var(--accent-ink); font-weight: 600; cursor: pointer; }
+
+.cmp-empty { text-align: center; padding: 48px var(--pad-x) 64px; color: var(--ink-soft); }
+.cmp-empty-icon { font-size: 42px; margin: 0 0 4px; opacity: .55; }
+.cmp-empty h2 { margin: 0 0 8px; font-family: var(--font-display); }
+.cmp-empty ul { list-style: none; padding: 0; margin: 14px auto 0; max-width: 40ch; text-align: left; display: inline-block; }
+.cmp-empty li { padding: 4px 0; font-size: 13.5px; }
+
+.cmp-scroll { overflow-x: auto; padding: 8px var(--pad-x) 24px; }
+.cmp-table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 13px; }
+.cmp-table th, .cmp-table td { border: 1px solid var(--line); padding: 8px 11px; text-align: left; vertical-align: top; }
+.cmp-table tbody th { width: 148px; color: var(--muted); font-weight: 600; font-size: 12px; background: var(--panel-2); }
+.cmp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cmp-rowlabel { background: var(--panel-2); border: 0 !important; }
+.cmp-col { text-align: center !important; background: var(--panel); position: relative; min-width: 150px; vertical-align: top; }
+.cmp-col.gone { opacity: .6; }
+.cmp-photo { width: 100%; max-width: 190px; aspect-ratio: 4/3; object-fit: cover; border-radius: var(--r-sm); background: var(--chip); display: block; margin: 0 auto 6px; }
+.cmp-photoph { display: flex; align-items: center; justify-content: center; font-size: 30px; opacity: .4; }
+.cmp-colname { font-weight: 700; font-size: 13.5px; color: var(--ink); }
+.cmp-col a { color: var(--ink); }
+.cmp-goneflag { font-size: 11px; color: var(--brick-ink); font-style: italic; margin-top: 3px; }
+.cmpcol-remove { position: absolute; top: 5px; right: 5px; margin: 0; }
+.cmpcol-remove button { border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted); border-radius: var(--r-xs); width: 22px; height: 22px; cursor: pointer; font-size: 12px; line-height: 1; }
+.cmpcol-remove button:hover { border-color: var(--brick); color: var(--brick-ink); }
+.cmp-group th { background: var(--chip); color: var(--ink-soft); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+.cmp-group-ref th { border-top: 2px solid var(--gold); }
+.cmp-group-care th { border-top: 2px solid var(--line-strong); }
+.cmp-grouphint { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 8px; }
+.cmp-sub { color: var(--muted); font-weight: 400; font-size: 11.5px; }
+.cmp-none { color: var(--muted); }
+.cmp-notest { color: var(--muted); font-style: italic; }
+.cmp-table td.win { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); font-weight: 700; }
+.cmp-legend { padding: 0 var(--pad-x) 30px; color: var(--muted); font-size: 12px; }
+.cmp-winkey { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); vertical-align: -1px; margin-right: 4px; }

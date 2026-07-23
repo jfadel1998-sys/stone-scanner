@@ -60,7 +60,7 @@ build/packaging details.
 | `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling (also re-applies merges) |
 | `stonescan/dedupe.py` | Data-quality curation: type-conflict + spelling merge candidates, `apply_aliases` fold |
 | `stonescan/desktop.py` + `main.py` | Frozen-app launcher (native window, `--refresh` mode) |
-| `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), **By Photo** (CLIP visual similarity), item detail, canonical material page, What's New, Locations, Sourcing lists, Watchlist, Health, Discovery (candidate triage), Quality (merge review + type audit) |
+| `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), **By Photo** (CLIP visual similarity), item detail, canonical material page, **Compare** (side-by-side canonical materials via a persistent 4-slot tray + print board), What's New, Locations, Sourcing lists, Watchlist, Health, Discovery (candidate triage), Quality (merge review + type audit) |
 | `suppliers.json` | Editable allow-list of catalogs to crawl (+ optional reviewed `robots_override`) |
 | `denylist.json` | Hosts that must never be crawled or re-discovered. Bundled into the exe and **merged** (not seeded-once) on launch, so a removal shipped in a new build reaches existing installs |
 | `stone_reference.json` | Researched stone facts with per-fact source URLs + confidence. Bundled and merged on launch like the denylist; curated entries beat live-looked-up ones on a collision |

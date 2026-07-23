@@ -186,6 +186,18 @@ CREATE TABLE IF NOT EXISTS list_items (
 );
 CREATE INDEX IF NOT EXISTS idx_listitem_list ON list_items(list_id);
 
+-- Compare tray: the small set of canonical materials the user is weighing side by side
+-- on /compare, keyed on material_key. One global tray — this is the single-user desktop
+-- app, so no per-user scoping. Capped at COMPARE_MAX in add_to_compare(). Snapshots
+-- name/photo like list_items so a column still renders if the material later leaves every
+-- catalog (the /compare column then reads "no longer listed").
+CREATE TABLE IF NOT EXISTS compare_tray (
+    material_key TEXT PRIMARY KEY,
+    item_name    TEXT,
+    image_url    TEXT,
+    added_at     TEXT
+);
+
 -- Materialized per-product rollup: one row per search 'grp' (material_key, or
 -- 'id:<id>' for empty-key products), holding the cross-supplier aggregates the
 -- search's outer query computes. Lets the default/type browse be an index scan
@@ -838,6 +850,89 @@ def add_watch(conn: sqlite3.Connection, query: str, created_at: str) -> None:
 def remove_watch(conn: sqlite3.Connection, watch_id: int) -> None:
     conn.execute("DELETE FROM watchlist WHERE id = ?", (watch_id,))
     conn.commit()
+
+
+# --- Compare tray -------------------------------------------------------------
+
+COMPARE_MAX = 4  # side-by-side columns that fit the desktop window without scrolling
+
+
+def get_compare(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """The compare tray, oldest first — the order columns appear on /compare. Returns
+    [] (never raises) when the table is absent, so an old DB snapshot degrades gracefully."""
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT material_key, item_name, image_url, added_at FROM compare_tray "
+            "ORDER BY added_at, rowid"
+        ).fetchall()]
+    except sqlite3.OperationalError:
+        return []
+
+
+def compare_count(conn: sqlite3.Connection) -> int:
+    """How many materials are in the tray; 0 (never an error) when the table is absent."""
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM compare_tray").fetchone()[0])
+    except sqlite3.OperationalError:
+        return 0
+
+
+def add_to_compare(conn: sqlite3.Connection, material_key: str, item_name: str,
+                   image_url: str, added_at: str) -> str:
+    """Add a canonical material to the compare tray. Returns one of:
+      'exists' — already present (idempotent, no duplicate row) or key blank
+      'full'   — the tray already holds COMPARE_MAX; nothing was added
+      'added'  — inserted
+
+    The cap lives HERE, not in the route, so every caller (web, tests) enforces it
+    identically."""
+    key = (material_key or "").strip()
+    if not key:
+        return "exists"
+    if conn.execute("SELECT 1 FROM compare_tray WHERE material_key = ?", (key,)).fetchone():
+        return "exists"
+    if compare_count(conn) >= COMPARE_MAX:
+        return "full"
+    conn.execute(
+        "INSERT OR IGNORE INTO compare_tray (material_key, item_name, image_url, added_at) "
+        "VALUES (?,?,?,?)",
+        (key, item_name or "", image_url or "", added_at),
+    )
+    conn.commit()
+    return "added"
+
+
+def remove_from_compare(conn: sqlite3.Connection, material_key: str) -> None:
+    """Drop a material from the tray. A no-op when it isn't present."""
+    conn.execute("DELETE FROM compare_tray WHERE material_key = ?",
+                 ((material_key or "").strip(),))
+    conn.commit()
+
+
+def clear_compare(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM compare_tray")
+    conn.commit()
+
+
+def resolve_alias(conn: sqlite3.Connection, material_key: str) -> str:
+    """Follow material_aliases to the terminal canonical key. apply_aliases() stores
+    terminal canonicals (add_alias normalizes chains), so one hop usually suffices; the
+    short loop is defense in depth and is cycle-guarded. Returns the input unchanged when
+    the key isn't aliased — including when the aliases table is absent."""
+    key = material_key or ""
+    seen = {key}
+    try:
+        for _ in range(10):
+            row = conn.execute(
+                "SELECT canonical_key FROM material_aliases WHERE alias_key = ?", (key,)
+            ).fetchone()
+            if not row or row["canonical_key"] in seen:
+                break
+            key = row["canonical_key"]
+            seen.add(key)
+    except sqlite3.OperationalError:
+        pass
+    return key
 
 
 # --- Data quality: cross-supplier material_key merges -------------------------

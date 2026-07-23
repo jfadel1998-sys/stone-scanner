@@ -14,12 +14,14 @@
 <header class="site-header">
   <div class="brand"><a href="/">🪨 <span>Stone Scanner</span></a></div>
   {% set p = request.url.path %}
+  {% set cmp = compare_state() %}
   <nav class="topnav">
     <a href="/" class="{{ 'active' if p == '/' }}">Search</a>
     <a href="/photo" class="{{ 'active' if p.startswith('/photo') }}">📷 By Photo</a>
     <a href="/new" class="{{ 'active' if p.startswith('/new') }}">✨ What's New</a>
     <a href="/locations" class="{{ 'active' if p.startswith('/locations') }}">📍 Locations</a>
     <a href="/lists" class="{{ 'active' if p.startswith('/list') }}">📋 Lists</a>
+    <a href="/compare" class="{{ 'active' if p.startswith('/compare') }}">⚖ Compare <span class="navcount" id="cmpNavCount"{% if not cmp.count %} hidden{% endif %}>{{ cmp.count }}</span></a>
     <a href="/watchlist" class="{{ 'active' if p.startswith('/watchlist') }}">★ Watchlist</a>
     <a href="/health" class="{{ 'active' if p.startswith('/health') }}">🩺 Health</a>
     <a href="/discovery" class="{{ 'active' if p.startswith('/discovery') }}">🔍 Discovery</a>
@@ -31,7 +33,29 @@
   </div>
 </header>
 
+{% if request.query_params.get('cmp') == 'full' %}
+<div class="cmpfull-banner">Compare holds {{ cmp.count }} — remove one first.</div>
+{% endif %}
+
 {% block content %}{% endblock %}
+
+{# Sticky compare tray: present on every page, shown only when the tray is non-empty.
+   Server-rendered so it's correct on first paint and without JS; the compare script
+   updates it in place after a background toggle. #}
+<div id="cmpBar" class="cmpbar"{% if not cmp.count %} hidden{% endif %} aria-live="polite">
+  <div class="cmpbar-inner">
+    <span class="cmpbar-label">⚖ Compare</span>
+    <div class="cmpbar-thumbs" id="cmpBarThumbs">
+      {% for t in cmp.tray %}<span class="cmpthumb">{% if t.image_url %}<img src="{{ t.image_url }}" alt="" onerror="this.remove()">{% else %}🪨{% endif %}</span>{% endfor %}
+    </div>
+    <a class="btn cmpbar-go" href="/compare">Compare <span id="cmpBarCount">{{ cmp.count }}</span></a>
+    <form class="js-compare cmpbar-clear" method="post" action="/compare/clear">
+      <input type="hidden" name="back" value="{{ request.url.path }}">
+      <button class="linklike" type="submit">Clear</button>
+    </form>
+  </div>
+  <div class="cmpbar-msg" id="cmpBarMsg" hidden></div>
+</div>
 
 <footer>{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}</footer>
 
@@ -49,6 +73,61 @@
     var next=current()==='dark'?'light':'dark';
     document.documentElement.setAttribute('data-theme',next);
     try{localStorage.setItem('ss-theme',next);}catch(e){}
+  });
+})();
+</script>
+<script>
+/* Compare tray: background add/remove with no page reload, sticky-bar + nav-badge sync.
+   Any <form class="js-compare"> (row checkboxes, the material/item toggle, the bar's
+   Clear) is intercepted and POSTed with ajax=1; the JSON response re-renders the bar and
+   badge and syncs every on-page checkbox. Degrades to a normal form POST when JS is off
+   (a <noscript> submit button) or if fetch fails. */
+(function(){
+  function render(state){
+    // On /compare itself the columns are server-rendered, so reload to reflect an
+    // add/remove/clear; every other page just updates the bar + badge in place.
+    if(location.pathname==='/compare'){ location.reload(); return; }
+    var count=state.count||0, tray=state.tray||[];
+    var navc=document.getElementById('cmpNavCount');
+    if(navc){ navc.textContent=count; if(count>0){navc.removeAttribute('hidden');}else{navc.setAttribute('hidden','');} }
+    var bar=document.getElementById('cmpBar');
+    if(bar){
+      var go=document.getElementById('cmpBarCount'); if(go) go.textContent=count;
+      var thumbs=document.getElementById('cmpBarThumbs');
+      if(thumbs){
+        thumbs.innerHTML='';
+        tray.forEach(function(t){
+          var s=document.createElement('span'); s.className='cmpthumb';
+          if(t.image_url){ var im=document.createElement('img'); im.src=t.image_url; im.alt=''; im.onerror=function(){this.remove();}; s.appendChild(im); }
+          else { s.textContent='🪨'; }
+          thumbs.appendChild(s);
+        });
+      }
+      if(count>0){ bar.removeAttribute('hidden'); } else { bar.setAttribute('hidden',''); }
+    }
+    var keys={}; tray.forEach(function(t){ keys[t.material_key]=1; });
+    var boxes=document.querySelectorAll('input[data-cmpkey]');
+    for(var i=0;i<boxes.length;i++){ boxes[i].checked=!!keys[boxes[i].getAttribute('data-cmpkey')]; }
+  }
+  function flashFull(){
+    var msg=document.getElementById('cmpBarMsg');
+    if(msg){
+      msg.textContent='Compare holds 4 — remove one first.'; msg.removeAttribute('hidden');
+      clearTimeout(msg._t); msg._t=setTimeout(function(){ msg.setAttribute('hidden',''); },4000);
+    } else { alert('Compare holds 4 — remove one first.'); }
+  }
+  document.addEventListener('submit',function(ev){
+    var f=ev.target;
+    if(!(f.classList && f.classList.contains('js-compare'))) return;
+    ev.preventDefault();
+    var fd=new FormData(f); fd.set('ajax','1');
+    fetch(f.action,{method:'POST',body:fd,headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if(res.status==='full'){ flashFull(); var cb=f.querySelector('input[type=checkbox]'); if(cb) cb.checked=false; }
+        render(res);
+      })
+      .catch(function(){ f.submit(); });
   });
 })();
 </script>
