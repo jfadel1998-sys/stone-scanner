@@ -55,7 +55,13 @@ PLATFORMS: list[dict] = [
     {"base": "stoneprofitsweb.com", "provider": None,
      "skip": {"www", "pay", "apps", "nwww"}},
     {"base": "slabware.com", "provider": "slabware",
-     "skip": {"www", "app", "api", "admin", "portal", "static", "cdn", "mail", "blog"}},
+     # demo1/2/3, demolite, blog2 etc. are numbered siblings, which _is_infra's dashed-
+     # variant rule can't reach from "demo"/"blog" — they need their own tokens. All were
+     # observed live in the 2026-07-24 sweep and every one of them refused the inventory
+     # endpoint, so they cost a nightly request each and can never return a catalog.
+     "skip": {"www", "app", "api", "admin", "portal", "static", "cdn", "mail", "blog",
+              "blog2", "demo", "demo1", "demo2", "demo3", "demolite", "webservice",
+              "aatestex", "campaing"}},
 ]
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; StoneScanner/0.1; +public-catalog indexer)"}
