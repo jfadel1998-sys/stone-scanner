@@ -259,7 +259,9 @@ _MIGRATIONS = {
                   "phone": "TEXT", "email": "TEXT", "locations": "TEXT",
                   # A host that mirrors another's catalog (same tenant token, near-identical
                   # item set): mirror_of = the canonical host, mirror_source = computed|curated.
-                  "mirror_of": "TEXT", "mirror_source": "TEXT"},
+                  "mirror_of": "TEXT", "mirror_source": "TEXT",
+                  # Consecutive zero-item crawls, for auto-rejecting dead discovery candidates.
+                  "empty_streak": "INTEGER DEFAULT 0"},
     "materials": {"new_arrival": "INTEGER DEFAULT 0", "image_url": "TEXT", "locations": "TEXT"},
 }
 
@@ -388,6 +390,29 @@ def upsert_supplier(conn: sqlite3.Connection, host: str, **fields: Any) -> int:
     conn.commit()
     row = conn.execute("SELECT id FROM suppliers WHERE host = ?", (host,)).fetchone()
     return int(row["id"])
+
+
+def record_crawl_streak(conn: sqlite3.Connection, host: str, n_items: int,
+                        error: str | None) -> None:
+    """Track consecutive zero-item crawls per host, so discovery can auto-reject dead
+    candidates (see discover.reconcile_rejections).
+
+    A crawl that stored >=1 item resets the streak; a genuine zero-item crawl bumps it. A
+    robots.txt block is the supplier's decision, not a failure, so it never moves the streak
+    (NG-2). Must be called at the store site with THIS crawl's count — suppliers.item_count
+    is stale on a failed crawl (replace_materials only runs on success), so it can't be
+    reconstructed afterwards.
+    """
+    from .robots import is_block_error
+    if is_block_error(error or ""):
+        return
+    if n_items > 0:
+        conn.execute("UPDATE suppliers SET empty_streak = 0 WHERE host = ?", (host,))
+    else:
+        conn.execute(
+            "UPDATE suppliers SET empty_streak = COALESCE(empty_streak, 0) + 1 WHERE host = ?",
+            (host,))
+    conn.commit()
 
 
 def purge_supplier(conn: sqlite3.Connection, host: str) -> dict[str, int]:

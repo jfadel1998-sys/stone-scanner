@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -1422,7 +1423,7 @@ class ClassificationHygieneTests(unittest.TestCase):
 
 class MirrorDetectionTests(unittest.TestCase):
     """Two supplier hosts serving one tenant's catalog (same token, near-identical item
-    set) must be detected and dropped from supplier counts/facets — without touching
+    set) must be detected and dropped from supplier counts/facets â€” without touching
     either host's rows, and without ever collapsing two genuinely different catalogs."""
 
     def setUp(self):
@@ -1554,6 +1555,129 @@ class MirrorDetectionTests(unittest.TestCase):
         self.assertIsNone(ov2.canonical)
         with self.assertRaises(ValueError):
             db.MirrorOverride.from_entry({"host": "x", "mirror_of": 5})          # malformed
+
+
+class RejectionTests(unittest.TestCase):
+    """Discovery triage rejections: a `rejected` block in suppliers.json suppresses a host
+    from crawling, lapses after 90 days, and is written automatically after 3 empty crawls."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        self.suppliers = os.path.join(self.tmp, "suppliers.json")
+        self._orig_file = discover.SUPPLIERS_FILE
+        discover.SUPPLIERS_FILE = Path(self.suppliers)
+
+    def tearDown(self):
+        discover.SUPPLIERS_FILE = self._orig_file
+        self.conn.close()
+
+    def _write_suppliers(self, entries):
+        Path(self.suppliers).write_text(json.dumps({"suppliers": entries}, indent=2),
+                                        encoding="utf-8")
+
+    def _read_suppliers(self):
+        return json.loads(Path(self.suppliers).read_text(encoding="utf-8"))["suppliers"]
+
+    def _supplier_row(self, host, *, empty_streak=0, item_count=0, last_error=""):
+        self.conn.execute(
+            "INSERT INTO suppliers (host, empty_streak, item_count, last_error) VALUES (?,?,?,?)",
+            (host, empty_streak, item_count, last_error))
+        self.conn.commit()
+
+    def _streak(self, host):
+        return self.conn.execute(
+            "SELECT empty_streak FROM suppliers WHERE host=?", (host,)).fetchone()[0]
+
+    # --- parsing / lapse ---------------------------------------------------
+    def test_rejection_parsing_and_validation(self):
+        self.assertIsNone(discover.Rejection.from_entry({"host": "x"}))
+        r = discover.Rejection.from_entry(
+            {"host": "x", "rejected": {"reason": "dead", "at": "2026-01-01"}})
+        self.assertEqual((r.reason, r.at), ("dead", date(2026, 1, 1)))
+        for bad in ({"reason": "d"},                       # no at
+                    {"at": "2026-01-01"},                  # no reason
+                    {"reason": "d", "at": "not-a-date"}):  # unparseable
+            with self.assertRaises(ValueError):
+                discover.Rejection.from_entry({"host": "x", "rejected": bad})
+        with self.assertRaises(ValueError):
+            discover.Rejection.from_entry({"host": "x", "rejected": "dead"})   # not an object
+
+    def test_lapse_window(self):
+        today = date(2026, 7, 24)
+        self.assertTrue(discover.Rejection("r", today - timedelta(days=89)).is_active(today))
+        self.assertFalse(discover.Rejection("r", today - timedelta(days=91)).is_active(today))
+        self.assertEqual(
+            discover.Rejection("r", today - timedelta(days=89)).days_until_lapse(today), 1)
+
+    def test_filter_rejected_skips_active_keeps_lapsed(self):
+        today = date(2026, 7, 24)
+        active = {"host": "a.com", "rejected": {"reason": "r", "at": (today - timedelta(days=10)).isoformat()}}
+        lapsed = {"host": "b.com", "rejected": {"reason": "r", "at": (today - timedelta(days=200)).isoformat()}}
+        plain = {"host": "c.com"}
+        keep, skipped = discover.filter_rejected([active, lapsed, plain], today=today)
+        self.assertEqual({e["host"] for e in keep}, {"b.com", "c.com"})   # lapsed gets a fresh probe
+        self.assertEqual([e["host"] for e, _ in skipped], ["a.com"])
+
+    def test_filter_rejected_raises_on_malformed(self):
+        with self.assertRaises(ValueError):
+            discover.filter_rejected([{"host": "x", "rejected": {"reason": "d"}}])
+
+    # --- streak ------------------------------------------------------------
+    def test_streak_increments_on_empty_resets_on_items(self):
+        self._supplier_row("a.com")
+        db.record_crawl_streak(self.conn, "a.com", 0, "")
+        db.record_crawl_streak(self.conn, "a.com", 0, "403 Forbidden")
+        self.assertEqual(self._streak("a.com"), 2)
+        db.record_crawl_streak(self.conn, "a.com", 5, "")     # stored items -> reset
+        self.assertEqual(self._streak("a.com"), 0)
+
+    def test_robots_block_never_moves_the_streak(self):
+        self._supplier_row("a.com", empty_streak=2)
+        db.record_crawl_streak(self.conn, "a.com", 0, "robots-blocked: disallowed")
+        self.assertEqual(self._streak("a.com"), 2)            # a decision, not a failure (NG-2)
+
+    # --- reconcile ---------------------------------------------------------
+    def test_auto_reject_fires_on_third_empty_not_second(self):
+        today = date(2026, 7, 24)
+        self._write_suppliers([{"host": "a.com", "name": "A"}])
+        self._supplier_row("a.com", empty_streak=2, last_error="403 Forbidden")
+        rec = discover.reconcile_rejections(self.path, ["a.com"], today=today)
+        self.assertEqual(rec["rejected"], [])
+        self.assertNotIn("rejected", self._read_suppliers()[0])
+        self.conn.execute("UPDATE suppliers SET empty_streak=3 WHERE host='a.com'")
+        self.conn.commit()
+        rec = discover.reconcile_rejections(self.path, ["a.com"], today=today)
+        self.assertEqual(rec["rejected"], ["a.com"])
+        block = self._read_suppliers()[0]["rejected"]
+        self.assertEqual(block["at"], today.isoformat())
+        self.assertIn("403 Forbidden", block["reason"])       # names the observed failure
+
+    def test_reconcile_only_touches_crawled_hosts(self):
+        today = date(2026, 7, 24)
+        self._write_suppliers([{"host": "a.com"}, {"host": "b.com"}])
+        self._supplier_row("a.com", empty_streak=5)
+        self._supplier_row("b.com", empty_streak=5)
+        discover.reconcile_rejections(self.path, ["a.com"], today=today)   # only a crawled
+        hosts = {s["host"]: s for s in self._read_suppliers()}
+        self.assertIn("rejected", hosts["a.com"])
+        self.assertNotIn("rejected", hosts["b.com"])          # not attempted -> untouched
+
+    def test_reconcile_restores_a_host_that_returned_items(self):
+        today = date(2026, 7, 24)
+        self._write_suppliers([{"host": "a.com",
+                                "rejected": {"reason": "old", "at": "2026-01-01"}}])
+        self._supplier_row("a.com", empty_streak=0, item_count=50)   # a good crawl reset the streak
+        rec = discover.reconcile_rejections(self.path, ["a.com"], today=today)
+        self.assertEqual(rec["restored"], ["a.com"])
+        self.assertNotIn("rejected", self._read_suppliers()[0])
+
+    def test_merge_discovered_does_not_readd_a_rejected_host(self):
+        self._write_suppliers([{"host": "a.slabware.com", "provider": "slabware",
+                                "rejected": {"reason": "dead", "at": "2026-07-24"}}])
+        added = discover.merge_discovered({"a.slabware.com": "slabware"})
+        self.assertEqual(added, 0)   # stays listed (rejected) -> the "already listed" check blocks it
 
 
 if __name__ == "__main__":

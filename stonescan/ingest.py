@@ -106,6 +106,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
                                limit=limit_items)
         except Exception as e:  # noqa: BLE001 - a broken provider must not kill the run
             print(f"  [err]  {label:<34} {name}: {e}")
+            db.record_crawl_streak(conn, entry["host"], 0, "")
             if progress:
                 progress(label, 0)
             continue
@@ -113,6 +114,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
             db.upsert_supplier(conn, host=data.host, last_crawled=utc_now_iso(),
                                last_error=data.error or "no items returned")
             print(f"  [skip] {label:<34} {data.error}")
+            db.record_crawl_streak(conn, data.host, 0, data.error)
             if progress:
                 progress(label, 0)
             continue
@@ -121,6 +123,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
         except Exception as e:  # noqa: BLE001
             db.upsert_supplier(conn, host=data.host, last_error=f"store failed: {e}")
             print(f"  [err]  {label:<34} store failed: {e}")
+            db.record_crawl_streak(conn, data.host, 0, "")
             if progress:
                 progress(label, 0)
             continue
@@ -129,6 +132,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
         ok += 1
         note = f" (+{ns} slabs)" if with_slabs else ""
         print(f"  [ok]   {label:<34} {n:>5} materials{note}  [{name}]")
+        db.record_crawl_streak(conn, data.host, n, "")
         if progress:
             progress(label, n)
     conn.close()
@@ -179,7 +183,7 @@ async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
 async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1.5,
                   headless: bool = True, db_path: str = "", with_slabs: bool = False,
                   provider_limit: int = 0, retry_errored: bool = False,
-                  slab_item_cap: int = 0, progress=None) -> None:
+                  slab_item_cap: int = 0, honor_rejections: bool = True, progress=None) -> None:
     """Crawl a mixed supplier list, routing each entry to its provider.
 
     Every caller that crawls "everything in suppliers.json" must come through here:
@@ -213,6 +217,17 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             print(f"  [deny] {e.get('name') or e['host']:<34} "
                   f"{denylist.reason_for(e['host']) or 'on the denylist'}")
 
+        # Skip hosts with an active triage rejection (--only bypasses this; an explicit
+        # request beats a stored rejection). A lapsed rejection lets the host through.
+        if honor_rejections:
+            entries, rej_skipped = discover.filter_rejected(entries)
+            from datetime import date as _date
+            _today = _date.today()
+            for e, rej in rej_skipped:
+                print(f"  [rejected] {e.get('name') or e['host']:<32} {rej.reason[:46]} "
+                      f"(lapses in {rej.days_until_lapse(_today)}d)")
+
+        crawled_hosts = [e["host"] for e in entries]
         await _crawl_entries(entries, concurrency=concurrency, delay=delay,
                              headless=headless, db_path=db_path, with_slabs=with_slabs,
                              provider_limit=provider_limit, slab_item_cap=slab_item_cap,
@@ -249,6 +264,15 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         if mirrors:
             print(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
                   f"from supplier counts ({', '.join(m['mirror_host'] for m in mirrors)}).")
+        # Reconcile triage rejections: auto-reject hosts that hit the empty-crawl streak,
+        # and restore any that returned items again. Writes suppliers.json.
+        rec = discover.reconcile_rejections(db_path, crawled_hosts)
+        if rec["rejected"]:
+            print(f"  auto-rejected {len(rec['rejected'])} dead candidate(s) after "
+                  f"{discover.AUTO_REJECT_STREAK} empty crawls: {', '.join(rec['rejected'])}")
+        if rec["restored"]:
+            print(f"  restored {len(rec['restored'])} host(s) that returned items: "
+                  f"{', '.join(rec['restored'])}")
         print(f"  product rollup: {n_rollup} products indexed for fast browse.")
         _refresh_log(db_path, f"Done — {s['materials']} materials, {s['suppliers']} suppliers.")
     except Exception as e:  # noqa: BLE001 - record durably, then let the caller handle it
@@ -313,6 +337,8 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                 print(f"  [err]  {result.host:<34} store failed: {e}")
         else:
             print(f"  [skip] {result.host:<34} {result.error}")
+        # Track the empty-crawl streak for auto-rejection (n is 0 on a skip/store-fail).
+        db.record_crawl_streak(conn, result.host, n, result.error)
         if progress:
             progress(result.company or result.host, n)
 
@@ -409,6 +435,9 @@ def main() -> None:
             provider_limit=args.provider_limit,
             retry_errored=args.retry,
             slab_item_cap=args.slab_cap,
+            # --only is an explicit request to crawl exactly these hosts, so it overrides
+            # any stored triage rejection (AC-6).
+            honor_rejections=not bool(args.only),
         )
     )
 

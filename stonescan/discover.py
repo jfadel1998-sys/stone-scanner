@@ -42,6 +42,8 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
@@ -192,6 +194,113 @@ def discover_hosts(verbose: bool = True) -> set[str]:
 def load_suppliers() -> list[dict]:
     data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
     return data.get("suppliers", [])
+
+
+# ---------------------------------------------------------------------------
+# Rejected discovery candidates.
+#
+# The DNS sweep is deliberately wide: it adds every observed subdomain, and most of
+# them (e.g. 41 of 47 SlabWare candidates in the 2026-07-24 sweep) can only ever 403.
+# A `rejected` block on a suppliers.json entry records a triage decision so the crawl
+# stops probing that host — the host stays LISTED (which is what stops merge_discovered
+# re-adding it), it just isn't crawled. Rejections lapse after REJECTION_LAPSE_DAYS so a
+# tenant that later opens a public catalog gets a fresh chance, and a host that fails
+# AUTO_REJECT_STREAK crawls in a row is rejected automatically.
+#
+#     "rejected": {"reason": "...", "at": "2026-07-24"}
+# ---------------------------------------------------------------------------
+
+REJECTION_LAPSE_DAYS = 90
+AUTO_REJECT_STREAK = 3
+
+
+@dataclass
+class Rejection:
+    """A parsed `rejected` block. Invalid without both a `reason` and a parseable ISO `at`
+    date — a malformed block fails loudly rather than silently suppressing a host forever."""
+
+    reason: str
+    at: date
+
+    @classmethod
+    def from_entry(cls, entry: dict) -> "Rejection | None":
+        raw = (entry or {}).get("rejected")
+        if not raw:
+            return None
+        host = (entry.get("host") or "") if entry else ""
+        if not isinstance(raw, dict):
+            raise ValueError(f"rejected for {host!r} must be an object with 'reason' and 'at'")
+        reason = (raw.get("reason") or "").strip()
+        at_raw = (raw.get("at") or "").strip()
+        if not reason:
+            raise ValueError(f"rejected for {host!r} needs a 'reason'")
+        if not at_raw:
+            raise ValueError(f"rejected for {host!r} needs an ISO 'at' date (YYYY-MM-DD)")
+        try:
+            at = date.fromisoformat(at_raw[:10])
+        except ValueError as e:
+            raise ValueError(f"rejected 'at' for {host!r} is not an ISO date: {at_raw!r}") from e
+        return cls(reason, at)
+
+    def is_active(self, today: date) -> bool:
+        """True while the rejection still suppresses the host (inside the lapse window)."""
+        return (today - self.at).days < REJECTION_LAPSE_DAYS
+
+    def days_until_lapse(self, today: date) -> int:
+        return REJECTION_LAPSE_DAYS - (today - self.at).days
+
+
+def filter_rejected(entries: list[dict], *, today: date | None = None):
+    """Split entries into (to_crawl, skipped). An ACTIVE rejection (present and inside the
+    lapse window) suppresses the host; a lapsed one lets it through for a fresh probe.
+    `skipped` is a list of (entry, Rejection). Raises on a malformed rejected block."""
+    today = today or date.today()
+    keep, skipped = [], []
+    for e in entries:
+        rej = Rejection.from_entry(e)
+        if rej and rej.is_active(today):
+            skipped.append((e, rej))
+        else:
+            keep.append(e)
+    return keep, skipped
+
+
+def reconcile_rejections(db_path=None, crawled_hosts=None, *,
+                         threshold: int = AUTO_REJECT_STREAK, today: date | None = None) -> dict:
+    """After a crawl, reconcile suppliers.json rejections against the fresh empty-streak.
+
+    Only hosts actually attempted this run are touched. A host at/over `threshold`
+    consecutive zero-item crawls is (re-)rejected with today's date; a rejected host whose
+    latest crawl stored items (streak back to 0) is restored to normal service. Returns
+    {'rejected': [...], 'restored': [...]}.
+    """
+    from . import db as _db
+    today = today or date.today()
+    crawled = {(h or "").lower() for h in (crawled_hosts or [])}
+    conn = _db.connect(str(db_path or _db.DEFAULT_DB))
+    streaks = {(r["host"] or "").lower(): (r["empty_streak"] or 0, r["last_error"] or "")
+               for r in conn.execute("SELECT host, empty_streak, last_error FROM suppliers")}
+    conn.close()
+
+    data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
+    rejected, restored = [], []
+    for s in data.get("suppliers", []):
+        host = (s.get("host") or "").lower()
+        if host not in crawled:
+            continue
+        streak, last_error = streaks.get(host, (0, ""))
+        if streak >= threshold:
+            reason = f"{streak} consecutive zero-item crawls"
+            if last_error:
+                reason += f"; last: {last_error[:80]}"
+            s["rejected"] = {"reason": reason, "at": today.isoformat()}
+            rejected.append(s.get("host"))
+        elif streak == 0 and s.get("rejected"):
+            del s["rejected"]                       # stored items again -> back to normal service
+            restored.append(s.get("host"))
+    if rejected or restored:
+        SUPPLIERS_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return {"rejected": rejected, "restored": restored}
 
 
 def merge_discovered(hosts: dict[str, str | None] | set[str]) -> int:
