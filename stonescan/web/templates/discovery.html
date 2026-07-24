@@ -17,6 +17,7 @@
   <span class="hstat"><b>{{ counts.empty }}</b> empty (private/dead)</span>
   <span class="hstat broken"><b>{{ counts.broken }}</b> errored</span>
   {% if counts.blocked %}<span class="hstat"><b>{{ counts.blocked }}</b> declined (robots.txt)</span>{% endif %}
+  {% if counts.rejected %}<span class="hstat"><b>{{ counts.rejected }}</b> rejected (triaged out)</span>{% endif %}
 </div>
 
 <div class="block">
@@ -77,6 +78,26 @@
 </div>
 {% endif %}
 
+{% if cats.rejected %}
+<div class="block">
+  <h2>Rejected — triaged out <span class="qbadge">{{ counts.rejected }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Judged not worth probing — auto-rejected after 3 consecutive empty crawls, or rejected by hand in <code>suppliers.json</code>. Skipped by the crawl so they stop costing a request every night; each rejection lapses after 90 days for a fresh chance. Delete the <code>rejected</code> block to restore one immediately.</p>
+  <table class="materials healthtable">
+    <thead><tr><th>Host</th><th>Reason</th><th>Rejected</th><th class="num">Lapses in</th></tr></thead>
+    <tbody>
+    {% for r in cats.rejected %}
+      <tr>
+        <td class="name">{{ r.host }}</td>
+        <td class="muted herr">{{ r.reason }}</td>
+        <td class="muted">{{ r.rejected_at or '—' }}</td>
+        <td class="num muted">{% if r.days_left is none %}—{% elif r.days_left > 0 %}{{ r.days_left }}d{% else %}lapsed{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 {% if cats.blocked %}
 <div class="block">
   <h2>Declined by robots.txt <span class="qbadge">{{ counts.blocked }}</span></h2>
@@ -104,4 +125,4 @@
 </div>
 {% endblock %}
 
-{% block footer %}Discovery is deliberately wide: it adds every observed subdomain as a candidate, then a crawl reveals which are real public catalogs. Nothing here is auto-pruned — pruning <code>suppliers.json</code> stays a human decision.{% endblock %}
+{% block footer %}Discovery is deliberately wide: it adds every observed subdomain as a candidate, then a crawl reveals which are real public catalogs. A candidate that fails 3 crawls running is auto-rejected (skipped, not deleted); everything else stays listed, and pruning <code>suppliers.json</code> remains a human decision.{% endblock %}

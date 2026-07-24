@@ -1883,8 +1883,10 @@ def discovery(request: Request):
     rows = {r["host"]: dict(r) for r in conn.execute(
         "SELECT host, company, item_count, slab_count, last_crawled, last_error FROM suppliers")}
     from ..robots import is_block_error
+    from datetime import date
+    today = date.today()
     cats: dict[str, list] = {"unprobed": [], "empty": [], "broken": [], "blocked": [],
-                             "live": []}
+                             "live": [], "rejected": []}
     by_provider: dict[str, dict] = {}
     for e in entries:
         r = rows.get(e["host"])
@@ -1897,7 +1899,18 @@ def discovery(request: Request):
             "last_crawled": (r or {}).get("last_crawled"),
             "error": (r or {}).get("last_error") or "",
         }
-        if r is None:
+        # A triage rejection takes priority over the crawl-status buckets: the host was
+        # judged not worth probing, so it belongs in its own list, not under "errored".
+        try:
+            rej = discover.Rejection.from_entry(e)
+        except ValueError as ex:
+            rej = None
+            rec.update(status="rejected", reason=f"⚠ invalid rejected block: {ex}",
+                       rejected_at="", days_left=None, active=True)
+        if rej:
+            rec.update(status="rejected", reason=rej.reason, rejected_at=rej.at.isoformat(),
+                       days_left=rej.days_until_lapse(today), active=rej.is_active(today))
+        elif r is None:
             rec["status"] = "unprobed"
         elif rec["items"] > 0:
             rec["status"] = "live"
@@ -1917,7 +1930,7 @@ def discovery(request: Request):
         if rec["status"] == "live":
             p["live"] += 1
     cats["live"].sort(key=lambda r: -r["items"])
-    for k in ("unprobed", "empty", "broken", "blocked"):
+    for k in ("unprobed", "empty", "broken", "blocked", "rejected"):
         cats[k].sort(key=lambda r: r["host"])
     stats = db.stats(conn)
     conn.close()
