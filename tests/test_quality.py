@@ -1420,5 +1420,141 @@ class ClassificationHygieneTests(unittest.TestCase):
             nz.material_key("Baltic Polished Porcelain Slab 120x60x1.2", "Porcelain"))
 
 
+class MirrorDetectionTests(unittest.TestCase):
+    """Two supplier hosts serving one tenant's catalog (same token, near-identical item
+    set) must be detected and dropped from supplier counts/facets — without touching
+    either host's rows, and without ever collapsing two genuinely different catalogs."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _supplier(self, sid, host, token, item_ids):
+        """A supplier plus one material per item_id (so item_count == distinct items)."""
+        ids = list(item_ids)
+        self.conn.execute(
+            "INSERT INTO suppliers (id, host, token, item_count) VALUES (?,?,?,?)",
+            (sid, host, token, len(ids)))
+        for iid in ids:
+            self.conn.execute(
+                """INSERT INTO materials
+                     (supplier_id, item_id, item_name, name_norm, material_key, material_type)
+                   VALUES (?,?,?,?,?,?)""",
+                (sid, str(iid), f"Stone {iid}", f"STONE {iid}",
+                 f"stone {iid}|granite", "Granite"))
+        self.conn.commit()
+
+    def _detect(self, entries=None):
+        return db.detect_mirrors(self.conn, entries=entries or [])
+
+    # --- detection ---------------------------------------------------------
+    def test_identical_catalog_is_flagged_but_rows_are_kept(self):
+        self._supplier(1, "klz.example.com", "klz", range(1, 101))
+        self._supplier(2, "americanquartz.example.com", "klz", range(1, 101))
+        report = self._detect()
+        self.assertEqual([m["mirror_host"] for m in report], ["americanquartz.example.com"])
+        self.assertEqual(report[0]["canonical_host"], "klz.example.com")   # label == token
+        self.assertEqual(report[0]["source"], "computed")
+        self.assertAlmostEqual(report[0]["overlap"], 1.0)
+        # Excluded from the "N suppliers" stat, but no row is deleted (NG-1).
+        self.assertEqual(db.stats(self.conn, use_cache=False)["suppliers"], 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM materials").fetchone()[0], 200)
+
+    def test_overlap_just_below_threshold_is_not_a_mirror(self):
+        # A=1..98, B=1..96 + {200,201}: shared 96, union 100 -> 0.96 < 0.98.
+        self._supplier(1, "a.example.com", "tok", range(1, 99))
+        self._supplier(2, "b.example.com", "tok", list(range(1, 97)) + [200, 201])
+        self.assertEqual(self._detect(), [])
+
+    def test_overlap_at_threshold_is_a_mirror(self):
+        # A=1..99, B=1..98 + {100}: shared 98, union 100 -> exactly 0.98 (inclusive).
+        self._supplier(1, "a.example.com", "tok", range(1, 100))
+        self._supplier(2, "b.example.com", "tok", list(range(1, 99)) + [100])
+        report = self._detect()
+        self.assertEqual(len(report), 1)
+        self.assertAlmostEqual(report[0]["overlap"], 0.98, places=3)
+
+    def test_identical_item_ids_across_different_tokens_are_not_mirrors(self):
+        # item_id is unique only per-tenant; two unrelated catalogs both numbering from 1
+        # must never be fused just because their integer ids coincide.
+        self._supplier(1, "a.example.com", "tokA", range(1, 51))
+        self._supplier(2, "b.example.com", "tokB", range(1, 51))
+        self.assertEqual(self._detect(), [])
+
+    def test_real_subset_pair_stays_separate(self):
+        # The ckfco shape: outlet is a strict 241/554 subset -> 0.435, well below threshold.
+        self._supplier(1, "inventory.ckfco.com", "ckfco", range(1, 555))
+        self._supplier(2, "outlet.ckfco.com", "ckfco", range(1, 242))
+        self.assertEqual(self._detect(), [])
+
+    # --- canonical pick ----------------------------------------------------
+    def test_canonical_is_the_host_with_more_items(self):
+        self._supplier(1, "small.example.com", "tok", range(1, 100))   # 99, subset
+        self._supplier(2, "big.example.com", "tok", range(1, 101))     # 100, superset -> 0.99
+        report = self._detect()
+        self.assertEqual(report[0]["mirror_host"], "small.example.com")
+        self.assertEqual(report[0]["canonical_host"], "big.example.com")
+
+    def test_canonical_tiebreak_prefers_the_token_label(self):
+        # Equal item counts: the host whose leftmost DNS label equals the tenant token wins,
+        # regardless of insert order (the pick is a total sort, not first-seen).
+        self._supplier(2, "americanquartz.example.com", "klz", range(1, 101))
+        self._supplier(1, "klz.example.com", "klz", range(1, 101))
+        report = self._detect()
+        self.assertEqual(report[0]["canonical_host"], "klz.example.com")
+        self.assertEqual(report[0]["mirror_host"], "americanquartz.example.com")
+
+    def test_a_pair_that_stops_matching_is_unflagged(self):
+        self._supplier(1, "klz.example.com", "klz", range(1, 101))
+        self._supplier(2, "aq.example.com", "klz", range(1, 101))
+        self.assertEqual(len(self._detect()), 1)
+        # aq's catalog diverges; its overlap collapses and it must be un-flagged.
+        self.conn.execute("DELETE FROM materials WHERE supplier_id = 2 AND CAST(item_id AS INT) > 20")
+        self.conn.execute("UPDATE suppliers SET item_count = 20 WHERE id = 2")
+        self.conn.commit()
+        self.assertEqual(self._detect(), [])
+        self.assertIsNone(self.conn.execute(
+            "SELECT mirror_of FROM suppliers WHERE id = 2").fetchone()["mirror_of"])
+
+    # --- curated overrides -------------------------------------------------
+    def test_curated_distinct_declaration_unflags_a_computed_mirror(self):
+        self._supplier(1, "klz.example.com", "klz", range(1, 101))
+        self._supplier(2, "americanquartz.example.com", "klz", range(1, 101))
+        report = self._detect([{"host": "americanquartz.example.com",
+                                "mirror_of": False, "reason": "confirmed separate yards"}])
+        self.assertEqual(report, [])
+        self.assertEqual(db.stats(self.conn, use_cache=False)["suppliers"], 2)
+
+    def test_curated_forced_pairing_flags_a_host_that_did_not_compute(self):
+        self._supplier(1, "main.example.com", "tok", range(1, 101))
+        self._supplier(2, "vanity.example.com", "tok", range(1, 30))   # 0.29 overlap
+        report = self._detect([{"host": "vanity.example.com", "mirror_of": "main.example.com"}])
+        self.assertEqual(report[0]["mirror_host"], "vanity.example.com")
+        self.assertEqual(report[0]["canonical_host"], "main.example.com")
+        self.assertEqual(report[0]["source"], "curated")
+
+    def test_mirror_of_false_without_reason_raises(self):
+        with self.assertRaises(ValueError):
+            db.MirrorOverride.from_entry({"host": "x", "mirror_of": False})
+        self._supplier(1, "a.example.com", "tok", range(1, 101))
+        self._supplier(2, "b.example.com", "tok", range(1, 101))
+        with self.assertRaises(ValueError):
+            db.detect_mirrors(self.conn, entries=[{"host": "b.example.com", "mirror_of": False}])
+
+    def test_mirror_override_parsing(self):
+        self.assertIsNone(db.MirrorOverride.from_entry({"host": "x"}))          # no key
+        self.assertIsNone(db.MirrorOverride.from_entry({}))
+        ov = db.MirrorOverride.from_entry({"host": "X.com", "mirror_of": "Y.com"})
+        self.assertEqual((ov.host, ov.canonical), ("x.com", "y.com"))
+        ov2 = db.MirrorOverride.from_entry({"host": "x", "mirror_of": False, "reason": "r"})
+        self.assertIsNone(ov2.canonical)
+        with self.assertRaises(ValueError):
+            db.MirrorOverride.from_entry({"host": "x", "mirror_of": 5})          # malformed
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

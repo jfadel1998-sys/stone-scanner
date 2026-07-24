@@ -63,9 +63,12 @@ def recover_by_majority_vote(conn) -> int:
 
 
 def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
-    conn = db.connect(db_path)
-    # Repair any millimetre-as-centimetre thicknesses first (idempotent, and this CLI can
-    # run against a DB the app hasn't opened, which is where init_db would have done it).
+    # init_db (not connect) so the schema is current before we mutate — this CLI can run
+    # against a DB the app hasn't opened, and it needs columns added after first release
+    # (e.g. suppliers.mirror_of) to exist before detect_mirrors writes them.
+    conn = db.init_db(db_path)
+    # Repair any millimetre-as-centimetre thicknesses first (idempotent; init_db's migrate
+    # also runs this, so on a current DB it's a no-op second pass).
     fixed = db.fix_mm_thickness(conn)
     if fixed:
         print(f"Repaired {fixed} millimetre-as-centimetre thickness value(s).")
@@ -99,6 +102,14 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     folded = db.apply_aliases(conn)
     if folded:
         print(f"Re-applied {folded} row(s) from {db.quality_stats(conn)['aliases']} confirmed merge(s).")
+
+    # Re-detect duplicate-catalog storefronts (same discipline as merges: recompute so a
+    # new mirror is flagged and one that no longer matches is un-flagged).
+    mirrors = db.detect_mirrors(conn)
+    if mirrors:
+        print(f"Detected {len(mirrors)} mirror storefront(s) "
+              f"(excluded from supplier counts): "
+              + ", ".join(f"{m['mirror_host']} -> {m['canonical_host']}" for m in mirrors))
 
     # Rebuild the per-product rollup so the search fast path reflects the new keys.
     db.rebuild_product_rollup(conn)

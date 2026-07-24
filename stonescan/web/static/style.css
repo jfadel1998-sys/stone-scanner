@@ -566,6 +566,14 @@ footer {
 .statuspill.blocked { background: #4b5563; color: #fff; }
 .hstat.blocked { border-color: #c3c9d2; background: #eef0f3; }
 
+/* mirror-storefronts panel on /health */
+.mirrorbox { margin: 6px var(--pad-x) 22px; padding: 14px 16px; border: 1px solid var(--line);
+             border-radius: var(--r); background: var(--panel); box-shadow: var(--shadow-sm); }
+.mirrorbox h2 { margin: 0 0 4px; font-size: 16px; }
+.mirrorbox .hintline { margin: 0 0 10px; }
+.mirrortable { margin: 0; }
+.mirrortable td { vertical-align: top; }
+
 /* dark health-stat tints — explicit toggle */
 :root[data-theme="dark"] .hstat.ok { border-color: #315a3c; background: #1c2a20; }
 :root[data-theme="dark"] .hstat.stale { border-color: #5a4d28; background: #2a2416; }
