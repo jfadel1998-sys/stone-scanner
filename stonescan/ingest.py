@@ -236,6 +236,9 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         conn = db.init_db(db_path)
         folded = db.apply_aliases(conn)
         n_aliases = db.quality_stats(conn)["aliases"]
+        # Flag duplicate-catalog storefronts (one tenant under two supplier names) so they
+        # aren't double-counted in supplier totals/facets. Recomputed here every crawl.
+        mirrors = db.detect_mirrors(conn)
         # Refresh the per-product rollup LAST, after material_key is final (aliases folded),
         # so the search fast path reflects this crawl.
         n_rollup = db.rebuild_product_rollup(conn)
@@ -243,6 +246,9 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         conn.close()
         if folded:
             print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
+        if mirrors:
+            print(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
+                  f"from supplier counts ({', '.join(m['mirror_host'] for m in mirrors)}).")
         print(f"  product rollup: {n_rollup} products indexed for fast browse.")
         _refresh_log(db_path, f"Done — {s['materials']} materials, {s['suppliers']} suppliers.")
     except Exception as e:  # noqa: BLE001 - record durably, then let the caller handle it

@@ -16,6 +16,7 @@ import re
 import shutil
 import sqlite3
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -255,7 +256,10 @@ def connect(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
 # Columns added after the first release; applied to pre-existing databases.
 _MIGRATIONS = {
     "suppliers": {"image_base": "TEXT", "slabs_cached_at": "TEXT", "slab_count": "INTEGER DEFAULT 0",
-                  "phone": "TEXT", "email": "TEXT", "locations": "TEXT"},
+                  "phone": "TEXT", "email": "TEXT", "locations": "TEXT",
+                  # A host that mirrors another's catalog (same tenant token, near-identical
+                  # item set): mirror_of = the canonical host, mirror_source = computed|curated.
+                  "mirror_of": "TEXT", "mirror_source": "TEXT"},
     "materials": {"new_arrival": "INTEGER DEFAULT 0", "image_url": "TEXT", "locations": "TEXT"},
 }
 
@@ -518,7 +522,11 @@ def stats(conn: sqlite3.Connection, *, use_cache: bool = True) -> dict[str, Any]
         if hit and time.monotonic() - hit[0] < _STATS_TTL:
             return hit[1]
     s = {}
-    s["suppliers"] = conn.execute("SELECT COUNT(*) c FROM suppliers WHERE item_count > 0").fetchone()["c"]
+    # Mirror storefronts (one tenant published under two supplier names) are excluded so a
+    # duplicated catalog isn't counted as a second supplier — see detect_mirrors().
+    s["suppliers"] = conn.execute(
+        "SELECT COUNT(*) c FROM suppliers WHERE item_count > 0 AND mirror_of IS NULL"
+    ).fetchone()["c"]
     # User-facing counts are the stone/tile CATALOG — the accessory/non-slab bucket
     # (sinks, tools, chemicals) is excluded here (it's still on the Quality audit).
     _cat = "material_type <> 'Accessory / Non-Slab'"
@@ -1117,6 +1125,183 @@ def add_rejection(conn: sqlite3.Connection, sig: str) -> None:
 
 def rejections(conn: sqlite3.Connection) -> set[str]:
     return {r["sig"] for r in conn.execute("SELECT sig FROM merge_rejections")}
+
+
+# ---------------------------------------------------------------------------
+# Mirror detection: two supplier hosts serving the SAME tenant catalog.
+#
+# Some Stone Profits tenants publish more than one storefront on the same token — a
+# vanity/brand host beside the primary — and each stores the identical item set under
+# its own supplier name, so one physical yard is counted twice in supplier totals and
+# facets. We detect it from the data: within a shared tenant token (item_id is unique
+# only PER-tenant, so an overlap across different tokens would be meaningless — two
+# unrelated catalogs that both number from 1), two hosts whose distinct item_id sets
+# overlap by >= MIRROR_MIN_OVERLAP are the same catalog. The non-canonical host is
+# flagged mirror_of=<canonical> and dropped from the supplier facet and the "N
+# suppliers" stat. Nothing is deleted — its rows stay fully searchable.
+# ---------------------------------------------------------------------------
+
+MIRROR_MIN_OVERLAP = 0.98   # >=98%: absorbs the slab-or-two drift between two crawls of
+                            # one live catalog, yet far above the real filtered/partial
+                            # storefront pairs, which sit below ~0.45.
+
+
+@dataclass
+class MirrorOverride:
+    """A human-reviewed override of automatic mirror detection, from suppliers.json.
+
+    Two shapes on a supplier entry:
+        "mirror_of": "<canonical host>"          force this host to be a mirror
+        "mirror_of": false, "reason": "..."      declare it genuinely NOT a mirror
+
+    The second is invalid without a reason — the same discipline as robots.Override:
+    an undocumented "these look identical but aren't" is exactly the decision that
+    rots silently, so it must be written where anyone editing the file can see it.
+    """
+
+    host: str
+    canonical: str | None   # host to fold into; None means "declared distinct"
+    reason: str
+
+    @classmethod
+    def from_entry(cls, entry: dict) -> "MirrorOverride | None":
+        if not entry or "mirror_of" not in entry:
+            return None
+        raw = entry.get("mirror_of")
+        host = (entry.get("host") or "").strip().lower()
+        if raw is False:
+            reason = (entry.get("reason") or "").strip()
+            if not reason:
+                raise ValueError(
+                    f"mirror_of:false for {host!r} needs a 'reason' recording why two "
+                    "hosts that look identical are genuinely separate catalogs")
+            return cls(host, None, reason)
+        if isinstance(raw, str) and raw.strip():
+            return cls(host, raw.strip().lower(), (entry.get("reason") or "").strip())
+        raise ValueError(
+            f"mirror_of for {host!r} must be a canonical host string or false, got {raw!r}")
+
+
+def _distinct_item_ids(conn: sqlite3.Connection, supplier_id: int) -> set:
+    return {r[0] for r in conn.execute(
+        "SELECT DISTINCT item_id FROM materials "
+        "WHERE supplier_id = ? AND COALESCE(item_id, '') <> ''", (supplier_id,))}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 0.0
+    union = len(a | b)
+    return len(a & b) / union if union else 0.0
+
+
+def _pick_canonical(members: list[str], items: dict[str, set], token: str) -> str:
+    """Deterministic canonical host for a mirror cluster: most distinct items wins; a tie
+    goes to the host whose leftmost DNS label is the tenant token; a remaining tie is
+    broken alphabetically. Stable no matter what order the suppliers were inserted in."""
+    def key(h: str):
+        label = h.split(".")[0].lower()
+        return (-len(items[h]), 0 if label == token else 1, h)
+    return sorted(members, key=key)[0]
+
+
+def detect_mirrors(conn: sqlite3.Connection, entries: list[dict] | None = None) -> list[dict]:
+    """Flag duplicate-catalog supplier hosts and return the current mirror report.
+
+    Recomputed from scratch on every crawl / reclassify, so a newly duplicated host is
+    caught and a pair that no longer matches is automatically un-flagged. `entries`
+    supplies the curated suppliers.json overrides; None loads suppliers.json itself.
+    """
+    if entries is None:
+        try:
+            from .discover import load_suppliers
+            entries = load_suppliers()
+        except Exception:   # noqa: BLE001 - detection must never fail a crawl over a bad read
+            entries = []
+    overrides: dict[str, MirrorOverride] = {}
+    for e in entries or []:
+        ov = MirrorOverride.from_entry(e)   # raises on false-without-reason (auditable)
+        if ov:
+            overrides[ov.host] = ov
+
+    # Only same-token suppliers with data can be computed mirrors — see the module note.
+    sups = [dict(r) for r in conn.execute(
+        "SELECT id, host, token FROM suppliers "
+        "WHERE item_count > 0 AND COALESCE(token, '') <> ''")]
+    by_token: dict[str, list] = {}
+    for s in sups:
+        by_token.setdefault(s["token"].strip().lower(), []).append(s)
+
+    computed: dict[str, str] = {}
+    for token, group in by_token.items():
+        if len(group) < 2:
+            continue
+        items = {s["host"]: _distinct_item_ids(conn, s["id"]) for s in group}
+        hosts = [s["host"] for s in group]
+        parent = {h: h for h in hosts}
+
+        def find(x, _parent=parent):
+            while _parent[x] != x:
+                _parent[x] = _parent[_parent[x]]
+                x = _parent[x]
+            return x
+
+        for i in range(len(hosts)):
+            for j in range(i + 1, len(hosts)):
+                if _jaccard(items[hosts[i]], items[hosts[j]]) >= MIRROR_MIN_OVERLAP:
+                    parent[find(hosts[i])] = find(hosts[j])
+        clusters: dict[str, list] = {}
+        for h in hosts:
+            clusters.setdefault(find(h), []).append(h)
+        for members in clusters.values():
+            if len(members) < 2:
+                continue
+            canon = _pick_canonical(members, items, token)
+            for h in members:
+                if h != canon:
+                    computed[h] = canon
+
+    final: dict[str, tuple[str, str]] = {h: (c, "computed") for h, c in computed.items()}
+    for host, ov in overrides.items():
+        if ov.canonical is None:
+            final.pop(host, None)                       # declared distinct: never a mirror
+        else:
+            final[host] = (ov.canonical, "curated")     # a curated value beats the computed one
+
+    # Rewrite every flag so a pair that stopped matching (or was un-declared) is cleared.
+    conn.execute("UPDATE suppliers SET mirror_of = NULL, mirror_source = NULL")
+    for host, (canon, source) in final.items():
+        conn.execute("UPDATE suppliers SET mirror_of = ?, mirror_source = ? WHERE host = ?",
+                     (canon, source, host))
+    conn.commit()
+    return mirror_report(conn)
+
+
+def mirror_report(conn: sqlite3.Connection) -> list[dict]:
+    """One entry per flagged mirror, with the numbers /health shows: both hosts, the
+    overlap, both distinct-item counts, the canonical host, and computed-vs-curated."""
+    info = {r["host"]: r for r in conn.execute(
+        "SELECT id, host, company FROM suppliers")}
+    out = []
+    for r in conn.execute(
+        "SELECT host, company, mirror_of, mirror_source FROM suppliers "
+        "WHERE mirror_of IS NOT NULL ORDER BY host"
+    ):
+        m_row = info.get(r["host"])
+        c_row = info.get(r["mirror_of"])
+        m_items = _distinct_item_ids(conn, m_row["id"]) if m_row else set()
+        c_items = _distinct_item_ids(conn, c_row["id"]) if c_row else set()
+        out.append({
+            "mirror_host": r["host"],
+            "mirror_name": r["company"] or r["host"],
+            "canonical_host": r["mirror_of"],
+            "canonical_name": (c_row["company"] if c_row else None) or r["mirror_of"],
+            "source": r["mirror_source"] or "computed",
+            "overlap": _jaccard(m_items, c_items),
+            "mirror_items": len(m_items),
+            "canonical_items": len(c_items),
+        })
+    return out
 
 
 def quality_stats(conn: sqlite3.Connection) -> dict[str, Any]:

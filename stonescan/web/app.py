@@ -741,7 +741,8 @@ def index(
         "suppliers": [
             dict(r) for r in conn.execute(
                 "SELECT COALESCE(NULLIF(company,''),host) AS name, item_count "
-                "FROM suppliers WHERE item_count > 0 ORDER BY name"
+                # Exclude mirror storefronts so the same yard isn't offered as two suppliers.
+                "FROM suppliers WHERE item_count > 0 AND mirror_of IS NULL ORDER BY name"
             ).fetchall()
         ],
         "stats": db.stats(conn),
@@ -1739,10 +1740,12 @@ def health(request: Request):
     rows.sort(key=lambda r: (order[r["status"]], -(r["item_count"] or 0)))
     counts = {k: sum(1 for r in rows if r["status"] == k)
               for k in ("ok", "stale", "broken", "empty", "blocked")}
+    mirrors = db.mirror_report(conn)
     stats = db.stats(conn)
     conn.close()
     return templates.TemplateResponse(request, "health.html", {
         "rows": rows, "counts": counts, "stats": stats, "total": len(rows),
+        "mirrors": mirrors,
     })
 
 

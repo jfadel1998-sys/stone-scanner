@@ -19,6 +19,30 @@
   {% if counts.blocked %}<span class="hstat blocked"><b>{{ counts.blocked }}</b> blocked (robots.txt)</span>{% endif %}
 </div>
 
+{% if mirrors %}
+<div class="mirrorbox">
+  <h2>Mirror storefronts</h2>
+  <p class="hintline muted">One tenant catalog published under two supplier names. The mirror is excluded from supplier counts and the supplier filter so a single yard isn't counted twice — its items stay fully searchable under the canonical supplier.</p>
+  <table class="materials mirrortable">
+    <thead>
+      <tr><th>Mirror</th><th>Canonical</th><th class="num" title="Share of item IDs the two hosts have in common">Overlap</th><th class="num">Mirror items</th><th class="num">Canonical items</th><th>Source</th></tr>
+    </thead>
+    <tbody>
+    {% for m in mirrors %}
+      <tr>
+        <td class="name">{{ m.mirror_name }}<div class="muted hhost">{{ m.mirror_host }}</div></td>
+        <td class="name">{{ m.canonical_name }}<div class="muted hhost">{{ m.canonical_host }}</div></td>
+        <td class="num">{{ (m.overlap * 100)|round(1) }}%</td>
+        <td class="num">{{ m.mirror_items }}</td>
+        <td class="num">{{ m.canonical_items }}</td>
+        <td><span class="statuspill {{ 'ok' if m.source == 'curated' else 'empty' }}">{{ m.source }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 <table class="materials healthtable">
   <thead>
     <tr><th>Status</th><th>Supplier</th><th>Platform</th><th class="num">Materials</th><th class="num">Slabs</th><th title="When the shown data was collected (a failed crawl leaves it unchanged)">Data as of</th><th title="Last crawl ATTEMPT — advances even when the crawl fails">Last attempt</th><th>Last error</th></tr>
