@@ -1680,5 +1680,151 @@ class RejectionTests(unittest.TestCase):
         self.assertEqual(added, 0)   # stays listed (rejected) -> the "already listed" check blocks it
 
 
+class StorefrontFilterTests(unittest.TestCase):
+    """A mirror that is really a single-type storefront (American Quartz sells only KLZ's
+    quartz) can be re-scoped to that type — but only after a human confirms, and never in a
+    way that empties a supplier."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _supplier(self, sid, host, token, types, *, company="", products=""):
+        """A supplier whose catalog is {material_type: n_items}."""
+        total = sum(types.values())
+        self.conn.execute(
+            "INSERT INTO suppliers (id, host, token, company, products, item_count) "
+            "VALUES (?,?,?,?,?,?)", (sid, host, token, company, products, total))
+        i = 0
+        for mtype, n in types.items():
+            for _ in range(n):
+                i += 1
+                self.conn.execute(
+                    """INSERT INTO materials
+                         (supplier_id, item_id, item_name, name_norm, material_key,
+                          material_type)
+                       VALUES (?,?,?,?,?,?)""",
+                    (sid, str(i), f"Stone {i}", f"STONE {i}", f"stone {i}|{mtype.lower()}",
+                     mtype))
+        self.conn.commit()
+
+    def _mirror_pair(self):
+        """The real shape: klz (842 across types) mirrored by americanquartz, which sells
+        only the quartz slice."""
+        cat = {"Quartz": 165, "Quartzite": 180, "Granite": 160, "Marble": 97}
+        self._supplier(1, "klz.example.com", "klz", cat, company="KLZ",
+                       products="Granite, Marble, Quartz, Quartzite")
+        self._supplier(2, "americanquartz.example.com", "klz", cat,
+                       company="American Quartz", products="Experts in Quartz Surfaces")
+        db.detect_mirrors(self.conn, entries=[])
+
+    def _items(self, sid, mtype=""):
+        return db._distinct_item_count(self.conn, sid, mtype)
+
+    # --- inference ---------------------------------------------------------
+    def test_infers_the_single_named_type(self):
+        self._mirror_pair()
+        p = db.supplier_filter_proposals(self.conn)["americanquartz.example.com"]
+        self.assertEqual(p["material_type"], "Quartz")
+        self.assertEqual((p["matched"], p["total"]), (165, 602))
+
+    def test_no_proposal_when_several_types_are_named(self):
+        # "GS Granite" + products listing four types -> nothing single to infer (AC-5).
+        cat = {"Granite": 200, "Marble": 128, "Quartz": 100}
+        self._supplier(1, "gsgraniteroseville.example.com", "gs", cat, company="GS Granite",
+                       products="Granite, Marble, Quartz, Quartzite")
+        self._supplier(2, "gsgranitesavage.example.com", "gs", cat, company="GS Granite",
+                       products="Granite, Marble, Quartz, Quartzite")
+        db.detect_mirrors(self.conn, entries=[])
+        p = db.supplier_filter_proposals(self.conn)["gsgranitesavage.example.com"]
+        self.assertIsNone(p["material_type"])
+
+    def test_inference_is_whole_word(self):
+        # "Quartzite Imports" must infer Quartzite, never Quartz from the substring.
+        self.assertEqual(db._infer_filter_type("quartzite imports", ["Quartz", "Quartzite"]),
+                         "Quartzite")
+        self.assertEqual(db._infer_filter_type("experts in quartz surfaces",
+                                               ["Quartz", "Quartzite", "Granite"]), "Quartz")
+        self.assertIsNone(db._infer_filter_type("stone gallery", ["Quartz", "Granite"]))
+
+    def test_non_mirror_suppliers_get_no_proposal(self):
+        # NG-5: a lone supplier whose name implies a niche is never proposed a filter.
+        self._supplier(1, "quartzworld.example.com", "qw", {"Quartz": 10, "Granite": 5},
+                       company="Quartz World", products="Quartz")
+        db.detect_mirrors(self.conn, entries=[])
+        self.assertEqual(db.supplier_filter_proposals(self.conn), {})
+
+    # --- confirm -----------------------------------------------------------
+    def test_confirm_rescopes_and_clears_the_mirror(self):
+        self._mirror_pair()
+        kept = db.add_supplier_filter(self.conn, "americanquartz.example.com", "Quartz")
+        self.assertEqual(kept, 165)
+        self.assertEqual(self._items(2), 165)
+        self.assertEqual(self._items(1), 602)          # canonical untouched
+        db.detect_mirrors(self.conn, entries=[])       # 165 != 602 -> no longer a mirror
+        self.assertEqual(db.mirror_report(self.conn), [])
+        self.assertEqual(db.stats(self.conn, use_cache=False)["suppliers"], 2)
+
+    def test_confirm_is_refused_when_it_would_empty_the_supplier(self):
+        self._mirror_pair()
+        kept = db.add_supplier_filter(self.conn, "americanquartz.example.com", "Soapstone")
+        self.assertEqual(kept, 0)
+        self.assertEqual(self._items(2), 602)          # nothing dropped
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM supplier_filters").fetchone()[0], 0)
+
+    def test_confirm_also_drops_the_filtered_out_slabs(self):
+        self._mirror_pair()
+        self.conn.execute("INSERT INTO slabs (supplier_id, item_id, slab_no) VALUES (2,'1','A')")
+        self.conn.execute("INSERT INTO slabs (supplier_id, item_id, slab_no) VALUES (2,'600','B')")
+        self.conn.commit()
+        db.add_supplier_filter(self.conn, "americanquartz.example.com", "Quartz")
+        kept_ids = {r[0] for r in self.conn.execute(
+            "SELECT item_id FROM slabs WHERE supplier_id = 2")}
+        self.assertEqual(kept_ids, {"1"})              # item 600 is Quartzite -> its slab goes
+
+    # --- persistence across a re-crawl -------------------------------------
+    def test_filter_is_reapplied_after_a_recrawl_refetches_everything(self):
+        self._mirror_pair()
+        db.add_supplier_filter(self.conn, "americanquartz.example.com", "Quartz")
+        # Simulate the next crawl re-storing the vanity host's WHOLE tenant catalog.
+        for i in range(1, 181):
+            self.conn.execute(
+                """INSERT INTO materials (supplier_id, item_id, item_name, name_norm,
+                                          material_key, material_type)
+                   VALUES (2,?,?,?,?,'Quartzite')""",
+                (f"r{i}", f"Re {i}", f"RE {i}", f"re {i}|quartzite"))
+        self.conn.commit()
+        self.assertEqual(self._items(2), 345)
+        n = db.apply_supplier_filters(self.conn)       # the ingest hook
+        self.assertEqual(n, 1)
+        self.assertEqual(self._items(2), 165)          # re-scoped, like apply_aliases re-folds
+
+    def test_reapply_skips_a_filter_that_would_match_nothing(self):
+        self._mirror_pair()
+        db.add_supplier_filter(self.conn, "americanquartz.example.com", "Quartz")
+        self.conn.execute("DELETE FROM materials WHERE supplier_id = 2")
+        self.conn.commit()
+        self.assertEqual(db.apply_supplier_filters(self.conn), 0)   # never empties further
+
+    # --- reject ------------------------------------------------------------
+    def test_reject_suppresses_the_same_proposal(self):
+        self._mirror_pair()
+        db.reject_supplier_filter(self.conn, "americanquartz.example.com", "Quartz")
+        p = db.supplier_filter_proposals(self.conn)["americanquartz.example.com"]
+        self.assertIsNone(p["material_type"])          # not re-offered
+        self.assertEqual(len(db.mirror_report(self.conn)), 1)   # and it stays a mirror
+
+    def test_reject_is_specific_to_the_proposed_type(self):
+        self._mirror_pair()
+        db.reject_supplier_filter(self.conn, "americanquartz.example.com", "Granite")
+        p = db.supplier_filter_proposals(self.conn)["americanquartz.example.com"]
+        self.assertEqual(p["material_type"], "Quartz")  # a different proposal still stands
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

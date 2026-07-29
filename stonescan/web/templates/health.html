@@ -22,13 +22,14 @@
 {% if mirrors %}
 <div class="mirrorbox">
   <h2>Mirror storefronts</h2>
-  <p class="hintline muted">One tenant catalog published under two supplier names. The mirror is excluded from supplier counts and the supplier filter so a single yard isn't counted twice — its items stay fully searchable under the canonical supplier.</p>
+  <p class="hintline muted">One tenant catalog published under two supplier names. The mirror is excluded from supplier counts and the supplier filter so a single yard isn't counted twice — its items stay fully searchable under the canonical supplier. When a mirror is really a single-type storefront (American Quartz shows only KLZ's quartz), confirm the proposed filter to re-scope it to its true catalog.</p>
   <table class="materials mirrortable">
     <thead>
-      <tr><th>Mirror</th><th>Canonical</th><th class="num" title="Share of item IDs the two hosts have in common">Overlap</th><th class="num">Mirror items</th><th class="num">Canonical items</th><th>Source</th></tr>
+      <tr><th>Mirror</th><th>Canonical</th><th class="num" title="Share of item IDs the two hosts have in common">Overlap</th><th class="num">Mirror items</th><th class="num">Canonical items</th><th>Source</th><th>Storefront filter</th></tr>
     </thead>
     <tbody>
     {% for m in mirrors %}
+      {% set p = proposals.get(m.mirror_host) %}
       <tr>
         <td class="name">{{ m.mirror_name }}<div class="muted hhost">{{ m.mirror_host }}</div></td>
         <td class="name">{{ m.canonical_name }}<div class="muted hhost">{{ m.canonical_host }}</div></td>
@@ -36,6 +37,25 @@
         <td class="num">{{ m.mirror_items }}</td>
         <td class="num">{{ m.canonical_items }}</td>
         <td><span class="statuspill {{ 'ok' if m.source == 'curated' else 'empty' }}">{{ m.source }}</span></td>
+        <td>
+          {% if p and p.material_type %}
+            <div class="filterprop">&rarr; {{ p.material_type }} only: <b>{{ p.matched }}</b> of {{ p.total }} items</div>
+            <div class="filteract">
+              <form method="post" action="/health/filter/confirm">
+                <input type="hidden" name="host" value="{{ m.mirror_host }}">
+                <input type="hidden" name="material_type" value="{{ p.material_type }}">
+                <button type="submit" class="btn-confirm">Confirm</button>
+              </form>
+              <form method="post" action="/health/filter/reject">
+                <input type="hidden" name="host" value="{{ m.mirror_host }}">
+                <input type="hidden" name="material_type" value="{{ p.material_type }}">
+                <button type="submit" class="btn-reject">Reject</button>
+              </form>
+            </div>
+          {% else %}
+            <span class="muted">no filter proposed</span>
+          {% endif %}
+        </td>
       </tr>
     {% endfor %}
     </tbody>

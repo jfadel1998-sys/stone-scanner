@@ -251,9 +251,16 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         conn = db.init_db(db_path)
         folded = db.apply_aliases(conn)
         n_aliases = db.quality_stats(conn)["aliases"]
+        # Re-apply confirmed storefront filters BEFORE mirror detection: a re-crawl re-fetches
+        # a vanity host's whole tenant catalog, so re-scope it to its confirmed type first —
+        # then it isn't re-flagged as a mirror.
+        scoped = db.apply_supplier_filters(conn)
         # Flag duplicate-catalog storefronts (one tenant under two supplier names) so they
         # aren't double-counted in supplier totals/facets. Recomputed here every crawl.
         mirrors = db.detect_mirrors(conn)
+        # Recompute the (live) storefront-filter proposals for whatever is still a mirror.
+        proposals = db.supplier_filter_proposals(conn)
+        n_proposals = sum(1 for p in proposals.values() if p["material_type"])
         # Refresh the per-product rollup LAST, after material_key is final (aliases folded),
         # so the search fast path reflects this crawl.
         n_rollup = db.rebuild_product_rollup(conn)
@@ -261,9 +268,13 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         conn.close()
         if folded:
             print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
+        if scoped:
+            print(f"  storefront filters: re-scoped {scoped} supplier(s) to their confirmed type.")
         if mirrors:
             print(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
                   f"from supplier counts ({', '.join(m['mirror_host'] for m in mirrors)}).")
+            if n_proposals:
+                print(f"  storefront filters: {n_proposals} filter proposal(s) pending on /health.")
         # Reconcile triage rejections: auto-reject hosts that hit the empty-crawl streak,
         # and restore any that returned items again. Writes suppliers.json.
         rec = discover.reconcile_rejections(db_path, crawled_hosts)

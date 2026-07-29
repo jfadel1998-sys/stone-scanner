@@ -1741,12 +1741,37 @@ def health(request: Request):
     counts = {k: sum(1 for r in rows if r["status"] == k)
               for k in ("ok", "stale", "broken", "empty", "blocked")}
     mirrors = db.mirror_report(conn)
+    proposals = db.supplier_filter_proposals(conn)
     stats = db.stats(conn)
     conn.close()
     return templates.TemplateResponse(request, "health.html", {
         "rows": rows, "counts": counts, "stats": stats, "total": len(rows),
-        "mirrors": mirrors,
+        "mirrors": mirrors, "proposals": proposals,
     })
+
+
+@app.post("/health/filter/confirm")
+def health_filter_confirm(host: str = Form(...), material_type: str = Form(...)):
+    """Confirm a mirror's proposed storefront filter: re-scope it to that type so it stops
+    being a mirror and returns to the facet with its true count."""
+    conn = db.connect()
+    kept = db.add_supplier_filter(conn, host, material_type)
+    if kept:
+        db.detect_mirrors(conn)          # the re-scoped host is no longer a mirror
+        db.rebuild_product_rollup(conn)  # counts/grouping changed -> refresh the fast path
+    conn.close()
+    _invalidate_caches()
+    return RedirectResponse("/health", status_code=303)
+
+
+@app.post("/health/filter/reject")
+def health_filter_reject(host: str = Form(...), material_type: str = Form(...)):
+    """Decline a proposed storefront filter so it isn't offered again (the host stays a mirror)."""
+    conn = db.connect()
+    db.reject_supplier_filter(conn, host, material_type)
+    conn.close()
+    _invalidate_caches()
+    return RedirectResponse("/health", status_code=303)
 
 
 _MERGE_PER_PAGE = 30
