@@ -138,6 +138,21 @@ CREATE TABLE IF NOT EXISTS merge_rejections (
     created_at  TEXT
 );
 
+-- A curator-confirmed material_type scope for a mirror storefront (e.g. American Quartz
+-- serves only the Quartz slice of the KLZ tenant). Keyed on host so it survives a re-crawl:
+-- apply_supplier_filters() re-scopes the freshly-stored rows to this type on every ingest,
+-- the same discipline as material_aliases. A rejected proposal is remembered in
+-- supplier_filter_rejections by "<host>|<material_type>" so it is not re-offered.
+CREATE TABLE IF NOT EXISTS supplier_filters (
+    host          TEXT PRIMARY KEY,
+    material_type TEXT NOT NULL,
+    created_at    TEXT
+);
+CREATE TABLE IF NOT EXISTS supplier_filter_rejections (
+    sig         TEXT PRIMARY KEY,   -- "<host>|<material_type>"
+    created_at  TEXT
+);
+
 -- Search-by-photo: one CLIP embedding per distinct catalog image. Keyed on the image
 -- URL so a re-crawl that keeps the same image reuses its vector (no re-embed). `vec`
 -- is a raw float32 blob; `imagesearch` reads it back with numpy.
@@ -1327,6 +1342,132 @@ def mirror_report(conn: sqlite3.Connection) -> list[dict]:
             "canonical_items": len(c_items),
         })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Storefront filters: re-scope a mirror to the one product type it actually sells.
+#
+# A mirror (AIL-9) is a vanity storefront that stores its whole tenant's catalog under
+# its own name, but the real storefront shows only a slice — American Quartz shows KLZ's
+# 165 quartz items, not all 842. The platform won't tell us the scope (the tenant and the
+# vanity host are byte-identical across getSettings), but our own classifier can: if the
+# host's name/company/products text names exactly ONE material_type it stocks, that's the
+# proposal. A human confirms it on /health; confirming re-scopes the supplier (drops the
+# other types' rows) so it stops being a mirror and returns to the facet with its true
+# count. Confirmations persist in supplier_filters and re-apply on every crawl.
+# ---------------------------------------------------------------------------
+
+def _supplier_id_by_host(conn: sqlite3.Connection, host: str) -> int | None:
+    row = conn.execute("SELECT id FROM suppliers WHERE host = ?", (host,)).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _infer_filter_type(text: str, available_types: list[str]) -> str | None:
+    """The single material_type named in a mirror's own name/company/products text, if
+    exactly one of the types it actually stocks appears as a whole word. Zero or several
+    -> None, so a genuine multi-type yard ("GS Granite", products "Granite, Marble,
+    Quartz, Quartzite") is never given a made-up scope. Whole-word so `Quartz` does not
+    match inside `Quartzite`."""
+    t = (text or "").lower()
+    hits = [mt for mt in available_types
+            if re.search(r"\b" + re.escape(mt.lower()) + r"\b", t)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _distinct_item_count(conn: sqlite3.Connection, sid: int, material_type: str = "") -> int:
+    sql = ("SELECT COUNT(DISTINCT item_id) c FROM materials "
+           "WHERE supplier_id = ? AND COALESCE(item_id, '') <> ''")
+    args: tuple = (sid,)
+    if material_type:
+        sql += " AND material_type = ?"
+        args += (material_type,)
+    return int(conn.execute(sql, args).fetchone()["c"])
+
+
+def supplier_filter_proposals(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Per current mirror host: the inferred material_type scope and its counts, or a
+    None type when nothing single is inferable or the proposal was already rejected.
+    Recomputed live from the current mirror set, so it reflects the latest crawl."""
+    rejected = {r["sig"] for r in conn.execute("SELECT sig FROM supplier_filter_rejections")}
+    out: dict[str, dict] = {}
+    for r in conn.execute(
+        "SELECT id, host, company, products FROM suppliers WHERE mirror_of IS NOT NULL"
+    ):
+        sid = int(r["id"])
+        types = [x["material_type"] for x in conn.execute(
+            "SELECT DISTINCT material_type FROM materials "
+            "WHERE supplier_id = ? AND COALESCE(material_type, '') <> ''", (sid,))]
+        text = " ".join(filter(None, [r["host"], r["company"], r["products"]]))
+        mt = _infer_filter_type(text, types)
+        if mt and f"{r['host']}|{mt}" not in rejected:
+            out[r["host"]] = {"material_type": mt,
+                              "matched": _distinct_item_count(conn, sid, mt),
+                              "total": _distinct_item_count(conn, sid)}
+        else:
+            out[r["host"]] = {"material_type": None, "matched": 0, "total": 0}
+    return out
+
+
+def _rescope_supplier(conn: sqlite3.Connection, sid: int, material_type: str) -> int:
+    """Drop this supplier's rows (and their slabs) that aren't `material_type`, then refresh
+    its counts. Returns the kept distinct-item count. Caller guarantees it is > 0."""
+    conn.execute(
+        "DELETE FROM slabs WHERE supplier_id = ? AND item_id NOT IN "
+        "(SELECT item_id FROM materials WHERE supplier_id = ? AND material_type = ?)",
+        (sid, sid, material_type))
+    conn.execute("DELETE FROM materials WHERE supplier_id = ? AND material_type <> ?",
+                 (sid, material_type))
+    kept = _distinct_item_count(conn, sid)
+    n_rows = conn.execute("SELECT COUNT(*) c FROM materials WHERE supplier_id = ?",
+                          (sid,)).fetchone()["c"]
+    n_slabs = conn.execute("SELECT COUNT(*) c FROM slabs WHERE supplier_id = ?",
+                           (sid,)).fetchone()["c"]
+    conn.execute("UPDATE suppliers SET item_count = ?, slab_count = ? WHERE id = ?",
+                 (n_rows, n_slabs, sid))
+    return kept
+
+
+def add_supplier_filter(conn: sqlite3.Connection, host: str, material_type: str) -> int:
+    """Confirm a material_type scope for a mirror host: persist it and re-scope the supplier
+    now. Refuses (stores nothing, returns 0) if the type matches no rows — a confirmed
+    filter must never empty a supplier."""
+    sid = _supplier_id_by_host(conn, host)
+    if sid is None:
+        return 0
+    if _distinct_item_count(conn, sid, material_type) == 0:
+        return 0
+    conn.execute(
+        "INSERT INTO supplier_filters (host, material_type, created_at) VALUES (?,?,?) "
+        "ON CONFLICT(host) DO UPDATE SET material_type = excluded.material_type",
+        (host, material_type, _now_iso()))
+    kept = _rescope_supplier(conn, sid, material_type)
+    conn.commit()
+    return kept
+
+
+def apply_supplier_filters(conn: sqlite3.Connection) -> int:
+    """Re-apply every confirmed storefront filter after a crawl re-fetched the full catalog,
+    the same way apply_aliases re-folds merges. A filter that would match zero rows is
+    skipped (never empties a supplier). Returns the number of suppliers re-scoped."""
+    n = 0
+    for f in conn.execute("SELECT host, material_type FROM supplier_filters").fetchall():
+        sid = _supplier_id_by_host(conn, f["host"])
+        if sid is None:
+            continue
+        if _distinct_item_count(conn, sid, f["material_type"]) == 0:
+            continue
+        _rescope_supplier(conn, sid, f["material_type"])
+        n += 1
+    conn.commit()
+    return n
+
+
+def reject_supplier_filter(conn: sqlite3.Connection, host: str, material_type: str) -> None:
+    """Remember that this host's proposed filter was declined, so it isn't re-offered."""
+    conn.execute(
+        "INSERT OR IGNORE INTO supplier_filter_rejections (sig, created_at) VALUES (?, ?)",
+        (f"{host}|{material_type}", _now_iso()))
+    conn.commit()
 
 
 def quality_stats(conn: sqlite3.Connection) -> dict[str, Any]:
