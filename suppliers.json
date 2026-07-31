@@ -55,7 +55,11 @@
     },
     {
       "host": "ugmsurfaces.stoneprofitsweb.com",
-      "name": "UGM Surfaces"
+      "name": "UGM Surfaces",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "natureofmarble.stoneprofitsweb.com",
@@ -99,15 +103,27 @@
     },
     {
       "host": "ameriquartz.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "apps.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "aracruz.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "aracruzre.stoneprofitsweb.com",
@@ -135,7 +151,11 @@
     },
     {
       "host": "beststone.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "builderstonegroup.stoneprofitsweb.com",
@@ -143,7 +163,11 @@
     },
     {
       "host": "capitolgranite.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "carthage.stoneprofitsweb.com",
@@ -167,7 +191,11 @@
     },
     {
       "host": "dgmdev.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "dynamosurfaces.stoneprofitsweb.com",
@@ -179,11 +207,19 @@
     },
     {
       "host": "egm.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "emgeestone.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "encore2.stoneprofitsweb.com",
@@ -191,7 +227,11 @@
     },
     {
       "host": "encorestone.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "epicstones.stoneprofitsweb.com",
@@ -199,7 +239,11 @@
     },
     {
       "host": "evereststone.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "fabstone.stoneprofitsweb.com",
@@ -259,7 +303,11 @@
     },
     {
       "host": "kbr.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "marbleexpressla.stoneprofitsweb.com",
@@ -311,7 +359,11 @@
     },
     {
       "host": "veneziastone.stoneprofitsweb.com",
-      "name": ""
+      "name": "",
+      "rejected": {
+        "reason": "3 consecutive zero-item crawls; last: no items returned (empty or non-public catalog)",
+        "at": "2026-07-31"
+      }
     },
     {
       "host": "nwww.stoneprofitsweb.com",
@@ -532,6 +584,1256 @@
     {
       "host": "tuscanstone.stoneprofitsweb.com",
       "name": ""
+    },
+    {
+      "host": "13801memphisave.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "13801memphisaveal.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "13801memphisaveg.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "301granite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "a1granite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "aatestexo.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "absolutestonedesign.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "absolutestonedesigno.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "acuemarmonite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "ameriquartzusa.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "ameriquartzusae.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "ameriquartzusau.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "anytopshop.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "applegreenimport.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "appsbc.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "aracruzpg.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "aracruzq.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "aranastone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "arcaecommerce.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "arcastore.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "architecturaltilestone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "architecturaltilestonek.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "architecturaltilestonex.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "artisan.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "artisan1.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "artisanv.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "artstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "authenticstonedesign.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "autobuy.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "azzarosurfaces.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "azzarosurfacesco.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "azzarosurfacescob.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "azzarosurfacesq.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "bathgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "bathgranitep.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "bdamarbleandgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "biancosurfaces.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "blackeagle.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "blackeaglea.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "bluesuefaces.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "bluesurfaces.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "boatmantileandgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "boatmantileandgraniteq.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "boatmantileandgranitey.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "bostongranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "bostongranitek.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "bostongraniteq.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "bravoresourcesinc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "britus.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "broward.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cabinetscountertopsandmore.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cabinetwarehousesurplus.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "capitolgranitem.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "capitolgraniteq.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "capstone806.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "capstone806a.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "carolinasstonemarblegranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cedargraniteco.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cfi.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "classicmarblegranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "classicmarblegranitew.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "comptoirluxe.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "comptoirluxev.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cornerstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cornerstonerm.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cosiston.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "countertopsolutionsinc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "creative.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "csaz.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "cutting-edgesurfaces.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "daycapiedras.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dcapri.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dcaprican.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "deltastoneproducts.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "demo1yir.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "demo2yi.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "demo3yik.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "demolitea.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "demoliteyk.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "designgranites.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dhdesignsinc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "distinctive.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "distributor.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "distributorvj.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dmgdesigner.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dominguezstoneworks.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dsw.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dswe.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dynamicstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "dynamicstoney.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "eaglestone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "eaglestoneb.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "elementsmarble.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "elitekitchenandstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "ellfab.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "esgroup.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "euromarble.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "eurostoneamericaint.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "exoticstoneimports.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "exporter.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "exporterg.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "exporterxpf.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "fabricator.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "fabricatorw.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "fordstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "galaxygranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "galleriaofstoneaz.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "garpa.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "gbcsouth.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "globalstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "globalstonecollection.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "gmistone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "gmistonexc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "goodfellasgranitellc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "goodfellasgranitellcfab.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "granitedynasty.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "granitemountain.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "graniteslabsuk.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "graniteslabsukw.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "granitewholesalefl.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "grupogapc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "halfprice.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "hcorpfs.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "imperialgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "infinitystone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "infinitystones.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "instyle.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "italymarbleandgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "italymarbleandgraniteq.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "jegamstones.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "jjgraniteinc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "jnlgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "jvsgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "kalacattastone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "kcpc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "kitchenandbathscenter.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "kivastone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "kivastonefl.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "lackstone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "lafayettmarblegranitellc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "lagalleriadipietra.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "lapidus.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "lite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "livingstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "maiastonecompany.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "marbleoftheworld.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "marbleunlimited.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "marjandev.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "marmi.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "marmoglass.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "massgranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "mautic.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "maxgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "megagranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "menastones.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "miastoneassociates.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "middletngranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "mkt.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "modernstones.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "mondial.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "mondialgranit.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "msdmarble.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "multiservice.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "mysticgranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "national.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "natureofmarblea.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "newgranitecorp.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "novosite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "nsr.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "nssgranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "olympusmarble.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "omega.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "omeganaturalstone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "pacshoreeast.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "pinnaclesurface.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "pinnaclesurfacedallas.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "pmggranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "pmw.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "prod-us-1.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "prod1-us-1.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "qatarmarble.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "rdmarble.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "renaissanceslabyard.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "ridstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "roca.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "rockbottomgranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "rocksolidgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "romanstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "royaltystone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "rsgstones.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "rsw.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "seacoaststone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "seattlestone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "selectstone.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "sevenseastone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "sg.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "shellfab.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "sii.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "sino.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "skstonesboynton.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "skstonestampa.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "skstonesusa.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "slabdepot.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "slabshouse.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "spdcountertop.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "splendourstonescorp.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stoneandtilefromportugal.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stonecraftlc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stonedesign.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stonegallerybygapc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stonelink.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "stonera.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stonesmithsindy.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stonespyre.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "stoneworksaug.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "stoneyarduk.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "stratussurfaces.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "ststones.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "supernova.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "swgg.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "switch3.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "synergygranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "takeitforgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "taxilastone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "tbgranite.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "terrastonegallery.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "terrastonepr.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-api-distributor.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-api-exporter.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-api-fabricator.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-distributor.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-exporter.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-fabricator.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-uniquartz.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "test-universalgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "teste.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "texascounterfitters.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "tggstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "thegraniteyardnh.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "therockshop.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "theslabhouse.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "thestonesurfaces.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "tmnaturalstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "topstonestation.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "tqstone.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "tritonstoneinventory.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "tritonstoneno.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "tritontools.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "unitedstonesource.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "universalcountertop.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "vanguardquartz.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "varshastones.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "veneziamarble.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "vfgranite.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "vgmi.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "vitoria.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "wholesalegraniteinc.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "wildcard.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "wildcard.stoneprofitsweb.com",
+      "name": ""
+    },
+    {
+      "host": "wwwm.slabware.com",
+      "name": "",
+      "provider": "slabware"
+    },
+    {
+      "host": "zionstonegallery.slabware.com",
+      "name": "",
+      "provider": "slabware"
     }
   ]
 }
