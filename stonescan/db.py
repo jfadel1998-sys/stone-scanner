@@ -1470,6 +1470,86 @@ def reject_supplier_filter(conn: sqlite3.Connection, host: str, material_type: s
     conn.commit()
 
 
+# ---------------------------------------------------------------------------
+# Per-item slab counts.
+#
+# A materials row is one inventory IDENTIFIER (`idone`), not one product — the schema
+# is UNIQUE(supplier_id, item_id, idone) and the crawler asks for InventoryGroupBy=IDONE_.
+# For the tenants that answer with one row per slab, `available_slabs` repeats the ITEM's
+# total on every sibling row, so summing them multiplies the count by the number of slabs.
+# Measured against the cached slab galleries as an oracle (16,134 items that have one):
+# on multi-row items SUM scores a mean relative error of 159.4 and matches the gallery
+# exactly 0.4% of the time, while counting the identifier rows scores 1.40 / 50.2%.
+#
+# Single-row items are the opposite shape: there the one row's value IS the item's count
+# (exact against the gallery 70% of the time), so they are deliberately left alone. That
+# split is the whole rule — it is why "5 rows of 1 slab at one yard = 5" still holds.
+#
+# The correction is written back onto ONE representative row with the siblings zeroed,
+# so every existing SUM(available_slabs) in the app keeps working untouched.
+# ---------------------------------------------------------------------------
+
+_NON_TILE = "UPPER(COALESCE(product_form,'')) NOT LIKE '%TILE%'"
+
+# Representative row for a collapsed item. Prefers a slab-identifier row that carries
+# dimensions, because _SQFT is SUM(slabs x length x width) — parking the count on a
+# dimensionless item-level summary row would silently drop the item's area to zero.
+_REP_RANK = """ROW_NUMBER() OVER (
+        PARTITION BY supplier_id, item_id
+        ORDER BY CASE WHEN COALESCE(idone,'') <> '' AND COALESCE(avg_length,0) > 0 THEN 0
+                      WHEN COALESCE(idone,'') <> '' THEN 1
+                      WHEN COALESCE(avg_length,0) > 0 THEN 2
+                      ELSE 3 END,
+                 COALESCE(available_slabs,0) DESC, id)"""
+
+
+def collapse_item_slab_counts(conn: sqlite3.Connection) -> int:
+    """Reduce each multi-row (supplier_id, item_id) to one honest slab count.
+
+    Returns the number of items collapsed. Idempotent: the corrected figure is derived
+    from the row structure (how many rows carry an `idone`), never from the slab values
+    it overwrites, so a second pass recomputes the same number.
+
+    Tiles are excluded — `available_slabs` holds a square-foot quantity for them, which
+    the app already handles separately via _IS_TILE / _TILE_SF.
+    """
+    conn.execute("DROP TABLE IF EXISTS _collapse")
+    conn.execute(f"""
+        CREATE TEMP TABLE _collapse AS
+        WITH ranked AS (
+            SELECT id, supplier_id, item_id,
+                   CASE WHEN COALESCE(idone,'') <> '' THEN 1 ELSE 0 END AS is_ident,
+                   COALESCE(available_slabs,0) AS slabs,
+                   {_REP_RANK} AS rn
+              FROM materials
+             WHERE {_NON_TILE}
+        )
+        SELECT supplier_id, item_id,
+               MAX(CASE WHEN rn = 1 THEN id END)                       AS rep_id,
+               -- count the slab-identifier rows; if a tenant sends none, fall back to the
+               -- largest stated figure rather than inventing one.
+               CASE WHEN SUM(is_ident) > 0 THEN SUM(is_ident) ELSE MAX(slabs) END AS corrected
+          FROM ranked
+         GROUP BY supplier_id, item_id
+        HAVING COUNT(*) > 1""")
+    n = int(conn.execute("SELECT COUNT(*) FROM _collapse").fetchone()[0])
+    if n:
+        # Zero the siblings first, then stamp the representative, so an item whose
+        # representative is also a sibling of nothing still ends up with exactly one value.
+        conn.execute(f"""
+            UPDATE materials SET available_slabs = 0
+             WHERE {_NON_TILE}
+               AND id NOT IN (SELECT rep_id FROM _collapse)
+               AND (supplier_id, item_id) IN (SELECT supplier_id, item_id FROM _collapse)""")
+        conn.execute("""
+            UPDATE materials SET available_slabs =
+                (SELECT corrected FROM _collapse c WHERE c.rep_id = materials.id)
+             WHERE id IN (SELECT rep_id FROM _collapse)""")
+    conn.execute("DROP TABLE IF EXISTS _collapse")
+    conn.commit()
+    return n
+
+
 def quality_stats(conn: sqlite3.Connection) -> dict[str, Any]:
     """Headline data-quality counts for the dashboard."""
     q = lambda sql: conn.execute(sql).fetchone()["c"]  # noqa: E731

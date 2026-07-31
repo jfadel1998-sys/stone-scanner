@@ -255,6 +255,10 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         # a vanity host's whole tenant catalog, so re-scope it to its confirmed type first —
         # then it isn't re-flagged as a mirror.
         scoped = db.apply_supplier_filters(conn)
+        # Reduce each multi-row item to one honest slab count. AFTER the storefront filters,
+        # so rows about to be deleted are never counted, and BEFORE the rollup, so the search
+        # fast path is built on the corrected figure.
+        collapsed = db.collapse_item_slab_counts(conn)
         # Flag duplicate-catalog storefronts (one tenant under two supplier names) so they
         # aren't double-counted in supplier totals/facets. Recomputed here every crawl.
         mirrors = db.detect_mirrors(conn)
@@ -270,6 +274,8 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
         if scoped:
             print(f"  storefront filters: re-scoped {scoped} supplier(s) to their confirmed type.")
+        if collapsed:
+            print(f"  slab counts: collapsed {collapsed} multi-row item(s) to one figure each.")
         if mirrors:
             print(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
                   f"from supplier counts ({', '.join(m['mirror_host'] for m in mirrors)}).")
