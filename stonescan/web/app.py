@@ -1533,7 +1533,8 @@ _ALERT_ROWS_SQL = """
 WITH agg AS (
     SELECT supplier_id, snapshot_date, name_norm, thickness,
            SUM(slabs) AS slabs, MAX(material_type) AS material_type,
-           MAX(color) AS color, MAX(image_url) AS image_url
+           MAX(color) AS color, MAX(image_url) AS image_url,
+           MAX(COALESCE(rebased,0)) AS rebased
     FROM history GROUP BY supplier_id, snapshot_date, name_norm, thickness
 ),
 latest AS (SELECT supplier_id, MAX(snapshot_date) AS d FROM history GROUP BY supplier_id),
@@ -1544,6 +1545,7 @@ prev AS (
 )
 SELECT a.supplier_id, a.name_norm, a.thickness, a.material_type, a.color, a.image_url,
        a.slabs AS latest_slabs, p.slabs AS prev_slabs, l.d AS latest_date, pr.d AS prev_date,
+       a.rebased AS latest_rebased, COALESCE(p.rebased, 0) AS prev_rebased,
        COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
        (SELECT MIN(mm.id) FROM materials mm
           WHERE mm.supplier_id = a.supplier_id AND mm.name_norm = a.name_norm
@@ -1561,18 +1563,27 @@ JOIN suppliers s ON s.id = a.supplier_id
 _ALERT_DROP_FLOOR = 5
 
 
-def _classify_alert(latest: int, prev):
+def _classify_alert(latest: int, prev, *, crossed_rebase: bool = False):
     """The alert kind for one listing's latest-vs-previous slab counts, or None.
-    `prev` is None when the listing was absent at the previous snapshot."""
+    `prev` is None when the listing was absent at the previous snapshot.
+
+    `crossed_rebase` marks a comparison that spans the change in how per-item slab counts
+    are totalled (AIL-12). Across that boundary almost every listing appears to fall — the
+    old snapshot multiplied each item's total by its row count — so the DOWN kinds are
+    suppressed for that one comparison rather than reporting a catalog-wide sell-off that
+    never happened. The UP kinds stay: a restock or a new listing is still real, and the
+    thresholds themselves are untouched. Self-healing — once both snapshots are on the new
+    accounting the flag is false again and drops report normally.
+    """
     if prev is None:
         return "listed" if latest > 0 else None
     if prev == 0:
         return "restock" if latest > 0 else None
     # prev > 0
     if latest == 0:
-        return "soldout"
+        return None if crossed_rebase else "soldout"
     if latest * 2 <= prev and (prev - latest) >= _ALERT_DROP_FLOOR:
-        return "dropped"
+        return None if crossed_rebase else "dropped"
     return None
 
 
@@ -1598,7 +1609,9 @@ def _alert_digest(conn) -> dict:
     for r in conn.execute(_ALERT_ROWS_SQL).fetchall():
         latest = r["latest_slabs"] or 0
         prev = r["prev_slabs"]  # None => absent at previous snapshot
-        kind = _classify_alert(latest, prev)
+        # Only the first comparison after the collapse spans the two accountings.
+        crossed = bool(r["latest_rebased"]) and not bool(r["prev_rebased"])
+        kind = _classify_alert(latest, prev, crossed_rebase=crossed)
         if not kind:
             continue
         item = dict(r)

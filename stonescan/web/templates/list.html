@@ -46,7 +46,11 @@
           {% if it.finish %}<div class="muted" style="font-size:12px">{{ it.finish }}</div>{% endif %}
         </td>
         <td>{{ it.thickness }}</td>
-        <td class="num">{{ it.live_slabs if it.live_slabs else ('—' if it.gone else 0) }}</td>
+        {# A tile's quantity is square feet, not slabs — label it as area rather than
+           printing it under the "Slabs now" heading. #}
+        <td class="num">{% if it.live_slabs %}{{ it.live_slabs }}
+          {%- elif it.live_tile_sf %}<span title="Tile quantity, shown as area">{{ it.live_tile_sf|round|int }} ft²</span>
+          {%- else %}{{ '—' if it.gone else 0 }}{% endif %}</td>
         <td>
           <form class="noteform" method="post" action="/lists/note">
             <input type="hidden" name="item_id" value="{{ it.id }}">
