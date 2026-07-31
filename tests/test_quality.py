@@ -1826,5 +1826,121 @@ class StorefrontFilterTests(unittest.TestCase):
         self.assertEqual(p["material_type"], "Quartz")  # a different proposal still stands
 
 
+class SlabCountCollapseTests(unittest.TestCase):
+    """A materials row is one inventory identifier, not one product. Where a tenant sends
+    one row per slab and repeats the item's total on each, summing them multiplies the
+    count — so a multi-row item collapses to the number of slab-identifier rows, while a
+    single-row item (whose one value IS the item's count) is left alone."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=5)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _row(self, supplier_id, item_id, *, idone=None, slabs=0, form="SLAB",
+             length=0, width=0, uom=""):
+        # idone=None -> NULL. UNIQUE(supplier_id, item_id, idone) treats '' as a real
+        # value, so a tenant's dimensionless item-level rows arrive as NULL, not ''.
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, idone, item_name, name_norm, material_key,
+                  material_type, product_form, available_slabs, uom, avg_length, avg_width)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (supplier_id, item_id, idone, "Stone", "STONE", "stone|granite",
+             "Granite", form, slabs, uom, length, width))
+        self.conn.commit()
+
+    def _slabs_for(self, supplier_id, item_id):
+        return self.conn.execute(
+            "SELECT SUM(COALESCE(available_slabs,0)) FROM materials "
+            "WHERE supplier_id=? AND item_id=?", (supplier_id, item_id)).fetchone()[0]
+
+    # --- the core split -----------------------------------------------------
+    def test_multi_row_item_collapses_to_its_identifier_count(self):
+        # The georgianstone shape: 6 slab rows, each repeating an item total of 114.
+        for i in range(6):
+            self._row(1, "190", idone=f"101{i}", slabs=114, length=100, width=60)
+        self.assertEqual(self._slabs_for(1, "190"), 684, "sum before the fix")
+        self.assertEqual(db.collapse_item_slab_counts(self.conn), 1)
+        self.assertEqual(self._slabs_for(1, "190"), 6, "6 identifier rows = 6 slabs")
+
+    def test_single_row_item_is_left_alone(self):
+        # One row stating 17 slabs IS the item's count — exact against the gallery 70%
+        # of the time on real data, so it must not be reduced to 1.
+        self._row(1, "500", idone="a", slabs=17, length=100, width=60)
+        self.assertEqual(db.collapse_item_slab_counts(self.conn), 0)
+        self.assertEqual(self._slabs_for(1, "500"), 17)
+
+    def test_one_slab_per_row_yard_still_sums_to_its_row_count(self):
+        # The OHM shape and the guarantee of test_per_slab_row_supplier_sums_within_the_yard:
+        # 5 rows of 1 slab at one yard stays 5, because 5 identifier rows = 5 slabs.
+        for i in range(5):
+            self._row(1, "300", idone=f"s{i}", slabs=1, length=100, width=60)
+        db.collapse_item_slab_counts(self.conn)
+        self.assertEqual(self._slabs_for(1, "300"), 5)
+
+    # --- the traps ----------------------------------------------------------
+    def test_area_survives_the_collapse(self):
+        # AC-3: parking the count on a dimensionless item-level summary row would drop
+        # _SQFT (SUM(slabs x L x W)) to zero. The representative must carry dimensions.
+        self._row(1, "190", slabs=8785, length=0, width=0)   # summary row (NULL idone)
+        for i in range(4):
+            self._row(1, "190", idone=f"i{i}", slabs=114, length=120, width=70)
+        db.collapse_item_slab_counts(self.conn)
+        area = self.conn.execute(
+            "SELECT SUM(COALESCE(available_slabs,0) * COALESCE(avg_length,0) "
+            "* COALESCE(avg_width,0)) / 144.0 FROM materials "
+            "WHERE supplier_id=1 AND item_id='190'").fetchone()[0]
+        self.assertEqual(self._slabs_for(1, "190"), 4, "4 identifier rows")
+        self.assertGreater(area, 0, "the count must not land on a dimensionless row")
+
+    def test_group_with_no_identifier_rows_falls_back_to_the_largest_figure(self):
+        self._row(1, "700", slabs=40, length=100, width=60)
+        self._row(1, "700", idone="", slabs=25, length=100, width=60)
+        db.collapse_item_slab_counts(self.conn)
+        self.assertEqual(self._slabs_for(1, "700"), 40, "no invented number")
+
+    def test_tiles_are_untouched(self):
+        # available_slabs holds square feet for tiles; the app handles that separately.
+        for i in range(3):
+            self._row(1, "800", idone=f"t{i}", slabs=2493, form="TILE", uom="SF")
+        self.assertEqual(db.collapse_item_slab_counts(self.conn), 0)
+        self.assertEqual(self._slabs_for(1, "800"), 7479)
+
+    def test_idempotent(self):
+        for i in range(6):
+            self._row(1, "190", idone=f"x{i}", slabs=114, length=100, width=60)
+        db.collapse_item_slab_counts(self.conn)
+        first = self._slabs_for(1, "190")
+        db.collapse_item_slab_counts(self.conn)
+        self.assertEqual(self._slabs_for(1, "190"), first, "a second pass must not re-reduce")
+        self.assertEqual(first, 6)
+
+    def test_items_are_collapsed_independently_within_a_supplier(self):
+        for i in range(3):
+            self._row(1, "A", idone=f"a{i}", slabs=50, length=100, width=60)
+        for i in range(7):
+            self._row(1, "B", idone=f"b{i}", slabs=50, length=100, width=60)
+        self._row(1, "C", idone="c0", slabs=12, length=100, width=60)
+        self.assertEqual(db.collapse_item_slab_counts(self.conn), 2)
+        self.assertEqual(self._slabs_for(1, "A"), 3)
+        self.assertEqual(self._slabs_for(1, "B"), 7)
+        self.assertEqual(self._slabs_for(1, "C"), 12, "single-row item untouched")
+
+    def test_same_item_id_at_two_suppliers_does_not_merge(self):
+        # item_id is unique per-supplier only, so the grouping must include supplier_id.
+        for i in range(4):
+            self._row(1, "999", idone=f"p{i}", slabs=30, length=100, width=60)
+        for i in range(2):
+            self._row(2, "999", idone=f"q{i}", slabs=30, length=100, width=60)
+        self.assertEqual(db.collapse_item_slab_counts(self.conn), 2)
+        self.assertEqual(self._slabs_for(1, "999"), 4)
+        self.assertEqual(self._slabs_for(2, "999"), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
