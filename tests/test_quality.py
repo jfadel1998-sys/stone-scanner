@@ -1942,5 +1942,108 @@ class SlabCountCollapseTests(unittest.TestCase):
         self.assertEqual(self._slabs_for(2, "999"), 2)
 
 
+class MaterialKeyTailTests(unittest.TestCase):
+    """The same stone must key the same however a supplier chose to write it — with or
+    without its own type word, "Slabs", or an mm/inch size — without merging stones whose
+    real name happens to contain a type word."""
+
+    def test_type_word_tails_collapse_to_one_key(self):
+        want = nz.material_key("Taj Mahal", "Quartzite")
+        for variant in ("Taj Mahal Quartzite", "Quartzite Taj Mahal", "Taj Mahal Slabs",
+                        "Taj Mahal Slab", "Taj Mahal Finish",
+                        "Taj Mahal Quartzite Slab 30mm", "Taj Mahal Quartzite 20 mm",
+                        "TAJ MAHAL QUARTZITE SLAB"):
+            self.assertEqual(nz.material_key(variant, "Quartzite"), want, variant)
+
+    def test_supplier_category_prefix_is_stripped(self):
+        # The dominant real shape: the supplier prefixes their category onto every name.
+        self.assertEqual(nz.material_key("GRANITE AZUL PLATINO 3CM - POLISHED", "Granite"),
+                         nz.material_key("Azul Platino", "Granite"))
+        self.assertEqual(nz.material_key("QUARTZITE - AZURE - 3cm -", "Quartzite"),
+                         nz.material_key("Azure", "Quartzite"))
+
+    def test_only_the_rows_own_type_is_stripped(self):
+        # "Blue Granite" filed as Marble keeps its name — stripping the whole type
+        # vocabulary would merge it with an unrelated "Blue".
+        self.assertEqual(nz.material_key("Blue Granite", "Marble"), "blue granite|marble")
+
+    def test_multi_word_types_are_dropped_as_a_phrase(self):
+        # AC-2: token-wise removal would turn "Grey Stone" into "Grey".
+        self.assertEqual(nz.material_key("Grey Stone", "Engineered Stone"),
+                         "grey stone|engineered stone")
+        self.assertEqual(nz.material_key("Sintered Stone Infinity White", "Sintered Stone"),
+                         nz.material_key("Infinity White", "Sintered Stone"))
+
+    def test_never_reduces_a_name_to_nothing(self):
+        # AC-3: a listing named only for its type, or only "Slab", keeps a usable key.
+        self.assertEqual(nz.material_key("Quartzite", "Quartzite"), "quartzite|quartzite")
+        self.assertEqual(nz.material_key("Slab", "Granite"), "slab|granite")
+        self.assertEqual(nz.material_key("Slabs", "Marble"), "slabs|marble")
+
+    def test_untyped_rows_are_untouched(self):
+        # 'Other'/accessory aren't words suppliers put in product names.
+        self.assertEqual(nz.material_key("Taj Mahal", "Other"), "taj mahal|other")
+
+    def test_earlier_key_hygiene_still_holds(self):
+        clean = nz.material_key("Cassablanca", "Quartzite")
+        self.assertEqual(nz.material_key("Cassablanca Polished126.5 x 78.5", "Quartzite"), clean)
+        self.assertEqual(nz.material_key("Cassablanca Unpolished 3cm", "Quartzite"), clean)
+
+
+class AliasRemapTests(unittest.TestCase):
+    """A confirmed merge is two stored material_keys. When the key rules change they must
+    be re-derived, or apply_aliases folds rows into a key nothing produces any more."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=4)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_remap_key_re_derives_a_stored_key(self):
+        self.assertEqual(nz.remap_key("taj mahal quartzite|quartzite"), "taj mahal|quartzite")
+        self.assertEqual(nz.remap_key("black pearl finish|granite"), "black pearl|granite")
+        self.assertEqual(nz.remap_key("taj mahal|quartzite"), "taj mahal|quartzite")
+        self.assertEqual(nz.remap_key(""), "")
+        self.assertEqual(nz.remap_key("no-pipe"), "no-pipe")
+
+    def test_a_merge_survives_the_key_change(self):
+        # The curator merged the granite spelling into the quartzite one under the OLD
+        # keys. After the rules change, the fold must still reach real rows.
+        db.add_alias(self.conn, "taj mahal|granite", "taj mahal quartzite|quartzite")
+        db.remap_aliases(self.conn, nz.remap_key)
+        _insert(self.conn, 1, "Taj Mahal", "Granite")
+        _insert(self.conn, 2, "Taj Mahal Quartzite", "Quartzite")
+        self.assertEqual(db.apply_aliases(self.conn), 1)
+        keys = {r[0] for r in self.conn.execute("SELECT DISTINCT material_key FROM materials")}
+        self.assertEqual(keys, {"taj mahal|quartzite"}, "both rows land on the live key")
+
+    def test_a_merge_the_new_rules_already_make_is_dropped(self):
+        db.add_alias(self.conn, "taj mahal quartzite|quartzite", "taj mahal|quartzite")
+        moved = db.remap_aliases(self.conn, nz.remap_key)
+        self.assertEqual(moved["dropped"], 1, "both sides now key the same; nothing to fold")
+        self.assertEqual(db.quality_stats(self.conn)["aliases"], 0)
+
+    def test_remap_is_idempotent(self):
+        db.add_alias(self.conn, "taj mahal|granite", "taj mahal quartzite|quartzite")
+        first = db.remap_aliases(self.conn, nz.remap_key)
+        rows1 = db.list_aliases(self.conn)
+        second = db.remap_aliases(self.conn, nz.remap_key)
+        self.assertEqual(second["remapped"], 0, "a second pass moves nothing")
+        self.assertEqual([r["alias_key"] for r in db.list_aliases(self.conn)],
+                         [r["alias_key"] for r in rows1])
+        self.assertEqual(first["kept"], second["kept"])
+
+    def test_unrelated_merges_are_left_alone(self):
+        db.add_alias(self.conn, "alpha|granite", "beta|granite")
+        db.remap_aliases(self.conn, nz.remap_key)
+        al = db.list_aliases(self.conn)
+        self.assertEqual((al[0]["alias_key"], al[0]["canonical_key"]),
+                         ("alpha|granite", "beta|granite"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

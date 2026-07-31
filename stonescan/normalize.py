@@ -148,6 +148,13 @@ _QUALIFIER_RE = re.compile(
     )\b""",
     re.IGNORECASE | re.VERBOSE,
 )
+# Thickness stated in millimetres or inches. _QUALIFIER_RE already covers "<n>cm"; without
+# these, "Taj Mahal Quartzite Slab 30mm" keeps the size and splits off its own material.
+_MM_IN_RE = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:mm|in|inch|inches)\b", re.IGNORECASE)
+# Words that describe the FORM of the listing, not the stone. A supplier who writes
+# "Taj Mahal Slabs" is selling the same stone as one who writes "Taj Mahal".
+_FORMWORD_RE = re.compile(r"\b(?:slabs?|finish)\b", re.IGNORECASE)
 
 
 def _match_rules(haystack: str) -> str:
@@ -282,16 +289,43 @@ def clean_name(name: str) -> str:
     return n
 
 
-def _title_key(name: str) -> str:
-    """Base name used for grouping: drop finish/thickness/size qualifiers + punctuation."""
+def _strip_type_words(base: str, material_type: str) -> str:
+    """Drop the row's OWN type from its name, so "Taj Mahal Quartzite", "Quartzite Taj
+    Mahal" and "Taj Mahal" are one material rather than three.
+
+    Only this row's canonical type is removed, never the whole type vocabulary — "Blue
+    Granite" filed as Marble keeps its name. Multi-word types ("Sintered Stone",
+    "Engineered Glass") are removed as a PHRASE: dropping their tokens one at a time
+    would turn "Grey Stone" into "Grey" and merge unrelated stones.
+    """
+    t = (material_type or "").strip().lower()
+    # 'Other' and the accessory bucket aren't words a supplier puts in a product name.
+    if not t or t in ("other", "accessory / non-slab"):
+        return base
+    stripped = re.sub(rf"\b{re.escape(t)}\b", " ", base)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    # Never let the type word be the whole name: "Quartzite"/"Granite Falls" -> "Granite
+    # Falls" survives as itself rather than collapsing to an empty or bare-token key.
+    return stripped or base
+
+
+def _title_key(name: str, material_type: str = "") -> str:
+    """Base name used for grouping: drop finish/thickness/size/form qualifiers,
+    the row's own type word, and punctuation."""
     n = (name or "").lower()
     n = re.sub(r"\(([^)]*)\)", " ", n)          # drop parenthetical qualifiers
     n = _FINISH_RE.sub(" ", n)                  # drop finishes (incl. "polished126")
     n = _QUALIFIER_RE.sub(" ", n)               # drop loose qualifiers
     n = _DIMS_RE.sub(" ", n)                    # drop per-slab dimensions
+    n = _MM_IN_RE.sub(" ", n)                   # drop mm/inch thickness
     n = re.sub(r"[^a-z0-9 ]+", " ", n)          # drop punctuation
     n = re.sub(r"\s+", " ", n).strip()
-    return n
+    # After punctuation is normalised, so a multi-word type matches across "-"/"/" too.
+    n = _strip_type_words(n, material_type)
+    formless = re.sub(r"\s+", " ", _FORMWORD_RE.sub(" ", n)).strip()
+    # "Slab" alone is a legitimate whole name for a few listings; only drop the form word
+    # when something identifying survives it.
+    return formless or n
 
 
 def material_key(name: str, material_type: str) -> str:
@@ -300,10 +334,25 @@ def material_key(name: str, material_type: str) -> str:
     Uses the qualifier-stripped base name plus the material type, e.g.
     "absolute black|granite". Type guards against unrelated same-name items.
     """
-    base = _title_key(name)
+    base = _title_key(name, material_type)
     if not base:
         return ""
     return f"{base}|{(material_type or '').lower()}"
+
+
+def remap_key(key: str) -> str:
+    """Re-derive an already-computed material_key under the CURRENT key rules.
+
+    Stored keys outlive the function that built them — `material_aliases` holds two of
+    them per confirmed merge. When the key rules change, those stored keys must be
+    re-derived or a curator's merge silently points at a key nothing produces any more.
+    A key is "<base>|<type>", so the base is re-run through the same stripper.
+    """
+    if not key or "|" not in key:
+        return key
+    base, _, mtype = key.rpartition("|")
+    rebuilt = _title_key(base, mtype)
+    return f"{rebuilt}|{mtype}" if rebuilt else key
 
 
 def _text(v: Any) -> str:
