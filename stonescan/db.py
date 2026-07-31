@@ -1143,6 +1143,40 @@ def add_alias(conn: sqlite3.Connection, alias_key: str, canonical_key: str,
     conn.commit()
 
 
+def remap_aliases(conn: sqlite3.Connection, remap) -> dict[str, int]:
+    """Re-derive every stored merge through `remap` after the key rules change.
+
+    A confirmed merge is two stored material_keys. Change how keys are built and both
+    sides can stop being produced — apply_aliases would then fold rows into a key nothing
+    else has, quietly orphaning the merge instead of undoing it. Rewriting both sides
+    keeps the curator's decision meaning what they meant.
+
+    A merge whose two sides collapse to the SAME key is dropped: the new rules already
+    unify those rows, so the alias has nothing left to do. Returns counts of what moved.
+    """
+    rows = conn.execute(
+        "SELECT alias_key, canonical_key, canonical_type, note, created_at "
+        "FROM material_aliases").fetchall()
+    remapped, dropped, out = 0, 0 , []
+    for r in rows:
+        ak, ck = remap(r["alias_key"]), remap(r["canonical_key"])
+        if ak == ck:
+            dropped += 1
+            continue
+        if ak != r["alias_key"] or ck != r["canonical_key"]:
+            remapped += 1
+        out.append((ak, ck, r["canonical_type"], r["note"], r["created_at"]))
+    conn.execute("DELETE FROM material_aliases")
+    # Two old aliases can remap onto one alias_key; INSERT OR REPLACE keeps the last,
+    # which is safe because they now name the same fold.
+    conn.executemany(
+        "INSERT OR REPLACE INTO material_aliases "
+        "(alias_key, canonical_key, canonical_type, note, created_at) VALUES (?,?,?,?,?)",
+        out)
+    conn.commit()
+    return {"remapped": remapped, "dropped": dropped, "kept": len(out)}
+
+
 def remove_alias(conn: sqlite3.Connection, alias_key: str) -> None:
     conn.execute("DELETE FROM material_aliases WHERE alias_key = ?", (alias_key,))
     conn.commit()

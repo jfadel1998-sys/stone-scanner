@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from . import db
 from .normalize import (canonical_type, clean_color, derive_color_from_name, material_key,
-                        normalize_thickness)
+                        normalize_thickness, remap_key)
 
 
 def recover_by_majority_vote(conn) -> int:
@@ -96,6 +96,15 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     voted = recover_by_majority_vote(conn)
     if voted:
         print(f"Recovered {voted} 'Other' row(s) from same-name siblings.")
+
+    # Stored merges hold material_keys built by an OLDER version of the key rules. Re-derive
+    # both sides FIRST, or apply_aliases below folds rows into a key nothing produces any
+    # more — orphaning the merge rather than undoing it. Idempotent: already-current keys
+    # remap to themselves.
+    moved = db.remap_aliases(conn, remap_key)
+    if moved["remapped"] or moved["dropped"]:
+        print(f"Re-derived {moved['remapped']} merge(s) onto current keys; "
+              f"dropped {moved['dropped']} the new rules already unify.")
 
     # Re-fold any curator-confirmed merges: reclassify recomputes material_key from
     # scratch, which would otherwise undo every merge until the next crawl.
