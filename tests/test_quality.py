@@ -2045,5 +2045,119 @@ class AliasRemapTests(unittest.TestCase):
                          ("alpha|granite", "beta|granite"))
 
 
+class SlabCountPropagationTests(unittest.TestCase):
+    """The corrected per-item slab count has to reach every surface that quotes a
+    quantity — and the one-off change in how stock is counted must not read as a
+    catalog-wide sell-off in the alert digest."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=4)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _row(self, supplier_id, item_id, *, idone=None, slabs=0, form="SLAB", uom="",
+             name="Stone", length=0, width=0):
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, idone, item_name, name_norm, material_key,
+                  material_type, product_form, available_slabs, uom, avg_length, avg_width)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (supplier_id, item_id, idone, name, name.upper(), f"{name.lower()}|granite",
+             "Granite", form, slabs, uom, length, width))
+        self.conn.commit()
+
+    # --- AC-1: history records the corrected figure -------------------------
+    def test_resnapshot_uses_the_collapsed_count(self):
+        for i in range(6):
+            self._row(1, "190", idone=f"s{i}", slabs=114)
+        db.snapshot_history(self.conn, 1, "2026-08-01")           # during the crawl
+        before = self.conn.execute(
+            "SELECT SUM(slabs) FROM history WHERE snapshot_date='2026-08-01'").fetchone()[0]
+        self.assertEqual(before, 684, "the pre-collapse snapshot keeps the inflated sum")
+
+        db.collapse_item_slab_counts(self.conn)
+        self.assertEqual(db.resnapshot_history(self.conn, "2026-08-01"), 1)
+        after = self.conn.execute(
+            "SELECT SUM(slabs) FROM history WHERE snapshot_date='2026-08-01'").fetchone()[0]
+        self.assertEqual(after, 6, "history now matches what the rest of the app shows")
+
+    def test_resnapshot_only_touches_suppliers_already_snapshotted_today(self):
+        self._row(1, "a", idone="x", slabs=3)
+        self._row(2, "b", idone="y", slabs=4)
+        db.snapshot_history(self.conn, 1, "2026-08-01")   # only supplier 1 was crawled
+        self.assertEqual(db.resnapshot_history(self.conn, "2026-08-01"), 1)
+        sids = {r[0] for r in self.conn.execute(
+            "SELECT DISTINCT supplier_id FROM history WHERE snapshot_date='2026-08-01'")}
+        self.assertEqual(sids, {1}, "an uncrawled supplier must not gain a today row")
+
+    def test_resnapshot_marks_rows_rebased(self):
+        self._row(1, "a", idone="x", slabs=3)
+        db.snapshot_history(self.conn, 1, "2026-08-01")
+        self.assertEqual(self.conn.execute(
+            "SELECT MAX(rebased) FROM history").fetchone()[0], 0)
+        db.resnapshot_history(self.conn, "2026-08-01")
+        self.assertEqual(self.conn.execute(
+            "SELECT MIN(rebased) FROM history").fetchone()[0], 1)
+
+    # --- AC-2: the step change must not fire false alerts -------------------
+    def test_drops_are_suppressed_across_the_rebase_boundary(self):
+        from stonescan.web.app import _classify_alert
+        # A listing that "fell" 684 -> 6 purely because the counting changed.
+        self.assertIsNone(_classify_alert(6, 684, crossed_rebase=True))
+        self.assertEqual(_classify_alert(6, 684), "dropped", "normally a real drop")
+        # Sold-out is the same story across the boundary.
+        self.assertIsNone(_classify_alert(0, 500, crossed_rebase=True))
+        self.assertEqual(_classify_alert(0, 500), "soldout")
+
+    def test_up_direction_still_reports_across_the_boundary(self):
+        from stonescan.web.app import _classify_alert
+        self.assertEqual(_classify_alert(9, 0, crossed_rebase=True), "restock")
+        self.assertEqual(_classify_alert(4, None, crossed_rebase=True), "listed")
+
+    def test_suppression_is_one_comparison_only(self):
+        from stonescan.web.app import _classify_alert
+        # Once both snapshots are on the new accounting the flag is false again.
+        self.assertEqual(_classify_alert(2, 40, crossed_rebase=False), "dropped")
+
+    # --- AC-3: a tile's square feet is never a slab count -------------------
+    def test_a_tile_on_a_list_does_not_report_its_square_feet_as_slabs(self):
+        self._row(1, "800", idone="t0", slabs=2493, form="TILE", uom="SF", name="Riverwhite")
+        mid = self.conn.execute("SELECT id FROM materials WHERE item_id='800'").fetchone()[0]
+        lid = db.create_list(self.conn, "job", "2026-08-01")
+        db.add_to_list(self.conn, lid, mid, "2026-08-01")
+        it = db.get_list_items(self.conn, lid)[0]
+        self.assertEqual(it["live_slabs"] or 0, 0, "2493 SF must not read as slabs")
+        self.assertEqual(round(it["live_tile_sf"] or 0), 2493, "it is surfaced as area")
+
+    def test_a_slab_listing_on_a_list_still_reports_its_slabs(self):
+        self._row(1, "801", idone="s0", slabs=7, name="Ubatuba")
+        mid = self.conn.execute("SELECT id FROM materials WHERE item_id='801'").fetchone()[0]
+        lid = db.create_list(self.conn, "job", "2026-08-01")
+        db.add_to_list(self.conn, lid, mid, "2026-08-01")
+        it = db.get_list_items(self.conn, lid)[0]
+        self.assertEqual(it["live_slabs"], 7)
+        self.assertEqual(it["live_tile_sf"] or 0, 0)
+
+    # --- AC-5: every surface agrees ----------------------------------------
+    def test_list_and_history_agree_with_the_collapsed_count(self):
+        for i in range(6):
+            self._row(1, "190", idone=f"s{i}", slabs=114, name="Lunapearl")
+        db.collapse_item_slab_counts(self.conn)
+        db.snapshot_history(self.conn, 1, "2026-08-01", rebased=True)
+        mid = self.conn.execute("SELECT id FROM materials WHERE item_id='190' LIMIT 1").fetchone()[0]
+        lid = db.create_list(self.conn, "job", "2026-08-01")
+        db.add_to_list(self.conn, lid, mid, "2026-08-01")
+        hist = self.conn.execute(
+            "SELECT SUM(slabs) FROM history WHERE snapshot_date='2026-08-01'").fetchone()[0]
+        materials = self.conn.execute(
+            "SELECT SUM(available_slabs) FROM materials WHERE supplier_id=1").fetchone()[0]
+        self.assertEqual((hist, materials, db.get_list_items(self.conn, lid)[0]["live_slabs"]),
+                         (6, 6, 6))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

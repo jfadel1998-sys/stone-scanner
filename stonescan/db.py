@@ -278,6 +278,10 @@ _MIGRATIONS = {
                   # Consecutive zero-item crawls, for auto-rejecting dead discovery candidates.
                   "empty_streak": "INTEGER DEFAULT 0"},
     "materials": {"new_arrival": "INTEGER DEFAULT 0", "image_url": "TEXT", "locations": "TEXT"},
+    # Marks a snapshot taken AFTER per-item slab counts were collapsed. Rows written
+    # before that carry the old inflated accounting, so a latest-vs-previous comparison
+    # across the boundary is a units change, not a stock change — see snapshot_history.
+    "history": {"rebased": "INTEGER DEFAULT 0"},
 }
 
 
@@ -624,8 +628,13 @@ def backfill_locations(conn: sqlite3.Connection, supplier_id: int | None = None)
     conn.commit()
 
 
-def snapshot_history(conn: sqlite3.Connection, supplier_id: int, snapshot_date: str) -> int:
-    """Record today's per-product slab totals for a supplier (idempotent per date)."""
+def snapshot_history(conn: sqlite3.Connection, supplier_id: int, snapshot_date: str,
+                     *, rebased: bool = False) -> int:
+    """Record today's per-product slab totals for a supplier (idempotent per date).
+
+    `rebased` marks the row as taken after per-item slab counts were collapsed, so the
+    alert digest can tell a change in how stock is counted from a change in the stock.
+    """
     conn.execute(
         "DELETE FROM history WHERE supplier_id = ? AND snapshot_date = ?",
         (supplier_id, snapshot_date),
@@ -633,7 +642,7 @@ def snapshot_history(conn: sqlite3.Connection, supplier_id: int, snapshot_date: 
     cur = conn.execute(
         """INSERT INTO history
              (snapshot_date, supplier_id, material_key, name_norm, thickness,
-              material_type, color, slabs, image_url)
+              material_type, color, slabs, image_url, rebased)
            SELECT ?, supplier_id, MAX(material_key), name_norm, thickness,
                   MAX(material_type), MAX(color),
                   -- Slabs only: a TILE row's available_slabs is square feet (or a
@@ -641,13 +650,31 @@ def snapshot_history(conn: sqlite3.Connection, supplier_id: int, snapshot_date: 
                   -- tile listing would be flatly wrong. Same rule as the search UI.
                   SUM(CASE WHEN UPPER(COALESCE(product_form,'')) LIKE '%TILE%'
                            THEN 0 ELSE COALESCE(available_slabs,0) END),
-                  MAX(image_url)
+                  MAX(image_url), ?
            FROM materials WHERE supplier_id = ?
            GROUP BY name_norm, thickness, finish, product_form""",
-        (snapshot_date, supplier_id),
+        (snapshot_date, 1 if rebased else 0, supplier_id),
     )
     conn.commit()
     return cur.rowcount
+
+
+def resnapshot_history(conn: sqlite3.Connection, snapshot_date: str) -> int:
+    """Re-take today's snapshot for every supplier that already has one.
+
+    The per-supplier snapshot is written DURING the crawl, before the tail collapses each
+    item's slab count — so without this, history would preserve the pre-collapse numbers
+    the rest of the app no longer uses. Restricted to suppliers already snapshotted today
+    so a supplier that wasn't crawled doesn't gain a row claiming today's data.
+
+    The rewritten rows are marked `rebased`, which is what lets the alert digest tell a
+    units change from a stock change. Returns the number of suppliers re-snapshotted.
+    """
+    ids = [r["supplier_id"] for r in conn.execute(
+        "SELECT DISTINCT supplier_id FROM history WHERE snapshot_date = ?", (snapshot_date,))]
+    for sid in ids:
+        snapshot_history(conn, sid, snapshot_date, rebased=True)
+    return len(ids)
 
 
 def distinct_locations(conn: sqlite3.Connection) -> list[str]:
@@ -930,8 +957,18 @@ def get_list_items(conn: sqlite3.Connection, list_id: int) -> list[dict[str, Any
         """SELECT li.*,
                   (SELECT MIN(m.id) FROM materials m
                     WHERE m.supplier_id = li.supplier_id AND m.item_id = li.item_id) AS live_id,
-                  (SELECT SUM(m.available_slabs) FROM materials m
+                  -- Slabs only. available_slabs holds a square-foot (or piece) quantity
+                  -- for tiles, so without this guard a tile on a list printed its ft²
+                  -- under a "Slabs" heading. Same rule as the search UI and history.
+                  (SELECT SUM(CASE WHEN UPPER(COALESCE(m.product_form,'')) LIKE '%TILE%'
+                                   THEN 0 ELSE COALESCE(m.available_slabs,0) END)
+                     FROM materials m
                     WHERE m.supplier_id = li.supplier_id AND m.item_id = li.item_id) AS live_slabs,
+                  (SELECT SUM(CASE WHEN UPPER(COALESCE(m.product_form,'')) LIKE '%TILE%'
+                                        AND UPPER(COALESCE(m.uom,'')) = 'SF'
+                                   THEN COALESCE(m.available_slabs,0) ELSE 0 END)
+                     FROM materials m
+                    WHERE m.supplier_id = li.supplier_id AND m.item_id = li.item_id) AS live_tile_sf,
                   (SELECT s.email FROM suppliers s WHERE s.id = li.supplier_id) AS supplier_email,
                   (SELECT s.phone FROM suppliers s WHERE s.id = li.supplier_id) AS supplier_phone
            FROM list_items li WHERE li.list_id = ?

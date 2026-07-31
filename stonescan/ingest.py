@@ -259,6 +259,10 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         # so rows about to be deleted are never counted, and BEFORE the rollup, so the search
         # fast path is built on the corrected figure.
         collapsed = db.collapse_item_slab_counts(conn)
+        # The per-supplier snapshot was written DURING the crawl, before that collapse, so
+        # re-take today's for everyone who has one. Otherwise history keeps the pre-collapse
+        # numbers and the next digest reads the correction as a catalog-wide sell-off.
+        resnapped = db.resnapshot_history(conn, utc_now_iso()[:10])
         # Flag duplicate-catalog storefronts (one tenant under two supplier names) so they
         # aren't double-counted in supplier totals/facets. Recomputed here every crawl.
         mirrors = db.detect_mirrors(conn)
@@ -275,7 +279,8 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         if scoped:
             print(f"  storefront filters: re-scoped {scoped} supplier(s) to their confirmed type.")
         if collapsed:
-            print(f"  slab counts: collapsed {collapsed} multi-row item(s) to one figure each.")
+            print(f"  slab counts: collapsed {collapsed} multi-row item(s) to one figure each."
+                  f" Re-snapshotted history for {resnapped} supplier(s).")
         if mirrors:
             print(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
                   f"from supplier counts ({', '.join(m['mirror_host'] for m in mirrors)}).")
