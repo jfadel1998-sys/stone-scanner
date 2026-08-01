@@ -2159,5 +2159,132 @@ class SlabCountPropagationTests(unittest.TestCase):
                          (6, 6, 6))
 
 
+class LocationFilterTests(unittest.TestCase):
+    """`slabs.location` is free text, and the columns the filter reads are GROUP_CONCAT
+    lists. A bare substring match therefore let a two-letter yard code hit the middle of
+    a city name — picking `ES` returned a quarter of the catalog."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=8)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _mat(self, supplier_id, name, locations):
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key,
+                  material_type, available_slabs, locations)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (supplier_id, f"{supplier_id}-{name}", name, name.upper(),
+             f"{name.lower()}|granite", "Granite", 1, locations))
+        self.conn.commit()
+
+    def _geo(self, location, label, source):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO location_geo (location, lat, lon, label, source) "
+            "VALUES (?,?,?,?,?)", (location, 1.0, 2.0, label, source))
+        self.conn.commit()
+
+    def _slab_loc(self, supplier_id, location):
+        self.conn.execute(
+            "INSERT INTO slabs (supplier_id, item_id, location) VALUES (?,?,?)",
+            (supplier_id, "x", location))
+        self.conn.commit()
+
+    def _find(self, location):
+        from stonescan.web import app
+        _t, rows, _ = app._search(self.conn, q="", material_type="", color="", thickness="",
+                                  supplier="", location=location, limit=50, offset=0)
+        return {r["material_key"] for r in rows}
+
+    # --- AC-1: whole-token, not substring -----------------------------------
+    def test_a_short_yard_code_does_not_match_inside_a_city_name(self):
+        self._slab_loc(1, "ES"); self._slab_loc(2, "Charleston")
+        self._mat(1, "Real", "ES")
+        self._mat(2, "Bystander", "Charleston")
+        self.assertEqual(self._find("ES"), {"real|granite"},
+                         "'ES' must not hit the 'es' inside Charl-es-ton")
+
+    def test_a_token_in_the_middle_of_the_list_still_matches(self):
+        self._slab_loc(1, "ES")
+        self._mat(1, "Mid", "Dallas,ES,Houston")
+        self._mat(2, "Nope", "Dallas,Houston")
+        self.assertEqual(self._find("ES"), {"mid|granite"})
+
+    def test_a_value_containing_a_comma_still_matches(self):
+        # AC-4: the columns are comma-JOINED, but the whole value still sits between
+        # two delimiters, so an embedded comma is not a problem.
+        self._slab_loc(1, "Atlanta, GA")
+        self._mat(1, "Peach", "Atlanta, GA,Modesto")
+        self._mat(2, "Other", "Modesto")
+        self.assertEqual(self._find("Atlanta, GA"), {"peach|granite"})
+
+    def test_the_supplier_fallback_still_applies(self):
+        # A material with no slab-level location falls back to its supplier's yards.
+        self._slab_loc(1, "KLZ")
+        self.conn.execute("UPDATE suppliers SET locations = 'KLZ' WHERE id = 1")
+        self.conn.commit()
+        self._mat(1, "Fallback", "")
+        self.assertEqual(self._find("KLZ"), {"fallback|granite"})
+
+    # --- AC-2 / AC-3: grouping, and the guards on it ------------------------
+    def test_city_spellings_fold_into_one_option(self):
+        for v in ("Atlanta", "ATLANTA"):
+            self._slab_loc(1, v)
+            self._geo(v, "Atlanta, GA", "exact")
+        self._mat(1, "A", "Atlanta")
+        self._mat(2, "B", "ATLANTA")
+        opts = db.location_options(self.conn)
+        city = [o for o in opts if o["kind"] == "city"]
+        self.assertEqual([o["value"] for o in city], ["Atlanta, GA"])
+        self.assertEqual(sorted(city[0]["members"]), ["ATLANTA", "Atlanta"])
+        self.assertEqual(self._find("Atlanta, GA"), {"a|granite", "b|granite"},
+                         "the group must reach every spelling")
+
+    def test_an_ambiguous_resolution_is_not_folded(self):
+        self._slab_loc(1, "Albany")
+        self._geo("Albany", "Albany, NY", "ambiguous")
+        opts = {o["value"]: o for o in db.location_options(self.conn)}
+        self.assertIn("Albany", opts)
+        self.assertEqual(opts["Albany"]["kind"], "yard",
+                         "an ambiguous city must not be presented as a resolved place")
+
+    def test_a_name_that_merely_contains_the_city_is_not_folded(self):
+        # The CLAUDE.md trap: containment puts "Baldwin Hills" (Los Angeles) under
+        # "Baldwin, NY". Only an exact city match folds.
+        self._slab_loc(1, "Baldwin Hills")
+        self._geo("Baldwin Hills", "Baldwin, NY", "exact")
+        opts = {o["value"]: o for o in db.location_options(self.conn)}
+        self.assertIn("Baldwin Hills", opts)
+        self.assertEqual(opts["Baldwin Hills"]["kind"], "yard")
+
+    # --- AC-5: nothing is dropped ------------------------------------------
+    def test_an_unresolvable_yard_code_is_still_offered_and_still_matches(self):
+        self._slab_loc(1, "KLZ")          # no location_geo row at all
+        self._mat(1, "Klzstone", "KLZ")
+        opts = {o["value"]: o for o in db.location_options(self.conn)}
+        self.assertEqual(opts["KLZ"]["kind"], "yard")
+        self.assertEqual(self._find("KLZ"), {"klzstone|granite"})
+
+    def test_every_raw_value_remains_reachable(self):
+        for v in ("KLZ", "BF", "ES", "not indicated", "https://example.test/"):
+            self._slab_loc(1, v)
+        reachable = set()
+        for o in db.location_options(self.conn):
+            reachable.update(o["members"])
+        self.assertEqual(reachable, {"KLZ", "BF", "ES", "not indicated",
+                                     "https://example.test/"})
+
+    def test_an_unknown_value_falls_back_to_itself(self):
+        # A bookmarked URL or a saved search from before grouping existed must still work.
+        self._slab_loc(1, "KLZ")
+        self.assertEqual(db.location_members(self.conn, "Nowhere"), ["Nowhere"])
+        self.assertEqual(db.location_members(self.conn, ""), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

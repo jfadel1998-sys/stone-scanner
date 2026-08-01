@@ -684,6 +684,70 @@ def distinct_locations(conn: sqlite3.Connection) -> list[str]:
     return [r["location"] for r in rows]
 
 
+# --- Location options -----------------------------------------------------------
+#
+# `slabs.location` is free text: real cities sit beside internal yard names (KLZ, HG-NJ)
+# and outright junk (a URL, "not indicated"). Two variants of one city — "Atlanta" and
+# "ATLANTA" — are separate raw values, so a city gets several dropdown entries that each
+# return part of its stock.
+#
+# Variants are folded onto the city label `geocode` already resolved, but only when BOTH
+# hold: the resolution is not `ambiguous`, and the raw value IS the city rather than
+# merely containing it. Containment is what puts "Baldwin Hills" (Los Angeles) under
+# "Baldwin, NY", and it is the same failure mode as the alternatenames trap in CLAUDE.md
+# that pinned "Arca - Warehouse" to Arsk, Russia. Anything that fails either test stays a
+# standalone option — nothing is ever dropped, because KLZ alone reaches 715 products.
+
+def _loc_norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def location_options(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Dropdown options: city groups first, then unresolved yard names.
+
+    Each option carries the raw `members` it stands for, so the search can match every
+    spelling of one city without the substring matching that made short codes unusable.
+    """
+    raw = distinct_locations(conn)
+    geo: dict[str, sqlite3.Row] = {}
+    try:
+        geo = {r["location"]: r for r in conn.execute(
+            "SELECT location, label, source FROM location_geo WHERE label IS NOT NULL")}
+    except sqlite3.OperationalError:
+        geo = {}
+
+    groups: dict[str, list[str]] = {}
+    singles: list[str] = []
+    for value in raw:
+        g = geo.get(value)
+        label = (g["label"] if g else "") or ""
+        source = (g["source"] if g else "") or ""
+        city = label.split(",")[0] if label else ""
+        if label and source != "ambiguous" and city and _loc_norm(value) == _loc_norm(city):
+            groups.setdefault(label, []).append(value)
+        else:
+            singles.append(value)
+
+    out = [{"value": label, "label": label, "kind": "city", "members": sorted(m)}
+           for label, m in sorted(groups.items())]
+    out += [{"value": v, "label": v, "kind": "yard", "members": [v]} for v in sorted(singles)]
+    return out
+
+
+def location_members(conn: sqlite3.Connection, value: str) -> list[str]:
+    """The raw location values a chosen dropdown option stands for.
+
+    Falls back to the value itself, so a hand-typed or bookmarked location keeps working
+    and a saved search made before grouping existed still resolves.
+    """
+    if not value:
+        return []
+    for opt in location_options(conn):
+        if opt["value"] == value:
+            return opt["members"]
+    return [value]
+
+
 # --- Materialized per-product rollup (search fast path) ------------------------
 #
 # The SELECT below MUST stay in lockstep with _search's inner/outer aggregation in

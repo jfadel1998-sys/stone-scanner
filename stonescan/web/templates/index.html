@@ -39,9 +39,18 @@
         <option value="">Any thickness</option>
         {% for t in thicknesses %}<option value="{{ t }}" {{ 'selected' if t == thickness }}>{{ t }}</option>{% endfor %}
       </select>
+      {# Resolved cities are grouped apart from raw yard names: a supplier's internal
+         label ("KLZ", "HG-NJ") is still selectable, it just isn't a place. #}
       <select name="location">
         <option value="">Any location</option>
-        {% for l in locations %}<option value="{{ l }}" {{ 'selected' if l == location }}>{{ l }}</option>{% endfor %}
+        {% set cities = locations|selectattr('kind', 'equalto', 'city')|list %}
+        {% set yards = locations|selectattr('kind', 'equalto', 'yard')|list %}
+        {% if cities %}<optgroup label="Cities">
+          {% for l in cities %}<option value="{{ l.value }}" {{ 'selected' if l.value == location }}>{{ l.label }}{% if l.members|length > 1 %} ({{ l.members|length }} spellings){% endif %}</option>{% endfor %}
+        </optgroup>{% endif %}
+        {% if yards %}<optgroup label="Yard names &amp; unresolved">
+          {% for l in yards %}<option value="{{ l.value }}" {{ 'selected' if l.value == location }}>{{ l.label }}</option>{% endfor %}
+        </optgroup>{% endif %}
       </select>
       <input type="number" name="min_length" value="{{ min_length }}" placeholder="min L" class="sizein" title="Minimum slab length" min="0" step="1">
       <input type="number" name="min_width" value="{{ min_width }}" placeholder="min W" class="sizein" title="Minimum slab width" min="0" step="1">
