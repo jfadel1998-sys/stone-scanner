@@ -148,6 +148,22 @@ def _brand_match(text: str, stones: list[dict]) -> dict | None:
     return best[1] if best else None
 
 
+# Types that are MANUFACTURED. Forgiving name matching is right within quarried stone —
+# "Fantasy Brown" is the same rock whether a supplier files it as marble or quartzite —
+# but it must not cross this line: a factory slab named after a marble is not that marble,
+# and serving it the marble's cited quarry states a fact that is simply untrue.
+_ENGINEERED_TYPES = frozenset({
+    "quartz", "porcelain", "sintered stone", "engineered stone", "engineered glass",
+    "engineered marble", "solid surface", "ceramic", "terrazzo",
+})
+
+
+def _is_engineered_key(material_key: str) -> bool:
+    """Is this material_key's canonical type a manufactured surface?
+    The key is "<base>|<type>", so the type is already there — no extra plumbing."""
+    return material_key.rpartition("|")[2].strip().lower() in _ENGINEERED_TYPES
+
+
 def lookup(material_key: str = "", name: str = "", stones: list[dict] | None = None) -> dict | None:
     """The reference entry for a material, or None if we have not established one.
 
@@ -156,15 +172,28 @@ def lookup(material_key: str = "", name: str = "", stones: list[dict] | None = N
     rock either way. Matching on the trade name is what makes one researched entry
     serve every supplier's spelling of it.
 
+    That forgiveness stops at the natural/engineered line. A quarried-stone entry is
+    never served to a manufactured surface — "Calacatta Oro" quartz is not the Carrara
+    marble it is named after, and printing that marble's quarry beside a factory slab
+    is a confident wrong answer, which costs more trust than a blank field. The
+    rejected candidate falls through to the brand lookup below rather than ending the
+    search, so an engineered product can still find the entry that does describe it.
+
     An engineered BRAND named inside the product name is the last resort, tried only
     after every exact match fails — so a stone with its own researched entry always
     wins over the brand it happens to mention.
     """
     st = stones if stones is not None else load()
     idx = _index(st)
+    engineered = _is_engineered_key(material_key)
     for probe in (material_key.lower(), _norm(_base_of(material_key)), _norm(name)):
         if probe and probe in idx:
-            return idx[probe]
+            hit = idx[probe]
+            # Only an explicitly NATURAL entry is refused: lookup_live() writes
+            # formation "unknown", and those must keep resolving.
+            if engineered and hit.get("formation") == "natural":
+                continue
+            return hit
     return _brand_match(name, st) or _brand_match(_base_of(material_key), st)
 
 
