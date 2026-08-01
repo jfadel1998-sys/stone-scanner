@@ -424,7 +424,15 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     _LOC = "COALESCE(NULLIF(m.locations,''), s.locations)"
     loc_where, loc_params = [], []
     if location:
-        loc_where.append(f"{_LOC} LIKE ?"); loc_params.append(f"%{location}%")
+        # Whole-token, not substring. Both location columns are GROUP_CONCAT lists, so
+        # wrapping the column in commas and matching ',<value>,' pins the value to a
+        # complete entry. A bare LIKE '%ES%' hit the "es" inside Charl-es-ton and put
+        # 23.6% of the catalog under a two-letter yard code. The delimiters also keep a
+        # value that contains a comma ("Atlanta, GA") intact, since the whole thing still
+        # sits between them.
+        members = db.location_members(conn, location)
+        loc_where.append("(" + " OR ".join([f"(',' || {_LOC} || ',') LIKE ?"] * len(members)) + ")")
+        loc_params.extend(f"%,{m},%" for m in members)
 
     # Proximity: keep only material with a stocking location inside the radius.
     near_active = bool(near) and radius_mi > 0
@@ -737,7 +745,7 @@ def index(
         "types": _distinct(conn, "material_type"),
         "colors": _distinct(conn, "color"),
         "thicknesses": _distinct(conn, "thickness"),
-        "locations": db.distinct_locations(conn),
+        "locations": db.location_options(conn),
         "suppliers": [
             dict(r) for r in conn.execute(
                 "SELECT COALESCE(NULLIF(company,''),host) AS name, item_count "
