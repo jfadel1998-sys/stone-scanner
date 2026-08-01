@@ -333,5 +333,72 @@ class CategoryPriceBandTests(unittest.TestCase):
         self.assertIn("sources", band, "a band always carries its citation; observed prices never do")
 
 
+class FormationGateTests(unittest.TestCase):
+    """A quarried stone's facts must never be served to a manufactured surface.
+
+    Name matching is forgiving on type on purpose — "Fantasy Brown" is one rock whether
+    a supplier files it as marble or quartzite. But a quartz slab named after a marble is
+    not that marble, and printing the marble's cited quarry beside it states something
+    untrue, which is exactly what this module says costs more than a blank field."""
+
+    def setUp(self):
+        self.marble = entry(key="calacatta gold|marble", display_name="Calacatta Gold",
+                            formation="natural", stone_type="Marble")
+        self.brand = entry(key="silestone", display_name="Silestone",
+                           formation="engineered", stone_type="Quartz")
+        self.brand.pop("quarries", None)
+        self.unknown = entry(key="mystery white|marble", display_name="Mystery White",
+                             formation="unknown", stone_type="Marble")
+        self.stones = [self.marble, self.brand, self.unknown]
+
+    def _lookup(self, key, name=""):
+        return reference.lookup(key, name, stones=self.stones)
+
+    # --- the gate -----------------------------------------------------------
+    def test_a_natural_entry_is_refused_for_every_engineered_type(self):
+        for t in ("quartz", "porcelain", "sintered stone", "engineered stone",
+                  "engineered glass", "engineered marble", "solid surface",
+                  "ceramic", "terrazzo"):
+            self.assertIsNone(self._lookup(f"calacatta gold|{t}"),
+                              f"a quarried-marble entry must not answer for {t}")
+
+    def test_the_same_entry_still_answers_for_quarried_types(self):
+        for t in ("marble", "quartzite", "granite", "dolomite", "onyx"):
+            self.assertIsNotNone(self._lookup(f"calacatta gold|{t}"),
+                                 f"cross-type matching within natural stone must survive ({t})")
+
+    def test_only_formation_natural_is_refused(self):
+        # lookup_live() writes formation "unknown"; those must keep resolving.
+        self.assertIsNotNone(self._lookup("mystery white|quartz"),
+                             "an unknown-formation entry is not a false quarry claim")
+
+    def test_an_engineered_entry_still_answers_for_an_engineered_type(self):
+        self.assertIsNotNone(self._lookup("silestone|quartz"))
+
+    # --- AC-4: a refusal falls through, it does not end the search ----------
+    def test_a_refused_match_still_reaches_the_brand_entry(self):
+        # The name carries a brand, so the engineered product finds the entry that does
+        # describe it rather than being left with nothing.
+        got = self._lookup("calacatta gold|quartz", "Calacatta Gold Silestone")
+        self.assertIsNotNone(got, "must fall through to the brand, not stop at the refusal")
+        self.assertEqual(got["display_name"], "Silestone")
+
+    def test_a_refused_match_with_no_brand_returns_nothing(self):
+        self.assertIsNone(self._lookup("calacatta gold|quartz", "Calacatta Gold 3cm"))
+
+    # --- key parsing --------------------------------------------------------
+    def test_engineered_key_detection(self):
+        self.assertTrue(reference._is_engineered_key("x|quartz"))
+        self.assertTrue(reference._is_engineered_key("x|Sintered Stone"))
+        self.assertFalse(reference._is_engineered_key("x|quartzite"))
+        self.assertFalse(reference._is_engineered_key("x|marble"))
+        self.assertFalse(reference._is_engineered_key(""))
+        self.assertFalse(reference._is_engineered_key("no-pipe"))
+
+    def test_quartz_is_not_confused_with_quartzite(self):
+        self.assertIsNone(self._lookup("calacatta gold|quartz"))
+        self.assertIsNotNone(self._lookup("calacatta gold|quartzite"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
