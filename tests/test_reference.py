@@ -20,7 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from stonescan import imagesearch, reference  # noqa: E402
+from stonescan import db, imagesearch, reference  # noqa: E402
+from tests import eval_photoid  # noqa: E402
 
 SRC = [{"url": "https://example.test/a", "title": "A source"}]
 
@@ -157,8 +158,9 @@ class IdentifyTests(unittest.TestCase):
         self.assertEqual(imagesearch.identify(res)["confidence"], "strong")
 
     def test_disagreement_reports_uncertain(self):
-        res = [self.row("a|granite", 0.66, 1, 1), self.row("b|granite", 0.655, 1, 1),
-               self.row("c|granite", 0.65, 1, 1)]
+        # A clear leader in similarity, but a weak one nothing corroborates.
+        res = [self.row("a|granite", 0.70, 1, 1), self.row("b|granite", 0.60, 1, 1),
+               self.row("c|granite", 0.59, 1, 1)]
         out = imagesearch.identify(res)
         self.assertEqual(out["confidence"], "uncertain")
         self.assertGreaterEqual(len(out["candidates"]), 2, "alternates must be offered")
@@ -166,6 +168,69 @@ class IdentifyTests(unittest.TestCase):
     def test_no_matches_is_not_an_identification(self):
         self.assertFalse(imagesearch.identify([])["known"])
         self.assertFalse(imagesearch.identify([{"score": 0.9}])["known"])
+
+
+class VerdictMarginTests(unittest.TestCase):
+    """Below MIN_ID_MARGIN the verdict declines to name a stone.
+
+    Measured on the cross-supplier holdout (tests/eval_photoid.py): the sub-0.02
+    band is ~22% of queries at ~12% accuracy, and the slice where the runner-up
+    actually out-scores the winner was wrong 91 times out of 91. Everything the
+    gate lets through runs 89-100%.
+    """
+
+    row = staticmethod(IdentifyTests.row)
+
+    def test_a_crowded_top_two_is_not_named(self):
+        res = [self.row("a|marble", 0.900, 1, 1), self.row("b|marble", 0.881, 1, 1)]
+        out = imagesearch.identify(res)
+        self.assertEqual(out["confidence"], "none")
+        self.assertLess(out["score_margin"], imagesearch.MIN_ID_MARGIN)
+
+    def test_the_gate_outranks_a_would_be_strong_verdict(self):
+        # Wide agreement + a 0.96 image would clear the near-exact "strong" rung on
+        # the old rules; a runner-up 0.01 behind means we still can't tell them apart.
+        res = [self.row("agreed|marble", 0.96, 20, 12),
+               self.row("lookalike|marble", 0.95, 1, 1)]
+        out = imagesearch.identify(res)
+        self.assertGreaterEqual(out["best"]["best_score"], 0.95)
+        self.assertGreaterEqual(out["best"]["rank_score"] - out["candidates"][1]["rank_score"], 0.02,
+                                "precondition: this would have been strong on rank margin alone")
+        self.assertEqual(out["confidence"], "none")
+
+    def test_margin_anchors_on_the_named_stone_not_the_top_image(self):
+        # rank_score promotes the corroborated stone past a closer lone image, so the
+        # margin from the stone we would print is negative — the case that never once
+        # turned out to be right.
+        res = [self.row("lonely|granite", 0.86, 1, 1),
+               self.row("agreed|granite", 0.84, 14, 9)]
+        out = imagesearch.identify(res)
+        self.assertEqual(out["best"]["material_key"], "agreed|granite")
+        self.assertAlmostEqual(out["score_margin"], -0.02, places=6)
+        self.assertEqual(out["confidence"], "none")
+
+    def test_at_the_threshold_the_stone_is_still_named(self):
+        res = [self.row("a|granite", 0.900, 1, 1), self.row("b|granite", 0.880, 1, 1)]
+        out = imagesearch.identify(res)
+        self.assertGreaterEqual(out["score_margin"], imagesearch.MIN_ID_MARGIN)
+        self.assertNotEqual(out["confidence"], "none")
+
+    def test_a_lone_candidate_has_nothing_to_be_confused_with(self):
+        out = imagesearch.identify([self.row("only|granite", 0.60, 1, 1)])
+        self.assertEqual(out["score_margin"], 1.0, "no runner-up is not a zero lead")
+        self.assertNotEqual(out["confidence"], "none")
+
+    def test_a_clear_winner_keeps_the_label_it_had_before(self):
+        res = [self.row("exact|quartzite", 0.99, 1, 1), self.row("other|granite", 0.61, 1, 1)]
+        self.assertEqual(imagesearch.identify(res)["confidence"], "strong")
+
+    def test_declining_to_name_still_offers_the_lookalikes(self):
+        res = [self.row("a|marble", 0.90, 1, 1), self.row("b|marble", 0.895, 1, 1),
+               self.row("c|marble", 0.89, 1, 1)]
+        out = imagesearch.identify(res)
+        self.assertEqual(out["confidence"], "none")
+        self.assertTrue(out["known"], "the ranked matches are still worth showing")
+        self.assertGreaterEqual(len(out["candidates"]), 3)
 
 
 class PriceParsingTests(unittest.TestCase):
@@ -398,6 +463,35 @@ class FormationGateTests(unittest.TestCase):
     def test_quartz_is_not_confused_with_quartzite(self):
         self.assertIsNone(self._lookup("calacatta gold|quartz"))
         self.assertIsNotNone(self._lookup("calacatta gold|quartzite"))
+
+
+class HoldoutHarnessTests(unittest.TestCase):
+    """The holdout eval needs the git-ignored catalog DB and its vector index, so it
+    can only be a guarded smoke test here — the real sweep is `python -m
+    tests.eval_photoid --n 600`. What this pins is that it stays runnable and keeps
+    reporting the fields the threshold was tuned against."""
+
+    def test_harness_skips_cleanly_without_the_index(self):
+        # available() is the gate the whole module hangs off: it must answer, not raise,
+        # on a database with no image_vectors table at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = db.init_db(str(Path(tmp) / "empty.db"))
+            try:
+                self.assertFalse(eval_photoid.available(conn))
+            finally:
+                conn.close()
+
+    @unittest.skipUnless(eval_photoid.available(), "no catalog / vector index present")
+    def test_a_short_sweep_reports_the_calibrated_fields(self):
+        recs = eval_photoid.run(n=8, seed=7)
+        self.assertTrue(recs, "the index is present, so queries should be answerable")
+        for r in recs:
+            self.assertIn(r["confidence"], ("strong", "likely", "uncertain", "none"))
+            self.assertIsInstance(r["correct"], bool)
+        s = eval_photoid.summarize(recs)
+        self.assertAlmostEqual(
+            sum(s[label]["shown_pct"] for label in ("strong", "likely", "uncertain", "none")),
+            100.0, places=6, msg="every verdict must fall in exactly one bucket")
 
 
 if __name__ == "__main__":

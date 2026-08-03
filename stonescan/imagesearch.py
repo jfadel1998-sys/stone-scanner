@@ -41,6 +41,15 @@ _out_index = 0  # which model output carries the 512-d image embedding
 # distant 200th-ranked image doesn't get a say.
 CONSENSUS_WINDOW = 40
 
+# Minimum cosine lead the named stone must hold over the next different stone
+# before we print a name at all. Measured, not guessed: on the cross-supplier
+# holdout (tests/eval_photoid.py, n=600 x 2 seeds) everything below this gap is
+# 21-23% of queries and only ~12% right, while 0.02-0.03 jumps to 89-96% and
+# above 0.03 runs 97-100%. Two stones that score within a hair of each other
+# are exactly the case where CLIP is matching "white with grey veins" rather
+# than this stone, so the honest answer is no name.
+MIN_ID_MARGIN = 0.02
+
 
 def model_path() -> Path:
     """Model location: bundled under _MEIPASS when frozen, else the project tree."""
@@ -351,6 +360,10 @@ def identify(results: list[dict[str, Any]], top_n: int = 12) -> dict[str, Any]:
     `confidence` is deliberately conservative and never says "certain": CLIP
     matches appearance, and different stones genuinely look alike. It answers
     "how much does the catalog agree", which is a claim we can actually support.
+    And when the top two stones score within MIN_ID_MARGIN of each other it
+    declines to answer at all ("none") — see that constant for the measurement.
+    Callers must treat "none" as no identification even though `known` is True:
+    the ranked matches are still worth showing, just not a name.
     """
     top = [r for r in results[:top_n] if r.get("material_key")]
     if not top:
@@ -384,14 +397,28 @@ def identify(results: list[dict[str, Any]], top_n: int = 12) -> dict[str, Any]:
 
     best = cands[0]
     runner = cands[1] if len(cands) > 1 else None
-    margin = best["rank_score"] - (runner["rank_score"] if runner else 0.0)
+    rank_margin = best["rank_score"] - (runner["rank_score"] if runner else 0.0)
+    # How far ahead the stone we are about to name actually is, in raw similarity.
+    # Anchored on `best` — cands was re-sorted by rank_score, so cands[0] is not
+    # necessarily results[0], and measuring from the wrong row would grade a stone
+    # we aren't showing. cands holds one row per material_key, so the runner-up is
+    # already a different stone. It can also out-score the winner (rank_score
+    # rewards agreement over similarity), and that negative margin is meaningful:
+    # on the holdout it was wrong every single time, n=91.
+    # With no runner-up there is nothing to confuse it with — no ambiguity to
+    # measure, rather than zero lead.
+    score_margin = (best["best_score"] - runner["best_score"]) if runner else 1.0
     # Thresholds are empirical and intentionally cautious — the cost of a confident
     # wrong identification is a user ordering the wrong stone. A near-perfect single
     # match still counts as strong: an exact photo match is real evidence even when
     # only one supplier has photographed that stone.
-    if best["best_score"] >= 0.95 and margin >= 0.02:
+    if score_margin < MIN_ID_MARGIN:
+        # First rung on purpose: a top match this crowded is not worth naming even
+        # when it would otherwise clear the "strong" bar on score alone.
+        confidence, blurb = "none", "the closest matches are too evenly scored to name one"
+    elif best["best_score"] >= 0.95 and rank_margin >= 0.02:
         confidence, blurb = "strong", "a near-exact image match"
-    elif best["share"] >= 0.25 and best["best_score"] >= 0.80 and margin >= 0.03:
+    elif best["share"] >= 0.25 and best["best_score"] >= 0.80 and rank_margin >= 0.03:
         confidence, blurb = "strong", "the closest matches agree"
     elif best["share"] >= 0.12 or best["best_score"] >= 0.75:
         confidence, blurb = "likely", "several close matches point the same way"
@@ -402,6 +429,7 @@ def identify(results: list[dict[str, Any]], top_n: int = 12) -> dict[str, Any]:
         "best": best,
         "confidence": confidence,
         "blurb": blurb,
+        "score_margin": score_margin,
         "candidates": cands[:5],
         "considered": best.get("matches", 0),
         "window": window,
