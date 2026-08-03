@@ -36,17 +36,34 @@ if ($Uninstall) {
 
 if (-not (Test-Path $script)) { throw "refresh.ps1 not found next to this script ($script)." }
 
+# The project can live on an external drive. If it is detached when the trigger fires,
+# an action of "-File <path on that drive>" with a matching -WorkingDirectory cannot even
+# START: Task Scheduler fails it with 0x8007010B (ERROR_DIRECTORY) before PowerShell is
+# launched, so refresh.ps1 never runs, nothing reaches the log, and the only evidence is
+# a hex code in LastTaskResult. Keep the action entirely on the system drive instead —
+# powershell.exe, no -WorkingDirectory, and the script path passed as *data* to -Command
+# — so the task always starts and the script's own existence becomes the check. Exit 3
+# means "project not reachable", which the restart settings below then re-attempt in case
+# the drive is plugged in later.
 # -WindowStyle Hidden so the nightly run doesn't flash a console; the log is the record.
+$guard = "`$s = '$script'; " +
+         "if (Test-Path -LiteralPath `$s) { Set-Location -LiteralPath (Split-Path -LiteralPath `$s); & `$s } " +
+         "else { exit 3 }"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`"" `
-    -WorkingDirectory $root
+    -Argument ("-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden " +
+               "-Command `"$guard`"")
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 # Run under the current user so the task can reach this user's installed Playwright
 # browsers and the project venv. Highest privileges avoids UAC prompts mid-run.
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType S4U -RunLevel Highest
+# RestartCount/Interval: a detached drive is usually detached for minutes, not the night,
+# so retry across the next two hours rather than writing the day off. IgnoreNew keeps a
+# retry from starting a second crawl on top of one that is already running.
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
-    -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Hours 4)
+    -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
+    -RestartCount 4 -RestartInterval (New-TimeSpan -Minutes 30) `
+    -MultipleInstances IgnoreNew
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings `
@@ -57,3 +74,5 @@ Write-Host "Installed '$TaskName' — daily at $At." -ForegroundColor Green
 Write-Host "  Next run: $($info.NextRunTime)"
 Write-Host "  Run now to test:  Start-ScheduledTask -TaskName $TaskName"
 Write-Host "  Log:  $(Join-Path $root 'refresh.log')"
+Write-Host "  If LastTaskResult is 3, the project drive was not attached when it ran;"
+Write-Host "  it retries 4 times at 30-minute intervals before giving up for the day."
