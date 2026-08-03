@@ -1,4 +1,4 @@
-# Install (or update) the nightly Stone Scanner refresh as a Windows scheduled task.
+﻿# Install (or update) the nightly Stone Scanner refresh as a Windows scheduled task.
 # Idempotent: safe to run repeatedly — it replaces any existing StoneScannerRefresh.
 # Run once in an ELEVATED PowerShell (right-click -> Run as administrator).
 #

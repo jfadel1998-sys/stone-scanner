@@ -39,3 +39,6 @@ Thumbs.db
 # Stray files at repo root (not project assets): sw.html is a saved page, distributed is an empty leftover
 /sw.html
 /distributed
+
+# Local Playwright browsers, copied out of the MSIX container so a scheduled task can see them.
+.browsers/
