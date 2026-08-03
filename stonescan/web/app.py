@@ -1523,7 +1523,12 @@ async def photo_search(request: Request, photo: UploadFile = File(...),
     # Identify from the consensus of the top matches, then hang both fact tiers off
     # the winner: what the catalog can prove, and what external research established.
     ident = imagesearch.identify(results) if results else {"known": False}
-    key = ident.get("best", {}).get("material_key", "") if ident.get("known") else ""
+    # A "none" verdict has no subject. Both fact tiers hang off the named stone, so
+    # filling them anyway would smuggle back the answer the verdict just declined
+    # to give — a page that says "no confident identification" above a full dossier
+    # on Calacatta Gold has still told the user it is Calacatta Gold.
+    named = bool(ident.get("known")) and ident.get("confidence") != "none"
+    key = ident.get("best", {}).get("material_key", "") if named else ""
     evidence = _catalog_evidence(conn, key) if key else {}
     ref = reference.summarize(
         reference.lookup(material_key=key, name=ident.get("best", {}).get("name", ""))

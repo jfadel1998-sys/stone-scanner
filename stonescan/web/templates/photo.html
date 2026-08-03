@@ -33,10 +33,14 @@
   {% else %}
 
   {# ── Verdict ─────────────────────────────────────────────────────────────── #}
+  {# "none" is a verdict, not a failure: we have matches but no stone is far
+     enough ahead to name. It renders like the no-matches case — the ranked grid
+     below is the useful part either way. #}
+  {% set named = ident.known and ident.confidence != 'none' %}
   <section class="idpanel">
     {% if query_uri %}<img class="idphoto" src="{{ query_uri }}" alt="your photo">{% endif %}
     <div class="idverdict">
-      {% if ident.known %}
+      {% if named %}
         {% set b = ident.best %}
         <div class="idlabel">Most likely
           <span class="conf conf-{{ ident.confidence }}" title="How much the closest catalog matches agree — not a guarantee. CLIP matches appearance, and different stones can look alike.">{{ ident.confidence }}</span>
@@ -58,12 +62,25 @@
         {% endif %}
       {% else %}
         <div class="idlabel">No confident identification</div>
-        <p class="idwhy muted">The closest matches don't agree on a name. Browse the visual matches below.</p>
+        <p class="idwhy muted">
+          {%- if ident.known %}The closest matches score too evenly to pick one — nothing is far enough ahead to call it. Naming a stone here would be a guess dressed up as an answer, so browse the visual matches below and judge them yourself.
+          {%- else %}The closest matches don't agree on a name. Browse the visual matches below.{% endif %}
+        </p>
+        {% if ident.candidates %}
+        {# Named as an unresolved tie, not as the answer — that is the whole point
+           of the verdict above. Similarity, not agreement, since none won. #}
+        <div class="idalts">Closest names, none clearly ahead:
+          {% for c in ident.candidates[:4] %}
+          <a class="ichip" href="/material?key={{ c.material_key|urlencode }}">{{ c.name }} <span class="muted">({{ (c.best_score * 100)|round|int }}%)</span></a>
+          {% endfor %}
+        </div>
+        {% endif %}
       {% endif %}
     </div>
   </section>
 
   {# ── Two fact tiers, deliberately never blended ──────────────────────────── #}
+  {% if named %}
   <div class="factgrid">
 
     {# Tier 1: external reference — every fact cited #}
@@ -202,6 +219,7 @@
       {% endif %}
     </section>
   </div>
+  {% endif %}
 
   {# ── The evidence the identification rests on ────────────────────────────── #}
   <section class="block">
