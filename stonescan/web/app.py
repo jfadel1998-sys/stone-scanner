@@ -153,6 +153,95 @@ def _colors_matching(conn, base: str) -> list[str]:
     return out
 
 
+# --- Colour families --------------------------------------------------------------
+#
+# `color` is free text: 983 distinct values, 527 of them appearing twice or less, and the
+# dropdown offered every one while the filter matched on equality. So "Gray" and "Grey"
+# were separate choices that each returned part of the family, and a row coloured
+# "Gray, White" was unreachable from either — picking Gray missed 6,452 of the 13,290
+# rows that carry a gray/grey word.
+#
+# The families below cover 97% of coloured rows; the rest stay reachable through a
+# long-tail bucket, so nothing becomes unfindable.
+#
+# Folded at QUERY time rather than stored canonically: the raw supplier value is what the
+# item page shows and what a re-crawl rewrites, so rewriting it would either be undone
+# every crawl or lose what the supplier actually said. It also means a colour saved in a
+# watchlist before this existed still resolves — see _colors_for_choice.
+_COLOR_FAMILIES: dict[str, tuple[str, ...]] = {
+    "White": ("white",), "Black": ("black",), "Gray": ("gray", "grey"),
+    "Blue": ("blue",), "Beige": ("beige",), "Brown": ("brown",),
+    "Gold": ("gold", "golden"), "Cream": ("cream", "ivory"), "Green": ("green",),
+    "Silver": ("silver",), "Tan": ("tan",), "Multi": ("multi", "multicolor", "multicolour"),
+    "Yellow": ("yellow",), "Red": ("red",), "Taupe": ("taupe",), "Pink": ("pink",),
+    "Orange": ("orange",), "Purple": ("purple", "violet", "lavender"),
+    "Bronze": ("bronze",), "Charcoal": ("charcoal",),
+}
+_COLOR_OTHER = "Other"
+# Splits on ANY non-alphanumeric run, not just the separators the parsed-NL branch uses:
+# suppliers write "White." and "Off-White" as well as "Gray, White", and a trailing full
+# stop was enough to hide 37 rows from the White family.
+_COLOR_WORD_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _color_words(value: str) -> set[str]:
+    return {w for w in _COLOR_WORD_RE.split((value or "").lower()) if w}
+
+
+def _family_of(value: str) -> str:
+    """The first family a raw colour value belongs to, or '' for the long tail.
+    A multi-colour value ("Gray, White") belongs to several; it is reachable from each."""
+    words = _color_words(value)
+    for fam, syns in _COLOR_FAMILIES.items():
+        if words & set(syns):
+            return fam
+    return ""
+
+
+def _color_options(conn) -> list[str]:
+    """Families actually present in the catalog, most-used first, then the long tail."""
+    seen: dict[str, int] = {}
+    tail = 0
+    for r in conn.execute(
+            "SELECT color, COUNT(*) n FROM materials WHERE color <> '' GROUP BY color"):
+        words, hit = _color_words(r["color"]), False
+        for fam, syns in _COLOR_FAMILIES.items():
+            if words & set(syns):
+                seen[fam] = seen.get(fam, 0) + r["n"]
+                hit = True
+        if not hit:
+            tail += r["n"]
+    out = sorted(seen, key=lambda f: -seen[f])
+    if tail:
+        out.append(_COLOR_OTHER)
+    return out
+
+
+def _colors_for_choice(conn, choice: str) -> list[str]:
+    """The raw colour values a dropdown choice stands for.
+
+    A family expands to every value carrying one of its words. `Other` is everything in
+    no family. Anything else — a raw value saved in a watchlist before families existed —
+    is carried forward into its family if it has one, so an old saved search widens rather
+    than silently stops matching; a value with no family still matches itself.
+    """
+    if not choice:
+        return []
+    if choice not in _COLOR_FAMILIES and choice != _COLOR_OTHER:
+        fam = _family_of(choice)
+        if not fam:
+            return [choice]
+        choice = fam
+    syns = set(_COLOR_FAMILIES.get(choice, ()))
+    out = []
+    for r in conn.execute("SELECT DISTINCT color FROM materials WHERE color <> ''"):
+        words = _color_words(r["color"])
+        in_family = bool(words & syns)
+        if (choice == _COLOR_OTHER and not _family_of(r["color"])) or in_family:
+            out.append(r["color"])
+    return out
+
+
 _NAME_WORDS: list[str] | None = None
 
 
@@ -389,8 +478,10 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     if mt != "Accessory / Non-Slab":
         where.append("m.material_type <> 'Accessory / Non-Slab'")
 
-    if color:  # explicit dropdown -> exact
-        where.append("m.color = ?"); params.append(color)
+    if color:  # explicit dropdown -> the whole colour family, not one spelling
+        fam = _colors_for_choice(conn, color)
+        where.append("m.color IN (%s)" % ",".join("?" * len(fam)) if fam else "1=0")
+        params.extend(fam)
     elif parsed["color"]:  # parsed -> lenient (color field OR the name)
         base = smartsearch.color_base(parsed["color"])
         cols = _colors_matching(conn, base)
@@ -743,7 +834,7 @@ def index(
         # redirect stays on this host).
         "here": _here(request),
         "types": _distinct(conn, "material_type"),
-        "colors": _distinct(conn, "color"),
+        "colors": _color_options(conn),
         "thicknesses": _distinct(conn, "thickness"),
         "locations": db.location_options(conn),
         "suppliers": [
@@ -872,17 +963,22 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
     rep_photo = "" if photos else _representative_photos(conn, [_base_name(key)]).get(_base_name(key), "")
 
     mtype = rows[0]["material_type"]
+    # "Similar" means the same colour FAMILY, not the same spelling of it — otherwise a
+    # Grey stone lists no Gray lookalikes. An uncoloured material keeps matching on type
+    # alone, exactly as the old (? = '' OR ...) did.
+    sim_colors = _colors_for_choice(conn, rows[0]["color"] or "")
+    sim_cond = ("m.color IN (%s)" % ",".join("?" * len(sim_colors))) if sim_colors else "1=1"
     similar = [dict(x) for x in conn.execute(
-        """SELECT m.item_name, m.material_key, m.color, MAX(m.image_url) AS image_url,
+        f"""SELECT m.item_name, m.material_key, m.color, MAX(m.image_url) AS image_url,
                   COUNT(DISTINCT m.supplier_id) AS suppliers, SUM(m.available_slabs) AS slabs
            FROM materials m
            WHERE m.material_type = ? AND m.material_key <> ? AND m.material_key <> ''
-                 AND (? = '' OR m.color = ?)
+                 AND ({sim_cond})
            GROUP BY m.material_key
            ORDER BY (MAX(m.image_url) = '' OR MAX(m.image_url) IS NULL),
                     SUM(m.available_slabs) DESC
            LIMIT 12""",
-        (mtype, key, rows[0]["color"] or "", rows[0]["color"] or ""),
+        (mtype, key, *sim_colors),
     )]
     lists = db.get_lists(conn)
     conn.close()
@@ -959,6 +1055,10 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
     # Similar materials: same type + same colour (or shared name word), other
     # materials, one row per material_key, prefer those with stock + a photo.
     first_word = (m["name_norm"] or "").split(" ")[0] if m["name_norm"] else ""
+    # Same colour FAMILY (see _colors_for_choice), so a Grey stone still finds the Gray
+    # ones. '\0' keeps the old "match nothing on colour" behaviour when it has none.
+    sim_colors = _colors_for_choice(conn, m["color"] or "") or ["\0"]
+    sim_cond = "m.color IN (%s)" % ",".join("?" * len(sim_colors))
     similar = conn.execute(
         f"""SELECT MIN(m.id) AS id, m.item_name, m.material_type, m.color, m.material_key,
                   MAX(m.image_url) AS image_url,
@@ -966,12 +1066,12 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
                   {_SLABS} AS slabs
            FROM materials m
            WHERE m.material_type = ? AND m.material_key <> ? AND m.material_key <> ''
-                 AND (m.color = ? OR (? <> '' AND m.name_norm LIKE ?))
+                 AND ({sim_cond} OR (? <> '' AND m.name_norm LIKE ?))
            GROUP BY m.material_key
            ORDER BY (MAX(m.image_url) = '' OR MAX(m.image_url) IS NULL),
                     {_SLABS} DESC
            LIMIT 12""",
-        (m["material_type"], m["material_key"], m["color"] or "\0",
+        (m["material_type"], m["material_key"], *sim_colors,
          first_word, f"{first_word}%"),
     ).fetchall()
     # Fallback image for slabs (and the hero) with no photo of their own: the item's

@@ -2286,5 +2286,116 @@ class LocationFilterTests(unittest.TestCase):
         self.assertEqual(db.location_members(self.conn, ""), [])
 
 
+class ColourFamilyTests(unittest.TestCase):
+    """`color` is free text with 983 distinct values, and the dropdown matched on
+    equality — so "Gray" and "Grey" were separate choices that each returned part of the
+    family, and a row coloured "Gray, White" was reachable from neither."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=6)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _mat(self, supplier_id, name, color):
+        self.conn.execute(
+            """INSERT INTO materials
+                 (supplier_id, item_id, item_name, name_norm, material_key,
+                  material_type, color, available_slabs)
+               VALUES (?,?,?,?,?,?,?,1)""",
+            (supplier_id, f"{supplier_id}-{name}", name, name.upper(),
+             f"{name.lower()}|granite", "Granite", color))
+        self.conn.commit()
+
+    def _find(self, color):
+        from stonescan.web import app
+        _t, rows, _ = app._search(self.conn, q="", material_type="", color=color,
+                                  thickness="", supplier="", limit=50, offset=0)
+        return {r["material_key"] for r in rows}
+
+    # --- AC-2: word-level, whole family -------------------------------------
+    def test_gray_and_grey_are_one_family(self):
+        self._mat(1, "Amer", "Gray")
+        self._mat(2, "Brit", "Grey")
+        self._mat(3, "Light", "Light Grey")
+        self.assertEqual(self._find("Gray"),
+                         {"amer|granite", "brit|granite", "light|granite"})
+
+    def test_a_multi_colour_row_is_reachable_from_each_of_its_colours(self):
+        self._mat(1, "Both", "Gray, White")
+        self.assertIn("both|granite", self._find("Gray"))
+        self.assertIn("both|granite", self._find("White"))
+
+    def test_case_and_punctuation_variants_fold(self):
+        self._mat(1, "A", "Off White")
+        self._mat(2, "B", "Off-White")
+        self._mat(3, "C", "White.")
+        self.assertEqual(self._find("White"),
+                         {"a|granite", "b|granite", "c|granite"})
+
+    def test_a_word_inside_another_word_is_not_a_match(self):
+        # The reason this is word-level and not LIKE '%red%'.
+        self._mat(1, "Real", "Red")
+        self._mat(2, "Fake", "Coloured")
+        self.assertEqual(self._find("Red"), {"real|granite"})
+
+    # --- AC-1: the option list ---------------------------------------------
+    def test_options_are_families_present_plus_a_long_tail_bucket(self):
+        from stonescan.web import app
+        self._mat(1, "A", "Gray")
+        self._mat(2, "B", "Grey")
+        self._mat(3, "C", "Chartreuse Sparkle")   # in no family
+        opts = app._color_options(self.conn)
+        self.assertIn("Gray", opts)
+        self.assertNotIn("Grey", opts, "Grey is folded into Gray, not its own option")
+        self.assertIn(app._COLOR_OTHER, opts)
+
+    def test_the_long_tail_stays_reachable(self):
+        self._mat(1, "Odd", "Chartreuse Sparkle")
+        self._mat(2, "Plain", "White")
+        from stonescan.web import app
+        self.assertEqual(self._find(app._COLOR_OTHER), {"odd|granite"})
+
+    def test_no_option_is_offered_for_a_family_with_no_rows(self):
+        from stonescan.web import app
+        self._mat(1, "A", "White")
+        self.assertNotIn("Purple", app._color_options(self.conn))
+
+    # --- AC-5: a colour saved before families existed --------------------------
+    def test_a_legacy_raw_value_widens_to_its_family(self):
+        self._mat(1, "A", "Gray")
+        self._mat(2, "B", "Grey")
+        # A watchlist saved "Grey" back when it was its own option.
+        self.assertEqual(self._find("Grey"), {"a|granite", "b|granite"},
+                         "an old saved colour must widen, never silently stop matching")
+
+    def test_a_legacy_value_with_no_family_still_matches_itself(self):
+        self._mat(1, "Odd", "Chartreuse Sparkle")
+        self._mat(2, "Other", "White")
+        self.assertEqual(self._find("Chartreuse Sparkle"), {"odd|granite"})
+
+    def test_an_unknown_colour_returns_nothing_rather_than_everything(self):
+        self._mat(1, "A", "White")
+        self.assertEqual(self._find("Nonesuch"), set())
+
+    # --- AC-3: the two "Similar materials" sites ---------------------------
+    def test_similar_materials_uses_the_family_not_the_spelling(self):
+        from stonescan.web import app
+        self._mat(1, "Anchor", "Grey")
+        self._mat(2, "Cousin", "Gray")
+        self._mat(3, "Stranger", "Red")
+        fam = app._colors_for_choice(self.conn, "Grey")
+        self.assertIn("Gray", fam)
+        self.assertIn("Grey", fam)
+        self.assertNotIn("Red", fam)
+
+    def test_an_uncoloured_material_has_no_colour_restriction(self):
+        from stonescan.web import app
+        self.assertEqual(app._colors_for_choice(self.conn, ""), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
