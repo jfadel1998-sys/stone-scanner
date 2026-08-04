@@ -84,14 +84,19 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 # starting a second crawl on top of one that is already running (or still waiting).
 # ExecutionTimeLimit covers the guard's wait PLUS the crawl (~3h on the full list) — at the
 # old 4h a slow night would be killed mid-crawl, which is one more failure that looks like
-# nothing happened. The battery switches default to $true and would silently skip the run
-# on anything with a battery; this machine has none, so that has never bitten, but a
-# skipped run is exactly the invisible failure this task keeps having.
+# nothing happened. The battery settings default to "don't start / stop if on battery" and
+# would silently skip the run on anything with a battery; this machine has none, so it has
+# never bitten, but a skipped run is exactly the invisible failure this task keeps having.
+# NOTE the inversion: the cmdlet takes the POSITIVE switches -AllowStartIfOnBatteries /
+# -DontStopIfGoingOnBatteries, while the object it returns (and Get-ScheduledTask) exposes
+# the NEGATIVE properties DisallowStartIfOnBatteries / StopIfGoingOnBatteries. Passing the
+# property names as parameters is a ParameterBindingException, and because the installer
+# unregisters before it registers, that failure leaves NO task at all.
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
     -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
     -RestartCount 4 -RestartInterval (New-TimeSpan -Minutes 30) `
     -MultipleInstances IgnoreNew `
-    -DisallowStartIfOnBatteries:$false -StopIfGoingOnBatteries:$false
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings `
