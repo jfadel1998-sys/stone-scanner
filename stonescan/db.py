@@ -250,6 +250,29 @@ CREATE TABLE IF NOT EXISTS product_rollup (
     image_url       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_rollup_type ON product_rollup(material_type);
+
+-- One row per refresh run. refresh-history.log only ever gets a terminal line if the
+-- process reaches the end of run_all, so a run killed mid-crawl leaves no record at all
+-- and is indistinguishable from a night the task never fired: 4 of 11 logged runs have a
+-- start line and no outcome. `heartbeat_at` is what separates the two — it advances once
+-- per supplier, so a run that stopped moving is visibly interrupted while a legitimately
+-- slow one (the 07-24 run took two hours) is not.
+--
+-- `attempts` counts supplier COMPLETIONS, not distinct suppliers: the --retry pass crawls
+-- some of them a second time and both attempts are real work. Hosts the circuit breaker
+-- skips are never counted, because they were never asked.
+CREATE TABLE IF NOT EXISTS refresh_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at   TEXT NOT NULL,
+    heartbeat_at TEXT,
+    finished_at  TEXT,
+    outcome      TEXT,              -- 'done' | 'failed'; NULL while running or interrupted
+    planned      INTEGER DEFAULT 0, -- entries this run intended to crawl
+    attempts     INTEGER DEFAULT 0, -- supplier completions so far
+    materials    INTEGER,
+    detail       TEXT               -- error type + message on failure
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_runs_started ON refresh_runs(started_at DESC);
 """
 
 
@@ -551,6 +574,11 @@ def get_slabs(conn: sqlite3.Connection, supplier_id: int, item_id: str) -> list[
 _stats_cache: dict[str, tuple[float, dict]] = {}
 _STATS_TTL = 30.0  # stats change only on a crawl; a page view never needs them fresher
 
+# How recent a supplier's data must be to count as current. One nightly cycle plus slack:
+# the run starts at 03:00 and a long one has taken three hours, so anything inside a day
+# was refreshed by the last successful run.
+FRESH_HOURS = 24
+
 
 def stats(conn: sqlite3.Connection, *, use_cache: bool = True) -> dict[str, Any]:
     # This recomputes six aggregates over ~130k materials and runs on nearly every page,
@@ -591,12 +619,26 @@ def stats(conn: sqlite3.Connection, *, use_cache: bool = True) -> dict[str, Any]
     # claim over an entirely unchanged catalog. The range (oldest live supplier's data
     # → newest) is what the header shows; a single MAX was overstating freshness for
     # 65% of items.
+    #
+    # The range alone still overstates things, because it says nothing about the
+    # DISTRIBUTION between its two ends: "crawled 2026-07-16 → 2026-07-31" reads as fresh
+    # while 114 of 140 stocked suppliers sit at the old end of it. So count how many
+    # suppliers are actually current, from the same per-supplier scan, and let the header
+    # say that instead of implying the newest date applies to everything.
+    from datetime import datetime, timedelta, timezone
+    _cutoff = (datetime.now(timezone.utc) - timedelta(hours=FRESH_HOURS)).isoformat(
+        timespec="seconds")
     row = conn.execute(
-        """SELECT MIN(t) oldest, MAX(t) newest FROM
-             (SELECT MAX(crawled_at) t FROM materials GROUP BY supplier_id)"""
+        """SELECT MIN(t) oldest, MAX(t) newest, COUNT(*) n,
+                  SUM(CASE WHEN t >= ? THEN 1 ELSE 0 END) current FROM
+             (SELECT MAX(crawled_at) t FROM materials GROUP BY supplier_id)""",
+        (_cutoff,),
     ).fetchone()
     s["last_updated"] = row["newest"] if row else None
     s["oldest_updated"] = row["oldest"] if row else None
+    s["suppliers_with_data"] = (row["n"] or 0) if row else 0
+    s["suppliers_current"] = (row["current"] or 0) if row else 0
+    s["fresh_hours"] = FRESH_HOURS   # so the header can name the window it is claiming
     s["with_images"] = conn.execute(
         f"SELECT COUNT(*) c FROM materials WHERE image_url <> '' AND {_cat}"
     ).fetchone()["c"]
@@ -900,6 +942,82 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             d["status"] = ("ok" if not err else "stale") if has else ("broken" if err else "empty")
         d["age_hours"] = _hours(d["last_crawled"])
         d["data_age_hours"] = _hours(data_ts.get(d["id"]))
+        out.append(d)
+    return out
+
+
+# A run whose heartbeat has not advanced in this long, and which never recorded an outcome,
+# is treated as interrupted.
+#
+# The number is set from measurement, not intuition. `run_providers` walks its list strictly
+# sequentially, so while one supplier is being fetched no other tick is possible, and the gap
+# between ticks is simply the slowest supplier. In the 2026-08-03 full run the gaps between
+# consecutive last_crawled stamps reached 30.1 min (umistone) and 35.3 min (stonetrash), with
+# marblesystems at 16.4 min — so a 30-minute cutoff would have rendered that entirely healthy
+# run as INTERRUPTED twice while it was still working. 90 gives roughly 2.5x the worst
+# observed gap; a run that has genuinely died is still flagged long before anyone looks.
+INTERRUPTED_AFTER_MIN = 90
+
+
+def start_refresh_run(conn: sqlite3.Connection, planned: int) -> int:
+    """Open a ledger row for this run and return its id."""
+    now = _now_iso()
+    cur = conn.execute(
+        "INSERT INTO refresh_runs (started_at, heartbeat_at, planned) VALUES (?,?,?)",
+        (now, now, int(planned)))
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def heartbeat_refresh_run(conn: sqlite3.Connection, run_id: int) -> None:
+    """Record that one more supplier finished. Called per supplier, so it must stay a
+    single cheap UPDATE on a connection the caller already holds — never open one here,
+    because init_db() re-runs the mm-thickness repair scan on every call."""
+    conn.execute(
+        "UPDATE refresh_runs SET heartbeat_at = ?, attempts = attempts + 1 WHERE id = ?",
+        (_now_iso(), run_id))
+    conn.commit()
+
+
+def finish_refresh_run(conn: sqlite3.Connection, run_id: int, *, outcome: str,
+                       materials: int | None = None, detail: str | None = None) -> None:
+    """Stamp the terminal state. `outcome` is 'done' or 'failed'."""
+    conn.execute(
+        "UPDATE refresh_runs SET finished_at = ?, outcome = ?, materials = ?, detail = ? "
+        "WHERE id = ?",
+        (_now_iso(), outcome, materials, (detail or "")[:500], run_id))
+    conn.commit()
+
+
+def recent_refresh_runs(conn: sqlite3.Connection, limit: int = 8) -> list[dict[str, Any]]:
+    """Recent runs, newest first, each with a derived `state`.
+
+    Degrades to [] rather than raising: /health has no error handling, and a snapshot DB
+    shipped before this table existed would otherwise 500 the page it was added to.
+    """
+    from datetime import datetime, timedelta, timezone
+    try:
+        rows = conn.execute(
+            "SELECT * FROM refresh_runs ORDER BY started_at DESC, id DESC LIMIT ?",
+            (int(limit),)).fetchall()
+    except sqlite3.Error:
+        return []
+    stale_before = (datetime.now(timezone.utc)
+                    - timedelta(minutes=INTERRUPTED_AFTER_MIN)).isoformat(timespec="seconds")
+    # A run that stopped moving before a LATER run began is over, whatever the clock says.
+    # This is the stronger signal and it settles the common case immediately: yesterday's
+    # dead run, looked at after tonight's has started, no longer has to age out first.
+    newest_start = (rows[0]["started_at"] or "") if rows else ""
+    out = []
+    for r in rows:
+        d = dict(r)
+        beat = d.get("heartbeat_at") or ""
+        if d.get("outcome"):
+            d["state"] = d["outcome"]                      # 'done' | 'failed'
+        elif beat < stale_before or beat < newest_start:
+            d["state"] = "interrupted"                     # stopped moving, never finished
+        else:
+            d["state"] = "running"
         out.append(d)
     return out
 

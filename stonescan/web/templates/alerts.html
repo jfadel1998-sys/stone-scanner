@@ -2,7 +2,7 @@
 {% block title %}Alerts · Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{% if stats.last_updated %}{% if stats.oldest_updated and stats.oldest_updated[:10] != stats.last_updated[:10] %}<span title="Suppliers are crawled on different days — oldest data → newest">crawled {{ stats.oldest_updated[:10] }} → {{ stats.last_updated[:10] }} UTC</span>{% else %}updated {{ stats.last_updated[:16].replace('T',' ') }} UTC{% endif %}{% endif %}</div>
+<div class="stats">{% include "_freshness.html" %}</div>
 {% endblock %}
 
 {# One change row. `change` is the pre-formatted quantity delta for this kind. #}
