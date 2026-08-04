@@ -592,6 +592,18 @@ footer {
   :root:not([data-theme="light"]) .hstat.broken { border-color: #5c3327; background: #2c1c16; }
 }
 
+/* Refresh pipeline. Panel chrome is inherited from .mirrorbox; only the run detail needs
+   its own treatment, since it carries an exception string. */
+.pipelinetable td { vertical-align: top; }
+.pipelinetable .muted { font-family: var(--font-mono); font-size: 11px; max-width: 340px; }
+/* A freshness claim true of only part of the catalog must not read like one true of all of
+   it — the old header rendered both in the same muted grey. */
+.fresh.partial { color: #8a6d1f; }
+:root[data-theme="dark"] .fresh.partial { color: #cbb26a; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .fresh.partial { color: #cbb26a; }
+}
+
 /* ---- Sourcing lists ----------------------------------------------------- */
 .newlist { display: flex; gap: 8px; margin: 14px 0 4px; }
 .newlist input { flex: 0 1 340px; padding: 10px 13px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); font-size: 14px; background: var(--field-bg); color: var(--ink); }

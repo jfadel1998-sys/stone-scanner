@@ -1869,10 +1869,14 @@ def health(request: Request):
     mirrors = db.mirror_report(conn)
     proposals = db.supplier_filter_proposals(conn)
     stats = db.stats(conn)
+    # The nightly refresh runs in a separate process, so the in-memory _refresh dict above
+    # is blind to it and every scheduled run has been invisible here. This is the durable
+    # record; it returns [] rather than raising on a snapshot DB predating the table.
+    runs = db.recent_refresh_runs(conn)
     conn.close()
     return templates.TemplateResponse(request, "health.html", {
         "rows": rows, "counts": counts, "stats": stats, "total": len(rows),
-        "mirrors": mirrors, "proposals": proposals,
+        "mirrors": mirrors, "proposals": proposals, "runs": runs,
     })
 
 

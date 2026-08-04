@@ -33,6 +33,47 @@ def _refresh_log(db_path: str, msg: str) -> None:
         pass
 
 
+def _ledger(fn, *args, **kwargs):
+    """Run one ledger write, swallowing anything it raises.
+
+    Same contract as `_refresh_log` above, for the same reason: a record of the crawl must
+    never be able to end the crawl. This is the whole of the issue's "every ledger write is
+    wrapped" — there is one wrapper, so no call site can forget it.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception:  # noqa: BLE001 - a bookkeeping failure must not fail a refresh
+        return None
+
+
+def _ledger_start(db_path: str, planned: int) -> int | None:
+    """Open the run's ledger row. Uses init_db because on a database predating the table
+    this is the first thing that would create it; every later write reuses a live
+    connection instead, since init_db re-runs a full-table repair scan each call."""
+    def _open():
+        conn = db.init_db(db_path)
+        try:
+            return db.start_refresh_run(conn, planned)
+        finally:
+            conn.close()
+    return _ledger(_open)
+
+
+def _ledger_finish(db_path: str, run_id: int | None, *, outcome: str,
+                   materials: int | None = None, detail: str | None = None) -> None:
+    if run_id is None:
+        return
+
+    def _stamp():
+        conn = db.connect(db_path)     # connect, not init_db: the table exists by now
+        try:
+            db.finish_refresh_run(conn, run_id, outcome=outcome,
+                                  materials=materials, detail=detail)
+        finally:
+            conn.close()
+    _ledger(_stamp)
+
+
 def _build_slab_rows(result, supplier_id: int, crawled_at: str) -> list[dict]:
     """Flatten crawler slab data (ItemID -> [slabs]) into slab-table rows."""
     from urllib.parse import quote
@@ -161,11 +202,21 @@ def _announce_trip(breaker, provider: str, before: bool) -> None:
 
 async def run_providers(entries: list[dict], *, delay: float, db_path: str,
                         with_slabs: bool = False, limit_items: int = 0,
-                        progress=None, breaker=None) -> tuple[int, int, int]:
+                        progress=None, breaker=None, run_id=None) -> tuple[int, int, int]:
     """Crawl every non-StoneProfits supplier entry, one provider at a time."""
     from . import providers
 
-    def tally(provider: str, ok_: bool, error: str | None) -> None:
+    def attempt_finished(provider: str, ok_: bool, error: str | None) -> None:
+        """One supplier attempt finished, whatever its outcome: tick the run's heartbeat
+        and move the circuit breaker.
+
+        Deliberately NOT called for a host the breaker skipped — that host was never asked,
+        so it is neither an attempt nor evidence of anything. The heartbeat runs before the
+        breaker guard below, because `breaker` is optional and a run whose heartbeat only
+        ticked when a breaker happened to be passed would read as interrupted.
+        """
+        if run_id is not None:
+            _ledger(db.heartbeat_refresh_run, conn, run_id)
         if breaker is None:
             return
         before = breaker.tripped(provider)
@@ -191,7 +242,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
         except Exception as e:  # noqa: BLE001 - a broken provider must not kill the run
             print(f"  [err]  {label:<34} {name}: {e}")
             db.record_crawl_streak(conn, entry["host"], 0, "")
-            tally(name, False, str(e))
+            attempt_finished(name, False, str(e))
             if progress:
                 progress(label, 0)
             continue
@@ -202,7 +253,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
             db.record_crawl_streak(conn, data.host, 0, data.error)
             # No error text means the fetch worked and the catalog is simply empty — a
             # success as far as the breaker is concerned, not evidence the platform is down.
-            tally(name, False, data.error)
+            attempt_finished(name, False, data.error)
             if progress:
                 progress(label, 0)
             continue
@@ -212,7 +263,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
             db.upsert_supplier(conn, host=data.host, last_error=f"store failed: {e}")
             print(f"  [err]  {label:<34} store failed: {e}")
             db.record_crawl_streak(conn, data.host, 0, "")
-            tally(name, False, f"store failed: {e}")
+            attempt_finished(name, False, f"store failed: {e}")
             if progress:
                 progress(label, 0)
             continue
@@ -222,7 +273,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
         note = f" (+{ns} slabs)" if with_slabs else ""
         print(f"  [ok]   {label:<34} {n:>5} materials{note}  [{name}]")
         db.record_crawl_streak(conn, data.host, n, "")
-        tally(name, True, "")
+        attempt_finished(name, True, "")
         if progress:
             progress(label, n)
     conn.close()
@@ -249,7 +300,7 @@ def _errored_hosts(db_path: str, hosts: list[str]) -> set[str]:
 
 async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
                          with_slabs, provider_limit, slab_item_cap=0, progress=None,
-                         breaker=None) -> dict[str, list[str]]:
+                         breaker=None, run_id=None) -> dict[str, list[str]]:
     """Crawl a mixed entry list once, routing each to Stone Profits or its provider.
 
     Returns {provider: [hosts abandoned]} for every provider the circuit breaker tripped —
@@ -266,14 +317,14 @@ async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
         print(f"Crawling {len(sps)} Stone Profits catalog(s)...\n")
         await run(sps, concurrency=concurrency, delay=delay, headless=headless,
                   db_path=db_path, with_slabs=with_slabs, slab_item_cap=slab_item_cap,
-                  progress=progress, breaker=breaker)
+                  progress=progress, breaker=breaker, run_id=run_id)
     if other:
         kinds = ", ".join(sorted({providers.provider_of(e) for e in other}))
         print(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
         ok, items, slabs = await run_providers(
             other, delay=max(delay * 0.2, 0.2), db_path=db_path,
             with_slabs=with_slabs, limit_items=provider_limit, progress=progress,
-            breaker=breaker)
+            breaker=breaker, run_id=run_id)
         print(f"\n  {ok} supplier(s), {items} materials"
               + (f", {slabs} slabs" if with_slabs else ""))
     return dict(breaker.skipped)
@@ -296,6 +347,11 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
     db_path = db_path or str(db.DEFAULT_DB)
     _refresh_log(db_path, f"refresh started — {len(entries)} supplier "
                           f"entr{'y' if len(entries) == 1 else 'ies'}")
+
+    # Open the ledger row before the backup, not after: the backup takes ~25s on the live
+    # catalog, and a process that dies inside it should still leave a run that reads as
+    # interrupted rather than as a night nothing was attempted.
+    run_id = _ledger_start(db_path, len(entries))
 
     # Data safety: snapshot the DB before we modify it, so a crash or disk error mid-
     # refresh leaves a restore point — the file also holds the user's watchlist/lists.
@@ -346,7 +402,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             entries, concurrency=concurrency, delay=delay,
             headless=headless, db_path=db_path, with_slabs=with_slabs,
             provider_limit=provider_limit, slab_item_cap=slab_item_cap,
-            progress=progress)
+            progress=progress, run_id=run_id)
         # A host the breaker never asked is not a host this run crawled, so keep it out of
         # the tail reconciliation too — that pass is about what THIS run observed.
         skipped_hosts = {(h or "").lower() for hs in abandoned.values() for h in hs}
@@ -366,7 +422,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
                     retry, concurrency=concurrency, delay=delay,
                     headless=headless, db_path=db_path,
                     with_slabs=with_slabs, provider_limit=provider_limit,
-                    slab_item_cap=slab_item_cap, progress=progress)
+                    slab_item_cap=slab_item_cap, progress=progress, run_id=run_id)
                 # The retry runs its own breaker and can abandon hosts too. Fold those into
                 # the same tally or they are capped in silence: this pass is reported on its
                 # own line below, which would otherwise only ever describe the main crawl.
@@ -399,31 +455,39 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         # Re-apply curator-confirmed merges LAST: every crawl (and retry) recomputes
         # material_key from scratch, so without this each /quality merge silently undoes.
         conn = db.init_db(db_path)
-        folded = db.apply_aliases(conn)
-        n_aliases = db.quality_stats(conn)["aliases"]
-        # Re-apply confirmed storefront filters BEFORE mirror detection: a re-crawl re-fetches
-        # a vanity host's whole tenant catalog, so re-scope it to its confirmed type first —
-        # then it isn't re-flagged as a mirror.
-        scoped = db.apply_supplier_filters(conn)
-        # Reduce each multi-row item to one honest slab count. AFTER the storefront filters,
-        # so rows about to be deleted are never counted, and BEFORE the rollup, so the search
-        # fast path is built on the corrected figure.
-        collapsed = db.collapse_item_slab_counts(conn)
-        # The per-supplier snapshot was written DURING the crawl, before that collapse, so
-        # re-take today's for everyone who has one. Otherwise history keeps the pre-collapse
-        # numbers and the next digest reads the correction as a catalog-wide sell-off.
-        resnapped = db.resnapshot_history(conn, utc_now_iso()[:10])
-        # Flag duplicate-catalog storefronts (one tenant under two supplier names) so they
-        # aren't double-counted in supplier totals/facets. Recomputed here every crawl.
-        mirrors = db.detect_mirrors(conn)
-        # Recompute the (live) storefront-filter proposals for whatever is still a mirror.
-        proposals = db.supplier_filter_proposals(conn)
-        n_proposals = sum(1 for p in proposals.values() if p["material_type"])
-        # Refresh the per-product rollup LAST, after material_key is final (aliases folded),
-        # so the search fast path reflects this crawl.
-        n_rollup = db.rebuild_product_rollup(conn)
-        s = db.stats(conn, use_cache=False)
-        conn.close()
+        try:
+            folded = db.apply_aliases(conn)
+            n_aliases = db.quality_stats(conn)["aliases"]
+            # Re-apply confirmed storefront filters BEFORE mirror detection: a re-crawl
+            # re-fetches a vanity host's whole tenant catalog, so re-scope it to its confirmed
+            # type first — then it isn't re-flagged as a mirror.
+            scoped = db.apply_supplier_filters(conn)
+            # Reduce each multi-row item to one honest slab count. AFTER the storefront
+            # filters, so rows about to be deleted are never counted, and BEFORE the rollup,
+            # so the search fast path is built on the corrected figure.
+            collapsed = db.collapse_item_slab_counts(conn)
+            # The per-supplier snapshot was written DURING the crawl, before that collapse, so
+            # re-take today's for everyone who has one. Otherwise history keeps the
+            # pre-collapse numbers and the next digest reads it as a catalog-wide sell-off.
+            resnapped = db.resnapshot_history(conn, utc_now_iso()[:10])
+            # Flag duplicate-catalog storefronts (one tenant under two supplier names) so they
+            # aren't double-counted in supplier totals/facets. Recomputed here every crawl.
+            mirrors = db.detect_mirrors(conn)
+            # Recompute the (live) storefront-filter proposals for whatever is still a mirror.
+            proposals = db.supplier_filter_proposals(conn)
+            n_proposals = sum(1 for p in proposals.values() if p["material_type"])
+            # Refresh the per-product rollup LAST, after material_key is final (aliases
+            # folded), so the search fast path reflects this crawl.
+            n_rollup = db.rebuild_product_rollup(conn)
+            s = db.stats(conn, use_cache=False)
+        finally:
+            # Close in a finally, which also rolls back a half-finished transaction. Every
+            # helper above is write-then-commit, so one that raises mid-write leaves this
+            # connection holding SQLite's single write lock — and the 'failed' stamp in the
+            # except below opens its OWN connection, so it would wait out the 10s
+            # busy_timeout and then be swallowed. The run would be recorded as interrupted
+            # rather than failed, losing the very error text the ledger exists to keep.
+            conn.close()
         if folded:
             print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
         if scoped:
@@ -450,16 +514,20 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
                   f"across {len(abandoned)} provider(s) not attempted this run.")
         print(f"  product rollup: {n_rollup} products indexed for fast browse.")
         _refresh_log(db_path, f"Done — {s['materials']} materials, {s['suppliers']} suppliers.")
+        _ledger_finish(db_path, run_id, outcome="done", materials=s["materials"])
     except Exception as e:  # noqa: BLE001 - record durably, then let the caller handle it
         import traceback
         _refresh_log(db_path, f"FAILED: {type(e).__name__}: {e}\n"
                               f"{traceback.format_exc().rstrip()}")
+        # Stamp before re-raising: desktop.run_refresh does not catch, so the process exits
+        # here on the packaged nightly path and anything after the raise never happens.
+        _ledger_finish(db_path, run_id, outcome="failed", detail=f"{type(e).__name__}: {e}")
         raise
 
 
 async def run(hosts: list[str], *, concurrency: int, delay: float, headless: bool,
               db_path: str, with_slabs: bool = False, slab_item_cap: int = 0,
-              progress=None, breaker=None) -> None:
+              progress=None, breaker=None, run_id=None) -> None:
     from . import providers
     conn = db.init_db(db_path)
     total_items = 0
@@ -523,6 +591,11 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                 print(f"  [skip] {result.host:<34} {result.error}")
             # Track the empty-crawl streak for auto-rejection (n is 0 on a skip/store-fail).
             db.record_crawl_streak(conn, result.host, n, result.error)
+            # One supplier attempt finished. Every yielded result reaches here — ok, skip and
+            # store-failure alike — while hosts the breaker abandons never enter this loop at
+            # all, so they are correctly absent from the count.
+            if run_id is not None:
+                _ledger(db.heartbeat_refresh_run, conn, run_id)
             if progress:
                 progress(result.company or result.host, n)
             if breaker is not None:

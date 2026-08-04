@@ -4,7 +4,7 @@
 {% block headeraside %}
 <div class="stats">
   {{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers
-  {% if stats.last_updated %}{% if stats.oldest_updated and stats.oldest_updated[:10] != stats.last_updated[:10] %}<span class="fresh" title="Suppliers are crawled on different days — the oldest supplier's data is from the first date, the newest from the second. Each item page shows its own supplier's crawl time.">· crawled {{ stats.oldest_updated[:10] }} → {{ stats.last_updated[:10] }} UTC</span>{% else %}<span class="fresh" title="Data reflects each supplier's public catalog at last crawl">· updated {{ stats.last_updated[:16].replace('T',' ') }} UTC</span>{% endif %}{% endif %}
+  {% if stats.last_updated %}· {% include "_freshness.html" %}{% endif %}
 </div>
 <button id="refreshBtn" class="refreshbtn" title="Re-crawl all catalogs (materials only; runs in the background). Shift-click for a deep refresh that also pre-caches slab galleries + locations.">↻ Refresh</button>
 <span id="refreshMsg" class="refreshmsg"></span>

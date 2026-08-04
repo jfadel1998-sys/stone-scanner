@@ -19,6 +19,38 @@
   {% if counts.blocked %}<span class="hstat blocked"><b>{{ counts.blocked }}</b> blocked (robots.txt)</span>{% endif %}
 </div>
 
+<div class="mirrorbox pipelinebox">
+  <h2>Refresh pipeline</h2>
+  <p class="hintline muted">Every refresh run, including the nightly one — which runs in its own process and was previously invisible here. A run records a heartbeat as each supplier finishes, so one that stopped moving without recording an outcome shows as <b>interrupted</b> rather than vanishing, while a legitimately slow run does not.</p>
+  {% if runs %}
+  <table class="materials pipelinetable">
+    <thead>
+      <tr>
+        <th>Started (UTC)</th><th>State</th>
+        <th class="num" title="Suppliers this run intended to crawl">Planned</th>
+        <th class="num" title="Supplier attempts completed. Counts a retried supplier twice; hosts the circuit breaker skipped are never counted, because they were never asked.">Attempts</th>
+        <th class="num">Materials</th><th>Last activity</th><th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td>{{ r.started_at[:16].replace('T',' ') if r.started_at else '—' }}</td>
+        <td><span class="statuspill {{ {'done':'ok','failed':'broken','interrupted':'stale','running':'empty'}[r.state] }}">{{ r.state|upper }}</span></td>
+        <td class="num">{{ r.planned or 0 }}</td>
+        <td class="num">{{ r.attempts or 0 }}</td>
+        <td class="num">{{ r.materials if r.materials is not none else '—' }}</td>
+        <td>{{ (r.finished_at or r.heartbeat_at or '')[:16].replace('T',' ') or '—' }}</td>
+        <td class="muted">{{ r.detail or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hintline muted">No runs recorded yet. The next refresh will appear here.</p>
+  {% endif %}
+</div>
+
 {% if mirrors %}
 <div class="mirrorbox">
   <h2>Mirror storefronts</h2>

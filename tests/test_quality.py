@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -1794,6 +1795,202 @@ class _SuppliersFileCase(unittest.TestCase):
                 "SELECT empty_streak, last_error FROM suppliers WHERE host=?", (host,)).fetchone()
         finally:
             conn.close()
+
+
+class RefreshLedgerTests(_SuppliersFileCase):
+    """AIL-20: refresh-history.log only gets a terminal line if the process reaches the end
+    of run_all, so a run killed mid-crawl left nothing at all — 4 of 11 logged runs have a
+    start and no outcome, indistinguishable from a night the task never fired."""
+
+    def _run_row(self, run_id):
+        conn = db.connect(self.path)
+        try:
+            return conn.execute("SELECT * FROM refresh_runs WHERE id=?", (run_id,)).fetchone()
+        finally:
+            conn.close()
+
+    def _states(self):
+        conn = db.connect(self.path)
+        try:
+            return [r["state"] for r in db.recent_refresh_runs(conn)]
+        finally:
+            conn.close()
+
+    def _insert(self, *, started, heartbeat, finished=None, outcome=None):
+        conn = db.connect(self.path)
+        conn.execute("INSERT INTO refresh_runs (started_at, heartbeat_at, finished_at, outcome)"
+                     " VALUES (?,?,?,?)", (started, heartbeat, finished, outcome))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _ago(minutes):
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(
+            timespec="seconds")
+
+    def test_a_completed_run_records_an_outcome(self):
+        import asyncio
+        from stonescan.ingest import run_all
+        asyncio.run(run_all([], db_path=self.path))
+        rows = self._states()
+        self.assertEqual(rows, ["done"])
+
+    def test_a_run_that_stopped_moving_reads_as_interrupted(self):
+        # The distinction the whole ledger exists for: no outcome AND no recent heartbeat.
+        self._insert(started=self._ago(600), heartbeat=self._ago(400))
+        self.assertEqual(self._states(), ["interrupted"])
+
+    def test_a_slow_run_still_moving_is_not_called_interrupted(self):
+        # The 07-24 run legitimately took two hours. A long run whose heartbeat is advancing
+        # must never be libelled as a crash — misreading it that way is the trap in AC-2.
+        self._insert(started=self._ago(180), heartbeat=self._ago(1))
+        self.assertEqual(self._states(), ["running"])
+
+    def test_the_slowest_real_supplier_gap_does_not_read_as_interrupted(self):
+        # Measured from the 2026-08-03 full run: run_providers is strictly sequential, so the
+        # gap between ticks is just the slowest supplier — stonetrash took 35.3 min and
+        # umistone 30.1. A cutoff under those turns a healthy run into an INTERRUPTED badge.
+        self._insert(started=self._ago(200), heartbeat=self._ago(36))
+        self.assertEqual(self._states(), ["running"])
+        self.assertGreater(db.INTERRUPTED_AFTER_MIN, 36)
+
+    def test_a_run_superseded_by_a_later_one_is_interrupted_immediately(self):
+        # The stronger signal: if a newer run began after this one last moved, this one is
+        # over regardless of the clock. Without it, last night's dead run keeps claiming to
+        # be "running" until it ages out, even while tonight's is underway.
+        # The older run's heartbeat is well inside the staleness window, so the time-based
+        # rule alone would still call it "running" — only the supersede rule catches it.
+        self._insert(started=self._ago(90), heartbeat=self._ago(30))
+        self._insert(started=self._ago(20), heartbeat=self._ago(1))    # began after it stopped
+        self.assertLess(30, db.INTERRUPTED_AFTER_MIN, "heartbeat must not be stale on time")
+        self.assertEqual(self._states(), ["running", "interrupted"])
+
+    def test_a_tail_failure_is_stamped_failed_not_left_looking_interrupted(self):
+        # run_all's tail holds SQLite's single write lock. A helper that raises mid-write used
+        # to leave that connection open, so the 'failed' stamp — which opens its own
+        # connection — waited out the 10s busy_timeout and was swallowed, and the run showed
+        # as interrupted with the error text lost. That is the exact distinction AC-1 promises.
+        import asyncio
+        import time
+        from stonescan import db as dbmod
+        from stonescan.ingest import run_all
+
+        orig = dbmod.rebuild_product_rollup
+
+        def raise_after_a_write(conn):
+            conn.execute("DELETE FROM product_rollup")      # uncommitted: holds the lock
+            raise sqlite3.OperationalError("database or disk is full")
+
+        dbmod.rebuild_product_rollup = raise_after_a_write
+        self.addCleanup(setattr, dbmod, "rebuild_product_rollup", orig)
+
+        t0 = time.monotonic()
+        with self.assertRaises(sqlite3.OperationalError):
+            asyncio.run(run_all([], db_path=self.path))
+        elapsed = time.monotonic() - t0
+
+        conn = db.connect(self.path)
+        row = conn.execute("SELECT * FROM refresh_runs ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        self.assertEqual(row["outcome"], "failed")
+        self.assertIn("disk is full", row["detail"])
+        self.assertIsNotNone(row["finished_at"])
+        # It must not have sat on the busy timeout to get there.
+        self.assertLess(elapsed, 5, "the failed stamp blocked on the write lock")
+
+    def test_the_heartbeat_ticks_once_per_supplier_but_not_for_skipped_hosts(self):
+        # A host the circuit breaker abandons was never asked, so it is not an attempt.
+        import asyncio
+        from stonescan import ingest
+        from stonescan.ingest import run_all
+
+        hosts = [f"h{i}.example.com" for i in range(10)]
+        for h in hosts:
+            self._supplier_row(h)
+        _register_fake_provider(self)
+        orig = ingest.PROVIDER_ERROR_LIMIT
+        ingest.PROVIDER_ERROR_LIMIT = 3
+        self.addCleanup(setattr, ingest, "PROVIDER_ERROR_LIMIT", orig)
+
+        asyncio.run(run_all([{"host": h, "provider": "fake"} for h in hosts],
+                            db_path=self.path))
+        conn = db.connect(self.path)
+        row = conn.execute("SELECT * FROM refresh_runs ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        self.assertEqual(row["planned"], 10)
+        self.assertEqual(row["attempts"], 3, "breaker-skipped hosts were counted as attempts")
+        self.assertEqual(row["outcome"], "done")
+
+    def test_a_ledger_failure_cannot_fail_the_crawl(self):
+        import asyncio
+        from stonescan import db as dbmod
+        from stonescan.ingest import run_all
+
+        def boom(*a, **k):
+            raise sqlite3.OperationalError("ledger is on fire")
+
+        for name in ("start_refresh_run", "heartbeat_refresh_run", "finish_refresh_run"):
+            orig = getattr(dbmod, name)
+            setattr(dbmod, name, boom)
+            self.addCleanup(setattr, dbmod, name, orig)
+        asyncio.run(run_all([], db_path=self.path))          # must NOT raise
+        log = Path(self.path).resolve().parent / "refresh-history.log"
+        self.assertIn("Done", log.read_text(encoding="utf-8"))
+
+    def test_recent_runs_degrades_on_a_db_predating_the_table(self):
+        # /health has no try/except; a snapshot DB without the table must not 500 the page.
+        conn = db.connect(self.path)
+        conn.execute("DROP TABLE IF EXISTS refresh_runs")
+        conn.commit()
+        self.assertEqual(db.recent_refresh_runs(conn), [])
+        conn.close()
+
+
+class CatalogFreshnessTests(unittest.TestCase):
+    """AIL-20 AC-4: 'crawled 2026-07-16 → 2026-07-31' reads as fresh while 114 of 140
+    suppliers sit at the old end of that range. A range describes its ends, not its
+    distribution."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _supplier_with_data(self, host, crawled_at):
+        cur = self.conn.execute("INSERT INTO suppliers (host, item_count) VALUES (?,1)", (host,))
+        self.conn.execute(
+            "INSERT INTO materials (supplier_id, item_name, material_key, material_type,"
+            " crawled_at) VALUES (?,?,?,?,?)",
+            (cur.lastrowid, f"Stone {host}", f"k{host}", "Granite", crawled_at))
+        self.conn.commit()
+
+    @staticmethod
+    def _ago(hours):
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(
+            timespec="seconds")
+
+    def test_counts_only_suppliers_actually_refreshed_recently(self):
+        self._supplier_with_data("fresh1.com", self._ago(2))
+        self._supplier_with_data("fresh2.com", self._ago(20))
+        self._supplier_with_data("old1.com", self._ago(50))       # two days back
+        self._supplier_with_data("old2.com", self._ago(400))      # weeks back
+        s = db.stats(self.conn, use_cache=False)
+        self.assertEqual(s["suppliers_with_data"], 4)
+        self.assertEqual(s["suppliers_current"], 2)
+        self.assertEqual(s["fresh_hours"], db.FRESH_HOURS)
+        # The old range endpoints still exist — the count is what makes them honest.
+        self.assertTrue(s["last_updated"] > s["oldest_updated"])
+
+    def test_a_uniformly_current_catalog_reports_every_supplier_current(self):
+        self._supplier_with_data("a.com", self._ago(1))
+        self._supplier_with_data("b.com", self._ago(3))
+        s = db.stats(self.conn, use_cache=False)
+        self.assertEqual((s["suppliers_current"], s["suppliers_with_data"]), (2, 2))
 
 
 class StartOfRunRejectionTests(_SuppliersFileCase):
