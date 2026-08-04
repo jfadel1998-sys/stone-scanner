@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 
 from . import db
+from .output import say
 
 # CLIP ViT-B/32 preprocessing constants (HF CLIPImageProcessor).
 _SIZE = 224
@@ -71,13 +72,13 @@ def download_model() -> None:
     import httpx
     p = model_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading CLIP model -> {p}")
+    say(f"Downloading CLIP model -> {p}")
     with httpx.stream("GET", MODEL_URL, follow_redirects=True, timeout=120) as r:
         r.raise_for_status()
         with open(p, "wb") as f:
             for chunk in r.iter_bytes(1 << 20):
                 f.write(chunk)
-    print(f"Done ({p.stat().st_size / 1e6:.0f} MB).")
+    say(f"Done ({p.stat().st_size / 1e6:.0f} MB).")
 
 
 def _load():
@@ -448,15 +449,15 @@ def main() -> None:
     if args.download_model and not available():
         download_model()
     if not available():
-        print(f"CLIP model missing at {model_path()} — run --download-model first.")
+        say(f"CLIP model missing at {model_path()} — run --download-model first.")
         return
     conn = db.init_db(args.db)
     if args.index:
         def prog(i, total, done):
-            print(f"  {i}/{total} fetched, {done} embedded ({100 * i // max(total, 1)}%)")
+            say(f"  {i}/{total} fetched, {done} embedded ({100 * i // max(total, 1)}%)")
         n = index_all(conn, concurrency=args.concurrency, limit=args.limit, progress=prog)
-        print(f"Indexed {n} new image(s).")
-    print("index:", index_stats(conn))
+        say(f"Indexed {n} new image(s).")
+    say("index:", index_stats(conn))
     conn.close()
 
 

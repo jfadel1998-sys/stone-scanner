@@ -14,9 +14,10 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from . import db, denylist, discover
+from . import db, denylist, discover, output
 from .crawler import EMPTY_CATALOG_ERROR, crawl_hosts, utc_now_iso
 from .normalize import normalize_item
+from .output import say
 
 
 def _refresh_log(db_path: str, msg: str) -> None:
@@ -196,7 +197,7 @@ class _Breaker:
 def _announce_trip(breaker, provider: str, before: bool) -> None:
     """Print the moment a provider trips, once."""
     if breaker is not None and not before and breaker.tripped(provider):
-        print(f"  [breaker] {provider}: {breaker.limit} consecutive errors — abandoning the "
+        say(f"  [breaker] {provider}: {breaker.limit} consecutive errors — abandoning the "
               f"rest of this provider for this run.")
 
 
@@ -240,7 +241,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
             data = await crawl(entry, with_slabs=with_slabs, delay=delay,
                                limit=limit_items)
         except Exception as e:  # noqa: BLE001 - a broken provider must not kill the run
-            print(f"  [err]  {label:<34} {name}: {e}")
+            say(f"  [err]  {label:<34} {name}: {e}")
             db.record_crawl_streak(conn, entry["host"], 0, "")
             attempt_finished(name, False, str(e))
             if progress:
@@ -249,7 +250,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
         if not data.ok:
             db.upsert_supplier(conn, host=data.host, last_crawled=utc_now_iso(),
                                last_error=data.error or "no items returned")
-            print(f"  [skip] {label:<34} {data.error}")
+            say(f"  [skip] {label:<34} {data.error}")
             db.record_crawl_streak(conn, data.host, 0, data.error)
             # No error text means the fetch worked and the catalog is simply empty — a
             # success as far as the breaker is concerned, not evidence the platform is down.
@@ -261,7 +262,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
             n, ns = _store(conn, data, with_slabs=with_slabs)
         except Exception as e:  # noqa: BLE001
             db.upsert_supplier(conn, host=data.host, last_error=f"store failed: {e}")
-            print(f"  [err]  {label:<34} store failed: {e}")
+            say(f"  [err]  {label:<34} store failed: {e}")
             db.record_crawl_streak(conn, data.host, 0, "")
             attempt_finished(name, False, f"store failed: {e}")
             if progress:
@@ -271,7 +272,7 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
         slabs += ns
         ok += 1
         note = f" (+{ns} slabs)" if with_slabs else ""
-        print(f"  [ok]   {label:<34} {n:>5} materials{note}  [{name}]")
+        say(f"  [ok]   {label:<34} {n:>5} materials{note}  [{name}]")
         db.record_crawl_streak(conn, data.host, n, "")
         attempt_finished(name, True, "")
         if progress:
@@ -314,18 +315,18 @@ async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
     other = [e for e in entries
              if providers.provider_of(e) != providers.STONEPROFITS]
     if sps:
-        print(f"Crawling {len(sps)} Stone Profits catalog(s)...\n")
+        say(f"Crawling {len(sps)} Stone Profits catalog(s)...\n")
         await run(sps, concurrency=concurrency, delay=delay, headless=headless,
                   db_path=db_path, with_slabs=with_slabs, slab_item_cap=slab_item_cap,
                   progress=progress, breaker=breaker, run_id=run_id)
     if other:
         kinds = ", ".join(sorted({providers.provider_of(e) for e in other}))
-        print(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
+        say(f"\nCrawling {len(other)} other catalog(s) [{kinds}]...\n")
         ok, items, slabs = await run_providers(
             other, delay=max(delay * 0.2, 0.2), db_path=db_path,
             with_slabs=with_slabs, limit_items=provider_limit, progress=progress,
             breaker=breaker, run_id=run_id)
-        print(f"\n  {ok} supplier(s), {items} materials"
+        say(f"\n  {ok} supplier(s), {items} materials"
               + (f", {slabs} slabs" if with_slabs else ""))
     return dict(breaker.skipped)
 
@@ -345,6 +346,12 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
     without re-crawling the whole list. Persistent failures just stay flagged.
     """
     db_path = db_path or str(db.DEFAULT_DB)
+    # Console output must never be able to end this run — a dead stdout once killed a crawl
+    # that had already committed every row, three lines before the rejection pass. Reset per
+    # run, not once per process: the web Refresh button can start a second crawl in the same
+    # process, and a stuck flag would leave it silently mute about its own console dying.
+    output.reset(lambda detail: _refresh_log(
+        db_path, f"console output lost ({detail}); the crawl continues"))
     _refresh_log(db_path, f"refresh started — {len(entries)} supplier "
                           f"entr{'y' if len(entries) == 1 else 'ies'}")
 
@@ -369,7 +376,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         # one restored from an old suppliers.json, does not get crawled.
         entries, denied = denylist.filter_entries(entries)
         for e in denied:
-            print(f"  [deny] {e.get('name') or e['host']:<34} "
+            say(f"  [deny] {e.get('name') or e['host']:<34} "
                   f"{denylist.reason_for(e['host']) or 'on the denylist'}")
 
         # Stamp what the DB already knows is dead, BEFORE building the crawl list. The tail
@@ -380,7 +387,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         if honor_rejections:
             pre_rejected = discover.reject_by_streak(db_path)
             if pre_rejected:
-                print(f"  auto-rejected {len(pre_rejected)} host(s) already at "
+                say(f"  auto-rejected {len(pre_rejected)} host(s) already at "
                       f"{discover.AUTO_REJECT_STREAK}+ empty crawls, before crawling: "
                       f"{', '.join(pre_rejected)}")
                 _dropped = {h.lower() for h in pre_rejected}
@@ -394,7 +401,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             from datetime import date as _date
             _today = _date.today()
             for e, rej in rej_skipped:
-                print(f"  [rejected] {e.get('name') or e['host']:<32} {rej.reason[:46]} "
+                say(f"  [rejected] {e.get('name') or e['host']:<32} {rej.reason[:46]} "
                       f"(lapses in {rej.days_until_lapse(_today)}d)")
 
         from . import providers
@@ -417,7 +424,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             retry = [e for e in entries if e["host"] in failed
                      and providers.provider_of(e) not in abandoned]
             if retry:
-                print(f"\nRetrying {len(retry)} catalog(s) that errored this run...\n")
+                say(f"\nRetrying {len(retry)} catalog(s) that errored this run...\n")
                 retry_abandoned = await _crawl_entries(
                     retry, concurrency=concurrency, delay=delay,
                     headless=headless, db_path=db_path,
@@ -436,7 +443,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
                 # would report them as "still failing" on the strength of an error from the
                 # first pass, having never touched them again.
                 still = _errored_hosts(db_path, asked)
-                print(f"\n  retry recovered {len(asked) - len(still)} of {len(asked)}; "
+                say(f"\n  retry recovered {len(asked) - len(still)} of {len(asked)}; "
                       f"{len(still)} still failing.")
 
         # Report the cap rather than applying it silently, and record it where a failed run
@@ -447,7 +454,7 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         abandoned = {p: hs for p, hs in abandoned.items() if hs}
         if abandoned:
             for prov, hs in sorted(abandoned.items()):
-                print(f"\n  circuit breaker: {prov} abandoned after {PROVIDER_ERROR_LIMIT} "
+                say(f"\n  circuit breaker: {prov} abandoned after {PROVIDER_ERROR_LIMIT} "
                       f"consecutive errors — {len(hs)} host(s) not attempted this run.")
             _refresh_log(db_path, "circuit breaker: " + "; ".join(
                 f"{p} skipped {len(hs)}" for p, hs in sorted(abandoned.items())))
@@ -489,30 +496,30 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             # rather than failed, losing the very error text the ledger exists to keep.
             conn.close()
         if folded:
-            print(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
+            say(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
         if scoped:
-            print(f"  storefront filters: re-scoped {scoped} supplier(s) to their confirmed type.")
+            say(f"  storefront filters: re-scoped {scoped} supplier(s) to their confirmed type.")
         if collapsed:
-            print(f"  slab counts: collapsed {collapsed} multi-row item(s) to one figure each."
+            say(f"  slab counts: collapsed {collapsed} multi-row item(s) to one figure each."
                   f" Re-snapshotted history for {resnapped} supplier(s).")
         if mirrors:
-            print(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
+            say(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
                   f"from supplier counts ({', '.join(m['mirror_host'] for m in mirrors)}).")
             if n_proposals:
-                print(f"  storefront filters: {n_proposals} filter proposal(s) pending on /health.")
+                say(f"  storefront filters: {n_proposals} filter proposal(s) pending on /health.")
         # Reconcile triage rejections: auto-reject hosts that hit the empty-crawl streak,
         # and restore any that returned items again. Writes suppliers.json.
         rec = discover.reconcile_rejections(db_path, crawled_hosts)
         if rec["rejected"]:
-            print(f"  auto-rejected {len(rec['rejected'])} dead candidate(s) after "
+            say(f"  auto-rejected {len(rec['rejected'])} dead candidate(s) after "
                   f"{discover.AUTO_REJECT_STREAK} empty crawls: {', '.join(rec['rejected'])}")
         if rec["restored"]:
-            print(f"  restored {len(rec['restored'])} host(s) that returned items: "
+            say(f"  restored {len(rec['restored'])} host(s) that returned items: "
                   f"{', '.join(rec['restored'])}")
         if abandoned:
-            print(f"  circuit breaker: {sum(len(hs) for hs in abandoned.values())} host(s) "
+            say(f"  circuit breaker: {sum(len(hs) for hs in abandoned.values())} host(s) "
                   f"across {len(abandoned)} provider(s) not attempted this run.")
-        print(f"  product rollup: {n_rollup} products indexed for fast browse.")
+        say(f"  product rollup: {n_rollup} products indexed for fast browse.")
         _refresh_log(db_path, f"Done — {s['materials']} materials, {s['suppliers']} suppliers.")
         _ledger_finish(db_path, run_id, outcome="done", materials=s["materials"])
     except Exception as e:  # noqa: BLE001 - record durably, then let the caller handle it
@@ -568,7 +575,7 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                             r["supplier_id"] = supplier_id
                             rows.append(r)
                         except Exception as e:  # noqa: BLE001 - skip a single malformed item
-                            print(f"         (skipped malformed item on {result.host}: {e})")
+                            say(f"         (skipped malformed item on {result.host}: {e})")
                     n = db.replace_materials(conn, supplier_id, rows)
                     total_items += n
                     ok_suppliers += 1
@@ -582,13 +589,13 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                         slab_note = f" (+{ns} slabs)"
                     # Daily snapshot for trend / restock / new-arrival detection.
                     db.snapshot_history(conn, supplier_id, utc_now_iso()[:10])
-                    print(f"  [ok]   {label:<34} {n:>5} materials{slab_note}")
+                    say(f"  [ok]   {label:<34} {n:>5} materials{slab_note}")
                 except Exception as e:  # noqa: BLE001 - one supplier must not kill the crawl
                     db.upsert_supplier(conn, host=result.host, last_error=f"store failed: {e}")
-                    print(f"  [err]  {result.host:<34} store failed: {e}")
+                    say(f"  [err]  {result.host:<34} store failed: {e}")
                     outcome_ok, outcome_err = False, f"store failed: {e}"
             else:
-                print(f"  [skip] {result.host:<34} {result.error}")
+                say(f"  [skip] {result.host:<34} {result.error}")
             # Track the empty-crawl streak for auto-rejection (n is 0 on a skip/store-fail).
             db.record_crawl_streak(conn, result.host, n, result.error)
             # One supplier attempt finished. Every yielded result reaches here — ok, skip and
@@ -605,21 +612,21 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                 if breaker.tripped(providers.STONEPROFITS):
                     remaining = [h for h in hosts if h not in seen]
                     breaker.skip(providers.STONEPROFITS, remaining)
-                    print(f"         {len(remaining)} Stone Profits catalog(s) not attempted.")
+                    say(f"         {len(remaining)} Stone Profits catalog(s) not attempted.")
                     break
     finally:
         await stream.aclose()
 
-    print("\n" + "=" * 60)
+    say("\n" + "=" * 60)
     s = db.stats(conn)
-    print(f"Suppliers with data : {ok_suppliers}")
-    print(f"Total materials     : {total_items}")
+    say(f"Suppliers with data : {ok_suppliers}")
+    say(f"Total materials     : {total_items}")
     if with_slabs:
-        print(f"Slabs pre-cached    : {total_slabs}")
-    print(f"Unique materials    : {s['unique_materials']} (grouped across suppliers)")
+        say(f"Slabs pre-cached    : {total_slabs}")
+    say(f"Unique materials    : {s['unique_materials']} (grouped across suppliers)")
     if s["by_type"]:
         top = ", ".join(f"{t['material_type']} {t['n']}" for t in s["by_type"][:8])
-        print(f"By type             : {top}")
+        say(f"By type             : {top}")
     conn.close()
 
 
@@ -650,10 +657,10 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.discover:
-        print("Discovering public catalogs...")
+        say("Discovering public catalogs...")
         found = discover.discover_all()
         added = discover.merge_discovered(found)
-        print(f"  found {len(found)} candidates, added {added} new.\n")
+        say(f"  found {len(found)} candidates, added {added} new.\n")
 
     entries = discover.load_suppliers()
     if args.only:
@@ -675,9 +682,9 @@ def main() -> None:
         conn.close()
         before = len(entries)
         entries = [e for e in entries if e["host"] in failed]
-        print(f"Retry mode: {len(entries)} of {before} supplier(s) had a last-crawl error.\n")
+        say(f"Retry mode: {len(entries)} of {before} supplier(s) had a last-crawl error.\n")
         if not entries:
-            print("Nothing to retry — no errored suppliers.")
+            say("Nothing to retry — no errored suppliers.")
             return
 
     if args.stale_hours:
@@ -690,7 +697,7 @@ def main() -> None:
         conn.close()
         before = len(entries)
         entries = [e for e in entries if e["host"] not in fresh]
-        print(f"Incremental: skipping {before - len(entries)} supplier(s) refreshed in the last {args.stale_hours:g}h.\n")
+        say(f"Incremental: skipping {before - len(entries)} supplier(s) refreshed in the last {args.stale_hours:g}h.\n")
 
     asyncio.run(
         run_all(

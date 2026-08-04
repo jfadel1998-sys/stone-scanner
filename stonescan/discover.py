@@ -49,6 +49,8 @@ from urllib.parse import quote
 
 import httpx
 
+from .output import say
+
 SUPPLIERS_FILE = Path(os.environ.get("STONESCAN_SUPPLIERS") or (Path(__file__).resolve().parent.parent / "suppliers.json"))
 
 # The platform's own non-production tenants. Every platform has them and they are named the
@@ -175,7 +177,7 @@ def _duckduckgo(client: httpx.Client, base: str) -> str:
             out.append(client.post("https://html.duckduckgo.com/html/",
                                     data={"q": q}, headers=_UA, timeout=25).text)
         except Exception as e:  # noqa: BLE001
-            print(f"    ddg '{q[:28]}...' failed: {e}")
+            say(f"    ddg '{q[:28]}...' failed: {e}")
     return "\n".join(out)
 
 
@@ -200,10 +202,10 @@ def discover_platform(platform: dict, verbose: bool = True) -> set[str]:
                 new = hosts - found
                 found |= hosts
                 if verbose:
-                    print(f"  [{base}] {name:<18} {len(hosts):>4} hosts ({len(new)} new)")
+                    say(f"  [{base}] {name:<18} {len(hosts):>4} hosts ({len(new)} new)")
             except Exception as e:  # noqa: BLE001
                 if verbose:
-                    print(f"  [{base}] {name:<18} failed: {e}")
+                    say(f"  [{base}] {name:<18} failed: {e}")
     return found
 
 
@@ -461,7 +463,7 @@ def discover_slabcloud(verbose: bool = True) -> list[dict]:
             idx = client.get(SLABCLOUD_CLIENTS).text
         except Exception as e:  # noqa: BLE001
             if verbose:
-                print(f"  slabcloud clients fetch failed: {e}")
+                say(f"  slabcloud clients fetch failed: {e}")
             return out
         seen_url: set[str] = set()
         for url, _txt in _SC_LINK.findall(idx):
@@ -483,7 +485,7 @@ def discover_slabcloud(verbose: bool = True) -> list[dict]:
             host = slug.removeprefix("_h_") + ".slabcloud.com"
             out.append({"host": host, "slug": slug, "name": _apex_name(url), "provider": "slabcloud"})
             if verbose:
-                print(f"  + {_apex_name(url):26} slug={slug:20} rows={rows}")
+                say(f"  + {_apex_name(url):26} slug={slug:20} rows={rows}")
     return out
 
 
@@ -554,7 +556,7 @@ def probe_sps_vanity(apexes: list[str], verbose: bool = True) -> set[str]:
                     if any(mk in r.text for mk in _SPS_MARKERS):
                         hits.add(host)
                         if verbose:
-                            print(f"  + {host}  (Stone Profits)")
+                            say(f"  + {host}  (Stone Profits)")
                         break
                 except Exception:  # noqa: BLE001
                     continue
@@ -593,25 +595,25 @@ def discover_sps_embeds(verbose: bool = True) -> set[str]:
                 if any(mk in r.text for mk in _SPS_MARKERS):
                     hits.add(host)
                     if verbose:
-                        print(f"  + {host}  (Stone Profits)")
+                        say(f"  + {host}  (Stone Profits)")
             except Exception:  # noqa: BLE001
                 continue
     return hits
 
 
 if __name__ == "__main__":
-    print("Discovering public catalogs across "
+    say("Discovering public catalogs across "
           + ", ".join(p["base"] for p in PLATFORMS) + " ...")
     found = discover_all()
-    print(f"\nTotal distinct hosts discovered: {len(found)}")
+    say(f"\nTotal distinct hosts discovered: {len(found)}")
     added = merge_discovered(found)
-    print("\nResolving SlabCloud tenants from the clients directory...")
+    say("\nResolving SlabCloud tenants from the clients directory...")
     sc = discover_slabcloud()
     added += merge_slabcloud(sc)
-    print("\nFinding white-label Stone Profits catalogs via urlscan (any domain)...")
+    say("\nFinding white-label Stone Profits catalogs via urlscan (any domain)...")
     vanity = discover_sps_embeds()
-    print("Fingerprinting distributor vanity domains for Stone Profits catalogs...")
+    say("Fingerprinting distributor vanity domains for Stone Profits catalogs...")
     vanity |= probe_sps_vanity(SPS_VANITY_CANDIDATES)
     added += merge_discovered({h: None for h in vanity})
-    print(f"\nAdded {added} new supplier(s) to suppliers.json "
+    say(f"\nAdded {added} new supplier(s) to suppliers.json "
           f"(now {len(load_suppliers())} total).")
