@@ -819,6 +819,64 @@ class DiscoverTests(unittest.TestCase):
             importlib.reload(discover)
 
 
+class NonProductionTenantTests(unittest.TestCase):
+    """AIL-26: a platform's own test/staging tenants are not suppliers. Nine `test*` hosts
+    reached suppliers.json from the SlabWare sweep; seven returned nothing and cost a request
+    every night until they auto-rejected."""
+
+    def test_every_token_matches_its_bare_and_dashed_form(self):
+        for token in discover.NON_PRODUCTION:
+            self.assertTrue(discover.is_non_production(f"{token}.slabware.com"), token)
+            self.assertTrue(discover.is_non_production(f"{token}-acme.slabware.com"), token)
+
+    def test_leaves_alone_the_real_hosts_a_prefix_match_would_swallow(self):
+        # The point of the change, not incidental coverage: each of these is a live host that
+        # a plain startswith() would delete.
+        for host in ("devinecountertops.stoneprofitsweb.com",  # real supplier, 63 materials
+                     "qatarmarble.slabware.com",               # starts with "qa"
+                     "teste.slabware.com"):                    # "test" + "e" — a distinct label
+            self.assertFalse(discover.is_non_production(host), host)
+
+    def test_every_platform_gets_the_shared_set_on_top_of_its_own_tokens(self):
+        for p in discover.PLATFORMS:
+            self.assertLessEqual(set(discover.NON_PRODUCTION), p["skip"], p["base"])
+        # Composes with the platform's own tokens rather than replacing them, and both
+        # platforms get it — not just the one where the problem was observed.
+        self.assertEqual(
+            discover._hosts_in("demolite.slabware.com test-x.slabware.com art.slabware.com",
+                               "slabware.com", discover.PLATFORMS[1]["skip"]),
+            {"art.slabware.com"})
+        self.assertEqual(
+            discover._hosts_in("staging.stoneprofitsweb.com devinecountertops.stoneprofitsweb.com",
+                               "stoneprofitsweb.com", discover.PLATFORMS[0]["skip"]),
+            {"devinecountertops.stoneprofitsweb.com"})
+
+    def test_merge_blocks_a_new_one_but_never_touches_a_listed_tenant(self):
+        tmp = tempfile.mkdtemp()
+        supfile = os.path.join(tmp, "suppliers.json")
+        # test-uniquartz is already listed and productive (241 materials). The skip set is
+        # about what we ADD; it must not evict what is already earning its keep.
+        Path(supfile).write_text(json.dumps({"suppliers": [
+            {"host": "test-uniquartz.slabware.com", "provider": "slabware"}]}))
+        os.environ["STONESCAN_SUPPLIERS"] = supfile
+        import importlib
+        importlib.reload(discover)
+        try:
+            added = discover.merge_discovered({
+                # The vanity/embed probes fingerprint arbitrary domains and never consult a
+                # platform skip set, so this one can only be caught in the merge.
+                "staging.nsrstone.com": None,
+                "test-api-exporter.slabware.com": "slabware",
+                "art.slabware.com": "slabware",          # a real tenant still gets through
+            })
+            self.assertEqual(added, 1)
+            self.assertEqual({e["host"] for e in discover.load_suppliers()},
+                             {"test-uniquartz.slabware.com", "art.slabware.com"})
+        finally:
+            os.environ.pop("STONESCAN_SUPPLIERS", None)
+            importlib.reload(discover)
+
+
 class DiscoverExpansionTests(unittest.TestCase):
     def test_apex_name(self):
         self.assertEqual(discover._apex_name("https://www.marioandson.com/inventory/"), "Marioandson")

@@ -51,11 +51,23 @@ import httpx
 
 SUPPLIERS_FILE = Path(os.environ.get("STONESCAN_SUPPLIERS") or (Path(__file__).resolve().parent.parent / "suppliers.json"))
 
+# The platform's own non-production tenants. Every platform has them and they are named the
+# same way everywhere, so this is shared rather than repeated per-platform: nine `test*` hosts
+# reached suppliers.json from the SlabWare sweep, seven of which returned nothing and cost a
+# request every night until they auto-rejected.
+#
+# Matched with _is_infra's exact-or-dashed rule, never a plain prefix — that distinction is
+# the whole point. `devinecountertops.stoneprofitsweb.com` is a real supplier (63 materials)
+# that starts with "dev", `qatarmarble.slabware.com` starts with "qa", and `teste.slabware.com`
+# starts with "test". A prefix match would silently swallow all three.
+NON_PRODUCTION = frozenset({"test", "staging", "stage", "uat", "sandbox", "qa", "dev"})
+
 # provider=None means Stone Profits (the default; written without a "provider" key).
-# `skip` are subdomain labels that are platform infrastructure, not tenants.
+# `skip` are subdomain labels that are platform infrastructure or non-production tenants,
+# not real customers. Every platform gets NON_PRODUCTION on top of its own tokens.
 PLATFORMS: list[dict] = [
     {"base": "stoneprofitsweb.com", "provider": None,
-     "skip": {"www", "pay", "apps", "nwww"}},
+     "skip": {"www", "pay", "apps", "nwww"} | NON_PRODUCTION},
     {"base": "slabware.com", "provider": "slabware",
      # demo1/2/3, demolite, blog2 etc. are numbered siblings, which _is_infra's dashed-
      # variant rule can't reach from "demo"/"blog" — they need their own tokens. All were
@@ -63,7 +75,7 @@ PLATFORMS: list[dict] = [
      # endpoint, so they cost a nightly request each and can never return a catalog.
      "skip": {"www", "app", "api", "admin", "portal", "static", "cdn", "mail", "blog",
               "blog2", "demo", "demo1", "demo2", "demo3", "demolite", "webservice",
-              "aatestex", "campaing"}},
+              "aatestex", "campaing"} | NON_PRODUCTION},
 ]
 
 _UA = {"User-Agent": "Mozilla/5.0 (compatible; StoneScanner/0.1; +public-catalog indexer)"}
@@ -101,6 +113,24 @@ def _is_infra(label: str, skip: set[str]) -> bool:
     """A subdomain label is platform infrastructure if it exactly matches a skip
     token or is one of its dashed variants (so 'api' also drops 'api-exporter')."""
     return any(label == s or label.startswith(s + "-") for s in skip)
+
+
+def is_non_production(host: str) -> bool:
+    """True if a host is one of a platform's own test/staging tenants.
+
+    The sweep filters these out via each platform's `skip` set, but the vanity and embed
+    probes never look at a `skip` set at all — they fingerprint arbitrary distributor
+    domains. This is the check `merge_discovered` applies, and both of those paths funnel
+    through it.
+
+    `merge_slabcloud` is a third write path and deliberately does NOT apply it.
+    `discover_slabcloud` only emits a tenant whose public API already returned rows, so
+    anything reaching that merge has proven it serves a live catalog — the same shape as
+    `test-uniquartz.slabware.com`, a productive supplier (241 materials) that this rule
+    matches on name alone. The rule exists to stop hosts that can never return anything,
+    not to judge what they are called, so it is applied where names are all we have.
+    """
+    return _is_infra((host or "").split(".", 1)[0].lower(), NON_PRODUCTION)
 
 
 def _hosts_in(text: str, base: str, skip: set[str]) -> set[str]:
@@ -324,6 +354,12 @@ def merge_discovered(hosts: dict[str, str | None] | set[str]) -> int:
         # removed on request, and re-adding it here is exactly how that used to
         # silently undo itself.
         if is_denied(host, denied):
+            continue
+        # Catch the platform's own test/staging tenants here as well as in the sweep's skip
+        # set: the vanity and embed probes reach this function without ever consulting one.
+        # Only ADDING is suppressed — anything already listed was skipped above, so the two
+        # productive `test-` tenants keep crawling.
+        if is_non_production(host):
             continue
         entry: dict = {"host": host, "name": ""}
         if provider:
