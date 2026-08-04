@@ -11,7 +11,7 @@
 {% endblock %}
 
 {% block content %}
-{% set adv_active = thickness or location or min_length or min_width or near or min_sqft or new_only or in_stock or (sort and sort != 'relevance') %}
+{% set adv_active = thickness or finish or location or min_length or min_width or near or min_sqft or new_only or in_stock or (sort and sort != 'relevance') %}
 <form class="filters" method="get" action="/">
   <div class="primary">
     <input type="search" name="q" value="{{ q }}" placeholder="Try: blue marble slabs · black granite · 3cm polished calacatta…" autofocus>
@@ -38,6 +38,12 @@
       <select name="thickness">
         <option value="">Any thickness</option>
         {% for t in thicknesses %}<option value="{{ t }}" {{ 'selected' if t == thickness }}>{{ t }}</option>{% endfor %}
+      </select>
+      {# Finish is stated in 35% of item names but was only ever a structured column on 3.7%
+         of rows, so it is derived on reclassify and filterable here. #}
+      <select name="finish">
+        <option value="">Any finish</option>
+        {% for f in finishes %}<option value="{{ f }}" {{ 'selected' if f == finish }}>{{ f }}</option>{% endfor %}
       </select>
       {# Resolved cities are grouped apart from raw yard names: a supplier's internal
          label ("KLZ", "HG-NJ") is still selectable, it just isn't a place. #}

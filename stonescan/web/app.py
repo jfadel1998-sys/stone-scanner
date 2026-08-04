@@ -371,14 +371,14 @@ def _fts_match(terms) -> str:
 
 
 def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset,
-            location="", min_length=0.0, min_width=0.0, new_only=False,
+            location="", min_length=0.0, min_width=0.0, new_only=False, finish="",
             sort="relevance", in_stock=False, fuzzy=True,
             near=None, radius_mi=0.0, min_sqft=0.0):
     """Free-text-aware search. The query box understands phrases like
     'blue marble slabs'; explicit dropdown filters take precedence."""
     _ck = (_db_path(conn), q, material_type, color, thickness, supplier, location,
            min_length, min_width, new_only, sort, in_stock, fuzzy, near, radius_mi,
-           min_sqft, limit, offset)
+           min_sqft, finish, limit, offset)
     _h = _search_cache.get(_ck)
     if _h and time.time() - _h[0] < _RESULT_TTL:
         return _h[1]
@@ -392,9 +392,11 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     # min_length/width, new_only) still runs the live query below, and an unbuilt or
     # empty rollup (e.g. a fresh seed DB) also falls through. Results are identical to
     # the live path for the cases handled here — see ProductRollupTests.
+    # `finish` is a ROW-level filter and product_rollup holds no finish column, so the
+    # rollup path would silently return unfiltered results for it (AC-3).
     fast_ok = (not (q or "").strip() and not color and not thickness and not supplier
                and not location and not near and not min_length and not min_width
-               and not new_only)
+               and not new_only and not finish)
     if fast_ok and conn.execute("SELECT 1 FROM product_rollup LIMIT 1").fetchone():
         rw, rp = ["1=1"], []
         if material_type:
@@ -434,7 +436,7 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     fts_ok = (parsed["terms"] and not color and not parsed["color"]
               and not thickness and not parsed["thickness"] and not parsed["form"]
               and not supplier and not location and not near
-              and not min_length and not min_width and not new_only)
+              and not min_length and not min_width and not new_only and not finish)
     if fts_ok and db._has_fts(conn) and conn.execute("SELECT 1 FROM product_fts LIMIT 1").fetchone():
         match = _fts_match(parsed["terms"])
         if match:
@@ -496,6 +498,9 @@ def _search(conn, *, q, material_type, color, thickness, supplier, limit, offset
     thk = thickness or parsed["thickness"]
     if thk:
         where.append("m.thickness = ?"); params.append(thk)
+
+    if finish:
+        where.append("m.finish = ?"); params.append(finish)
 
     if supplier:
         where.append("(s.company = ? OR s.host = ?)"); params.extend([supplier, supplier])
@@ -763,6 +768,7 @@ def index(
     material_type: str = "",
     color: str = "",
     thickness: str = "",
+    finish: str = "",
     supplier: str = "",
     location: str = "",
     min_length: str = "",
@@ -792,7 +798,7 @@ def index(
     origin, near_label = _resolve_near(near)
     total, rows, parsed = _search(
         conn, q=q, material_type=material_type, color=color,
-        thickness=thickness, supplier=supplier, location=location,
+        thickness=thickness, finish=finish, supplier=supplier, location=location,
         min_length=ml, min_width=mw, new_only=bool(new_only),
         sort=sort, in_stock=bool(in_stock),
         near=origin, radius_mi=radius_mi if origin else 0.0,
@@ -825,6 +831,7 @@ def index(
         "material_type": material_type,
         "color": color,
         "thickness": thickness,
+        "finish": finish,
         "supplier": supplier,
         "location": location,
         "min_length": min_length or "",
@@ -851,6 +858,7 @@ def index(
         "types": _distinct(conn, "material_type"),
         "colors": _color_options(conn),
         "thicknesses": _distinct(conn, "thickness"),
+        "finishes": _distinct(conn, "finish"),
         "locations": db.location_options(conn),
         "suppliers": [
             dict(r) for r in conn.execute(
@@ -1232,6 +1240,7 @@ def api_refresh_status():
 @app.get("/api/search")
 def api_search(
     q: str = "", material_type: str = "", color: str = "", thickness: str = "",
+    finish: str = "",
     supplier: str = "", location: str = "", min_length: str = "", min_width: str = "",
     new_only: int = 0, in_stock: int = 0, sort: str = "relevance",
     near: str = "", radius: str = "", min_sqft: str = "",
@@ -1241,6 +1250,7 @@ def api_search(
     origin, near_label = _resolve_near(near)
     total, rows, parsed = _search(
         conn, q=q, material_type=material_type, color=color, thickness=thickness,
+        finish=finish,
         supplier=supplier, location=location, min_length=_to_float(min_length),
         min_width=_to_float(min_width), new_only=bool(new_only),
         in_stock=bool(in_stock), sort=sort if sort in SORTS else "relevance",
@@ -1269,6 +1279,7 @@ def _csv_response(filename: str, header: list[str], rows: list[list]) -> Respons
 @app.get("/export.csv")
 def export_search_csv(
     q: str = "", material_type: str = "", color: str = "", thickness: str = "",
+    finish: str = "",
     supplier: str = "", location: str = "", min_length: str = "", min_width: str = "",
     new_only: int = 0, in_stock: int = 0, sort: str = "relevance",
     near: str = "", radius: str = "", min_sqft: str = "",
@@ -1278,6 +1289,7 @@ def export_search_csv(
     origin, _ = _resolve_near(near)
     _t, rows, _p = _search(
         conn, q=q, material_type=material_type, color=color, thickness=thickness,
+        finish=finish,
         supplier=supplier, location=location, min_length=_to_float(min_length),
         min_width=_to_float(min_width), new_only=bool(new_only),
         in_stock=bool(in_stock), sort=sort if sort in SORTS else "relevance",

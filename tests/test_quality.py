@@ -1812,6 +1812,145 @@ class _DeadStdout:
         pass
 
 
+class FinishDerivationTests(unittest.TestCase):
+    """AIL-22: finish is empty on 96.3% of rows while 35% of item names state one. Derived on
+    reclassify so it reaches the stored catalog without a re-crawl."""
+
+    def test_derives_from_the_name_when_the_column_is_empty(self):
+        self.assertEqual(nz.derive_finish("Absolute Black Polished 3CM"), "Polished")
+        self.assertEqual(nz.derive_finish("Taj Mahal Leathered"), "Leathered")
+        self.assertEqual(nz.derive_finish("Bianco Carrara"), "")   # NG-5: never invents
+
+    def test_the_structured_value_always_wins(self):
+        # The supplier's own field beats a word in the marketing name.
+        self.assertEqual(nz.derive_finish("Absolute Black Polished", "Honed"), "Honed")
+
+    def test_values_are_canonicalised(self):
+        # Live catalog holds Matt 97 and Leather 64 as distinct strings from Matte/Leathered.
+        self.assertEqual(nz.derive_finish("", "Matt"), "Matte")
+        self.assertEqual(nz.derive_finish("", "Leather"), "Leathered")
+        self.assertEqual(nz.derive_finish("Something Leather"), "Leathered")
+
+    def test_two_finishes_collapse_to_one_value_instead_of_their_own(self):
+        # "Honed / Matte" is 727 live rows and "Polished and Honed" 15. Left alone each
+        # becomes its own facet entry; picking one of the two would invent a fact.
+        self.assertEqual(nz.derive_finish("", "Honed / Matte"), nz.MULTIPLE_FINISH)
+        self.assertEqual(nz.derive_finish("", "DUAL FINISH (POLISHED/HONED)"),
+                         nz.MULTIPLE_FINISH)
+        self.assertEqual(nz.derive_finish("Calacatta Polished Honed"), nz.MULTIPLE_FINISH)
+
+    def test_trade_names_are_not_finishes(self):
+        # _FINISH_RE strips these when building the key, but antique (485 rows) and velvet
+        # (286) are trade names, and a bare "DUAL" names no finish at all.
+        for name in ("Antique Beige", "Velvet Grey", "NEW CALEDONIA - DUAL",
+                     "VISCOUNT WHITE DUAL"):
+            self.assertEqual(nz.derive_finish(name), "", name)
+
+    def test_an_unrecognised_structured_value_is_kept_not_discarded(self):
+        # "Textured" 78, "Nature" 43, "Soft" 10 — the supplier's own answer, just not ours.
+        self.assertEqual(nz.derive_finish("", "Textured"), "Textured")
+        # ...but a value that says nothing becomes empty rather than a facet entry.
+        self.assertEqual(nz.derive_finish("", "Unspecified"), "")
+
+    def test_the_crawl_time_row_builders_derive_it_too(self):
+        # The feature's lifespan, not a nicety: replace_materials deletes and re-inserts a
+        # supplier's rows on every crawl, so a value only reclassify knew how to produce
+        # would be gone by the next morning and the facet back to 3.7% coverage.
+        from stonescan.providers.base import material_row
+        row = material_row(name="Absolute Black Polished 3CM", crawled_at="2026-08-04",
+                           item_id="1", source_url="", finish="")
+        self.assertEqual(row["finish"], "Polished")
+        row = material_row(name="Statuario", crawled_at="2026-08-04", item_id="2",
+                           source_url="", finish="Matt")
+        self.assertEqual(row["finish"], "Matte", "the crawl path must canonicalise too")
+
+    def test_derivation_is_idempotent(self):
+        # reclassify reads the column it also writes. A value that says nothing must fall
+        # through to the name on BOTH passes, or pass 1 blanks it and pass 2 derives
+        # something different from the same input.
+        first = nz.derive_finish("Bianco Polished", "Unspecified")
+        self.assertEqual(first, "Polished")
+        self.assertEqual(nz.derive_finish("Bianco Polished", first), first)
+        for name, col in (("Taj Mahal Leathered", ""), ("X", "Matt"), ("Y", "Honed / Matte")):
+            once = nz.derive_finish(name, col)
+            self.assertEqual(nz.derive_finish(name, once), once, f"{name!r}/{col!r}")
+
+    def test_a_two_finish_value_using_the_bare_stem_is_still_Multiple(self):
+        # "Duo Finish (Polish and Leathered)" is live. Without a bare 'polish' stem only
+        # Leathered matched, so the row was filed as leathered-only — the single-finish
+        # claim the Multiple rule exists to prevent, and inconsistent with the sibling
+        # spelling "Polished & Leathered" which already resolved correctly.
+        self.assertEqual(nz.derive_finish("", "Duo Finish (Polish and Leathered)"),
+                         nz.MULTIPLE_FINISH)
+        self.assertEqual(nz.derive_finish("", "Polished & Leathered"), nz.MULTIPLE_FINISH)
+
+    def test_deriving_a_finish_never_changes_material_key(self):
+        # AC-6 / NG-1: _FINISH_RE already strips these words from the key and must keep
+        # doing so. If derivation ever fed the key, every merge would silently move.
+        for name in ("Absolute Black Polished 3CM", "Taj Mahal Leathered",
+                     "Calacatta Honed / Matte", "Statuario Matt", "Bianco Carrara"):
+            before = nz.material_key(name, "Granite")
+            nz.derive_finish(name)
+            self.assertEqual(nz.material_key(name, "Granite"), before, name)
+        # And two listings differing only by finish still share one key.
+        self.assertEqual(nz.material_key("Absolute Black Polished", "Granite"),
+                         nz.material_key("Absolute Black Honed", "Granite"))
+
+
+class FinishFilterTests(unittest.TestCase):
+    """The facet has to actually filter — on every search path, not just the live one."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        self.conn.execute("INSERT INTO suppliers (id, host, item_count) VALUES (1,'s.com',9)")
+        for i, (name, fin) in enumerate([
+                ("Absolute Black", "Polished"), ("Absolute Black", "Honed"),
+                ("Taj Mahal", "Leathered"), ("Carrara", "")], start=1):
+            self.conn.execute(
+                "INSERT INTO materials (id, supplier_id, item_name, name_norm, material_key,"
+                " material_type, color, finish, available_slabs) VALUES (?,1,?,?,?,?,?,?,1)",
+                (i, name, name.lower(), f"k{i}", "Granite", "Black", fin))
+        self.conn.commit()
+        db.rebuild_product_rollup(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _run(self, **kw):
+        from stonescan.web.app import _search
+        base = dict(q="", material_type="", color="", thickness="", supplier="",
+                    limit=50, offset=0)
+        base.update(kw)
+        total, rows, _ = _search(self.conn, **base)
+        return total, {r["item_name"] for r in rows}
+
+    def _search(self, **kw):
+        return self._run(**kw)[1]
+
+    def test_the_finish_filter_narrows_results(self):
+        self.assertEqual(self._search(finish="Leathered"), {"Taj Mahal"})
+        # Four rows, but only three distinct names — Absolute Black is listed twice, once
+        # per finish, which is exactly the case this facet exists to separate.
+        self.assertEqual(self._run(finish="")[0], 4)
+
+    def test_it_does_not_silently_no_op_on_the_rollup_fast_path(self):
+        # The rollup has no finish column, so if fast_ok did not decline the filter this
+        # would come back unfiltered — the exact failure AC-3 names.
+        self.assertTrue(self.conn.execute("SELECT 1 FROM product_rollup LIMIT 1").fetchone())
+        total, names = self._run(finish="Honed")
+        self.assertEqual(names, {"Absolute Black"})
+        # Assert on the TOTAL, not the name set: four rows carry only three distinct names,
+        # so a set-length guard here could never have failed and would have proved nothing.
+        self.assertEqual(total, 1, "the rollup path ignored the finish filter")
+
+    def test_it_composes_with_the_other_filters(self):
+        self.assertEqual(self._search(finish="Polished", material_type="Granite"),
+                         {"Absolute Black"})
+        self.assertEqual(self._search(finish="Polished", material_type="Marble"), set())
+
+
 class ResidueTests(unittest.TestCase):
     """AIL-19: when a crawl fails, replace_materials never runs, so the old rows survive with
     their original crawled_at while suppliers.last_crawled advances. Six SlabWare hosts have

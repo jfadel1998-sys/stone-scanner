@@ -11,8 +11,8 @@ so you don't have to re-crawl.
 from __future__ import annotations
 
 from . import db
-from .normalize import (canonical_type, clean_color, derive_color_from_name, material_key,
-                        normalize_thickness, remap_key)
+from .normalize import (canonical_type, clean_color, derive_color_from_name, derive_finish,
+                        material_key, normalize_thickness, remap_key)
 
 
 def recover_by_majority_vote(conn) -> int:
@@ -73,10 +73,12 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     if fixed:
         print(f"Repaired {fixed} millimetre-as-centimetre thickness value(s).")
     rows = conn.execute(
-        "SELECT id, item_name, category, subcategory, color, thickness, uom FROM materials"
+        "SELECT id, item_name, category, subcategory, color, thickness, uom, finish "
+        "FROM materials"
     ).fetchall()
     print(f"Reclassifying {len(rows)} materials...")
     updates = []
+    derived = 0
     for r in rows:
         mtype = canonical_type(r["category"], r["subcategory"], r["item_name"])
         key = material_key(r["item_name"], mtype)
@@ -85,13 +87,21 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
         # re-crawl. A stored value carries its own unit, so this is a no-op on correct
         # rows and only fills gaps (e.g. a thickness readable from the name).
         thickness = normalize_thickness(r["thickness"], r["item_name"], r["uom"] or "")
-        updates.append((mtype, key, color, thickness, r["id"]))
+        # Finish is 96.3% empty as crawled while 35% of names state one. Derived here rather
+        # than in the crawler so it reaches the stored catalog without a re-crawl, and it
+        # cannot affect `key` above — that is built from item_name by material_key().
+        finish = derive_finish(r["item_name"], r["finish"] or "")
+        if finish and not (r["finish"] or "").strip():
+            derived += 1
+        updates.append((mtype, key, color, thickness, finish, r["id"]))
     conn.executemany(
         "UPDATE materials SET material_type = ?, material_key = ?, color = ?, "
-        "thickness = ? WHERE id = ?",
+        "thickness = ?, finish = ? WHERE id = ?",
         updates,
     )
     conn.commit()
+    if derived:
+        print(f"Derived a finish for {derived} row(s) that had none.")
 
     voted = recover_by_majority_vote(conn)
     if voted:

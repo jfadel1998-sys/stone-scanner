@@ -139,6 +139,66 @@ _FINISH_RE = re.compile(
     )(?=\d|\b)""",
     re.IGNORECASE | re.VERBOSE,
 )
+# Finish words we will REPORT, and their canonical spelling. Deliberately a separate
+# vocabulary from _FINISH_RE above, which strips words when building material_key and must
+# not change (AIL-14 owns key shape): that one also swallows `antique`, `velvet` and `dual`,
+# and none of those three is a finish anyone would filter by. `antique` (485 rows) and
+# `velvet` (286) are trade names, and `dual` on its own names no finish at all — the live
+# examples are "NEW CALEDONIA - DUAL" and "VISCOUNT WHITE DUAL", which say a slab comes both
+# ways without saying which two.
+_FINISH_WORDS = {
+    "polished": "Polished", "polish": "Polished",
+    "honed": "Honed",
+    "leathered": "Leathered", "leather": "Leathered",
+    "brushed": "Brushed",
+    "flamed": "Flamed",
+    "matte": "Matte", "matt": "Matte",
+    "satin": "Satin",
+    "caressed": "Caressed",
+    "suede": "Suede",
+}
+# Longest alternative first so "leathered" wins over "leather".
+_FINISH_FIND_RE = re.compile(
+    r"\b(" + "|".join(sorted(_FINISH_WORDS, key=len, reverse=True)) + r")\b", re.IGNORECASE)
+# A listing stating two finishes is sold both ways; picking one of them for the supplier
+# would be inventing a fact. Reported as one value so the facet stays small — which is what
+# "DUAL FINISH (POLISHED/HONED)" must not be allowed to become.
+MULTIPLE_FINISH = "Multiple"
+# Structured values that carry no information; blanking them is not invention.
+_FINISH_EMPTY = {"unspecified", "n/a", "na", "none", "-", "--"}
+
+
+def derive_finish(item_name: str, structured: str = "") -> str:
+    """The finish to display and filter on, from the structured column or the name.
+
+    The structured value always wins where present (it is the supplier's own field), but it
+    is still canonicalised: the live catalog holds "Matt" 97, "Leather" 64, "Honed / Matte"
+    727 and "Polished and Honed" 15 as distinct strings. Values with no finish word in them
+    at all ("Textured", "Nature", "Soft") pass through untouched rather than being discarded.
+
+    Never invents: a name with no finish word yields "". And it never touches material_key —
+    that is built by material_key() from _FINISH_RE, which this function does not use.
+    """
+    src = (structured or "").strip()
+    if src.lower() in _FINISH_EMPTY:
+        # "Unspecified" states nothing, so fall through to the name rather than returning
+        # "" — which would also make this non-idempotent, since a second pass would see an
+        # empty column and derive from the name anyway.
+        src = ""
+    found = _FINISH_FIND_RE.findall(src or (item_name or ""))
+    seen = []
+    for w in found:
+        canon = _FINISH_WORDS[w.lower()]
+        if canon not in seen:
+            seen.append(canon)
+    if len(seen) > 1:
+        return MULTIPLE_FINISH
+    if seen:
+        return seen[0]
+    # A structured value we don't recognise is still the supplier's own answer; keep it.
+    return src
+
+
 # Other qualifiers to strip when building the match key.
 _QUALIFIER_RE = re.compile(
     r"""\b(
@@ -417,7 +477,11 @@ def normalize_item(
         "category": category,
         "subcategory": subcategory,
         "color": clean_color(item.get("Color")) or derive_color_from_name(name),
-        "finish": drop_if_numeric(item.get("Finish")),
+        # Derived at STORE time, not only in reclassify: replace_materials deletes and
+        # re-inserts a supplier's rows on every crawl, so a value that only reclassify knew
+        # how to produce would be gone by the next morning. Every sibling field here —
+        # material_key, material_type, color, thickness — already derives at both points.
+        "finish": derive_finish(name, drop_if_numeric(item.get("Finish"))),
         "thickness": thickness,
         "product_form": _text(_pick(item, "ProductFormValue", "type")),
         "origin": drop_if_numeric(_pick(item, "Origin", "OriginName")),
