@@ -1812,6 +1812,158 @@ class _DeadStdout:
         pass
 
 
+class ResidueTests(unittest.TestCase):
+    """AIL-19: when a crawl fails, replace_materials never runs, so the old rows survive with
+    their original crawled_at while suppliers.last_crawled advances. Six SlabWare hosts have
+    served 2026-07-16 material under an advancing attempt stamp — and the item page asserted
+    the attempt date as the collection date."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+
+    def tearDown(self):
+        self.conn.close()
+
+    @staticmethod
+    def _ago(hours):
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(
+            timespec="seconds")
+
+    def _supplier(self, host, *, attempted, data_at, key="k1", error=""):
+        cur = self.conn.execute(
+            "INSERT INTO suppliers (host, item_count, last_crawled, last_error) VALUES (?,?,?,?)",
+            (host, 1, attempted, error))
+        sid = cur.lastrowid
+        self.conn.execute(
+            "INSERT INTO materials (supplier_id, item_name, material_key, material_type,"
+            " crawled_at) VALUES (?,?,?,?,?)", (sid, f"Stone {host}", key, "Granite", data_at))
+        self.conn.commit()
+        return sid
+
+    def test_data_older_than_its_own_attempt_is_residue(self):
+        stale = self._supplier("stale.com", attempted=self._ago(2), data_at=self._ago(24 * 15),
+                               error="403 Forbidden")
+        fresh = self._supplier("fresh.com", attempted=self._ago(2), data_at=self._ago(2),
+                               key="k2")
+        got = db.residue_supplier_ids(self.conn)
+        self.assertIn(stale, got)
+        self.assertNotIn(fresh, got)
+
+    def test_an_errored_crawl_that_still_stored_items_is_not_residue(self):
+        # Partial-crawl preservation: a host can log a 403 from a secondary endpoint and
+        # still store its items in the same run. `status` calls that "stale"; the data is
+        # current, and only the data-vs-attempt comparison can tell the two apart.
+        sid = self._supplier("partial.com", attempted=self._ago(2), data_at=self._ago(2),
+                             error="403 Forbidden")
+        self.assertNotIn(sid, db.residue_supplier_ids(self.conn))
+        health = {h["host"]: h for h in db.supplier_health(self.conn)}
+        self.assertEqual(health["partial.com"]["status"], "stale")   # unchanged vocabulary
+        self.assertFalse(health["partial.com"]["residue"])           # but not residue
+
+    def test_a_global_cutoff_would_condemn_the_catalog_and_the_rule_does_not(self):
+        # 91.9% of live rows predate the newest crawl day, because that day was a targeted
+        # retry of 41 hosts. Anything keyed on "older than the newest crawl" is unusable.
+        for i in range(10):
+            self._supplier(f"old{i}.com", attempted=self._ago(24 * 9),
+                           data_at=self._ago(24 * 9), key=f"k{i}")
+        self._supplier("today.com", attempted=self._ago(1), data_at=self._ago(1), key="kt")
+        newest = self.conn.execute("SELECT MAX(crawled_at) t FROM materials").fetchone()["t"]
+        would_flag = self.conn.execute(
+            "SELECT COUNT(DISTINCT supplier_id) c FROM materials WHERE crawled_at < ?",
+            (newest,)).fetchone()["c"]
+        self.assertEqual(would_flag, 10, "the global rule really would flag the whole catalog")
+        self.assertEqual(db.residue_supplier_ids(self.conn), set(), "per-supplier rule is quiet")
+
+    def test_rollup_row_is_flagged_when_ANY_contributor_is_stale(self):
+        # The stated rule (AC-4): any, not all. Both directions covered.
+        self._supplier("a.com", attempted=self._ago(2), data_at=self._ago(24 * 15), key="shared")
+        self._supplier("b.com", attempted=self._ago(2), data_at=self._ago(2), key="shared")
+        self._supplier("c.com", attempted=self._ago(2), data_at=self._ago(2), key="clean")
+        rows = [{"id": 1, "material_key": "shared"}, {"id": 3, "material_key": "clean"}]
+        got = db.groups_with_residue(self.conn, rows)
+        self.assertIn("shared", got, "one stale contributor of two must flag the row")
+        self.assertNotIn("clean", got)
+        # An all-stale rule would NOT have flagged 'shared' — that is the difference.
+        self.assertEqual(db.groups_with_residue(self.conn, []), set())
+
+    def test_a_keyless_row_is_matched_on_its_own_id(self):
+        # Products with no material_key group as 'id:<id>' in the rollup.
+        sid = self._supplier("k.com", attempted=self._ago(2), data_at=self._ago(24 * 15), key="")
+        mid = self.conn.execute(
+            "SELECT id FROM materials WHERE supplier_id=?", (sid,)).fetchone()["id"]
+        got = db.groups_with_residue(self.conn, [{"id": mid, "material_key": ""}])
+        self.assertEqual(got, {f"id:{mid}"})
+
+    def test_the_threshold_is_hours_not_calendar_days(self):
+        # The stored stamps are '2026-08-03T23:49:00+00:00' but SQLite's datetime() returns
+        # '2026-08-02 23:49:00' — space separator, offset stripped. Comparing the raw column
+        # against that is a TEXT comparison diverging at position 10 on 'T' vs ' ', so the
+        # rule degenerated to a date-only test: 26.8h went unflagged while a SMALLER 25.0h
+        # gap straddling midnight was caught. My first tests only used 360h vs 2h and saw
+        # none of it.
+        db._residue_cache.clear()
+        for host, attempted, data_at in (
+                ("gap47.com", "2026-08-03T23:49:00+00:00", "2026-08-02T01:00:00+00:00"),
+                ("gap27.com", "2026-08-03T23:49:00+00:00", "2026-08-02T21:00:00+00:00"),
+                ("gap25.com", "2026-08-03T00:30:00+00:00", "2026-08-01T23:30:00+00:00")):
+            self._supplier(host, attempted=attempted, data_at=data_at, key=host)
+        for host in ("under23.com", "under2.com"):
+            self._supplier(host, attempted="2026-08-03T23:49:00+00:00",
+                           data_at="2026-08-03T00:49:00+00:00" if host == "under23.com"
+                           else "2026-08-03T21:49:00+00:00", key=host)
+        ids = db.residue_supplier_ids(self.conn, use_cache=False)
+        hosts = {r["id"]: r["host"] for r in self.conn.execute("SELECT id, host FROM suppliers")}
+        flagged = {hosts[i] for i in ids}
+        self.assertEqual(flagged, {"gap47.com", "gap27.com", "gap25.com"},
+                         "the 24-48h band is exactly where the format bug hid")
+
+    def test_the_residue_set_is_cached_but_invalidatable(self):
+        sid = self._supplier("c.com", attempted=self._ago(2), data_at=self._ago(24 * 15))
+        self.assertIn(sid, db.residue_supplier_ids(self.conn))
+        self.conn.execute("UPDATE suppliers SET last_crawled = ? WHERE id = ?",
+                          (self._ago(24 * 15), sid))
+        self.conn.commit()
+        self.assertIn(sid, db.residue_supplier_ids(self.conn), "still cached")
+        db._residue_cache.clear()
+        self.assertNotIn(sid, db.residue_supplier_ids(self.conn), "recomputed after clear")
+
+    def test_a_narrowed_result_set_suppresses_the_chip(self):
+        # The row aggregates only the filtered contributors, while the residue lookup sees
+        # the whole catalog — so filtering to one healthy supplier must not carry the
+        # warning along. Type and colour describe the stone, so they narrow nothing.
+        self.assertTrue(db.narrows_contributors(supplier="Blackstone SD"))
+        self.assertTrue(db.narrows_contributors(in_stock=1))
+        self.assertTrue(db.narrows_contributors(location="Dallas"))
+        self.assertTrue(db.narrows_contributors(min_length=100))
+        self.assertFalse(db.narrows_contributors(material_type="Granite", color="White"))
+        self.assertFalse(db.narrows_contributors())
+
+    def test_discovery_puts_an_items_but_errored_host_outside_live(self):
+        # A failed crawl leaves the previous rows in place, so items > 0 says nothing about
+        # whether the catalog is reachable today. SlabWare read 9 live when it had 3.
+        from stonescan.web.app import discovery_status
+        self.assertEqual(discovery_status(probed=True, items=273, error="403 Forbidden"),
+                         "broken")
+        self.assertEqual(discovery_status(probed=True, items=273, error=""), "live")
+        self.assertEqual(discovery_status(probed=True, items=0, error=""), "empty")
+        self.assertEqual(discovery_status(probed=False, items=0, error=""), "unprobed")
+        # A robots decline still wins over the generic error bucket.
+        self.assertEqual(
+            discovery_status(probed=True, items=5, error="robots-blocked: disallowed"),
+            "blocked")
+
+    def test_no_rows_are_deleted_by_any_of_this(self):
+        self._supplier("x.com", attempted=self._ago(2), data_at=self._ago(24 * 15))
+        before = self.conn.execute("SELECT COUNT(*) c FROM materials").fetchone()["c"]
+        db.residue_supplier_ids(self.conn)
+        db.supplier_health(self.conn)
+        after = self.conn.execute("SELECT COUNT(*) c FROM materials").fetchone()["c"]
+        self.assertEqual(before, after)   # NG-1: a 15-day-old listing is still a lead
+
+
 class OutputFailureTests(_SuppliersFileCase):
     """AIL-27: on 2026-08-03 a three-hour crawl committed every row, then died on a cosmetic
     print() thirteen lines before reconcile_rejections. It was recorded FAILED despite having

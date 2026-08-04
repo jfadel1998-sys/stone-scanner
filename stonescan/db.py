@@ -903,11 +903,15 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
       broken  — errored and no data at all
       empty   — no error, but the catalog returned nothing (may be legitimately empty)
       blocked — the supplier's robots.txt disallows crawling; not a failure, a decision
+
+    Each row also carries `residue`: True when the supplier's newest data predates its own
+    last attempt, i.e. it is serving rows the last crawl failed to replace.
     """
     from datetime import datetime, timezone
 
     from .robots import BLOCK_MARKER
     now = datetime.now(timezone.utc)
+    residue = residue_supplier_ids(conn)
 
     def _hours(ts: str | None) -> float | None:
         if not ts:
@@ -942,6 +946,11 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             d["status"] = ("ok" if not err else "stale") if has else ("broken" if err else "empty")
         d["age_hours"] = _hours(d["last_crawled"])
         d["data_age_hours"] = _hours(data_ts.get(d["id"]))
+        # Residue is a stricter, unambiguous test than `status`. A host can log an error and
+        # still have stored items in the same run (partial-crawl preservation), which reads
+        # as "stale" here while its data is in fact current; and it can be serving weeks-old
+        # rows. Only the data-vs-attempt comparison separates those two.
+        d["residue"] = d["id"] in residue
         out.append(d)
     return out
 
@@ -1019,6 +1028,118 @@ def recent_refresh_runs(conn: sqlite3.Connection, limit: int = 8) -> list[dict[s
         else:
             d["state"] = "running"
         out.append(d)
+    return out
+
+
+# How much older than its own last attempt a supplier's newest data must be before we call
+# it residue. A crawl that stores items sets both stamps within the same run, so any real gap
+# means the newest attempt did not store anything.
+RESIDUE_AFTER_HOURS = 24
+
+# A supplier still serving rows from an earlier crawl because its most recent attempt failed.
+# `replace_materials` only runs on success, so the old rows survive with their original
+# crawled_at while suppliers.last_crawled advances — the page then reports the ATTEMPT as if
+# it were the collection date.
+#
+# The test is per-supplier and relative: this supplier's data vs this supplier's own last
+# attempt. A global cutoff cannot work here — 91.9% of rows predate the newest crawl day
+# simply because that day was a targeted retry of 41 hosts, so "older than the newest crawl"
+# would condemn nearly the whole catalog.
+# BOTH sides go through datetime(). The stored values are `2026-08-03T23:49:00+00:00`, while
+# datetime() returns `2026-08-02 23:49:00` — space separator, offset stripped. Comparing the
+# raw column against a datetime() result is a TEXT comparison that diverges at position 10 on
+# 'T' (0x54) vs ' ' (0x20), so whenever the date halves match the left side always wins and
+# the rule silently degenerates to a date-only test: a 26.8h gap goes unflagged while a 25.0h
+# one that straddles midnight is caught. Normalizing both sides makes the constant mean what
+# it says, and also protects the comparison if a writer ever emits a non-UTC offset.
+_RESIDUE_SQL = f"""
+    SELECT s.id FROM suppliers s JOIN materials m ON m.supplier_id = s.id
+    GROUP BY s.id
+    HAVING s.last_crawled IS NOT NULL AND MAX(m.crawled_at) IS NOT NULL
+       AND datetime(MAX(m.crawled_at)) < datetime(s.last_crawled, '-{RESIDUE_AFTER_HOURS} hours')
+"""
+
+# The query is a GROUP BY over all ~171k materials rows, and it is now on the item and search
+# render paths. It only changes on a crawl, so cache it exactly like stats() — keyed by DB
+# file, cleared by the web app's _invalidate_caches alongside _stats_cache.
+_residue_cache: dict[str, tuple[float, set[int]]] = {}
+_RESIDUE_TTL = 30.0
+
+
+def residue_supplier_ids(conn: sqlite3.Connection, *, use_cache: bool = True) -> set[int]:
+    """Suppliers whose newest data predates their own last crawl attempt."""
+    path = ""
+    if use_cache:
+        try:
+            path = (conn.execute("PRAGMA database_list").fetchone() or ("", "", ""))[2] or ""
+        except sqlite3.Error:
+            path = ""
+        hit = _residue_cache.get(path)
+        if hit and time.monotonic() - hit[0] < _RESIDUE_TTL:
+            return hit[1]
+    try:
+        out = {int(r["id"]) for r in conn.execute(_RESIDUE_SQL)}
+    except sqlite3.Error:
+        return set()
+    if use_cache:
+        _residue_cache[path] = (time.monotonic(), out)
+    return out
+
+
+def narrows_contributors(**filters: Any) -> bool:
+    """True when a filter selects a SUBSET of the suppliers behind a result row.
+
+    Type and colour describe the stone itself, so every contributor survives them and the
+    residue chip stays truthful. Supplier, location, proximity, in-stock and the size floors
+    all drop individual supplier rows out of the aggregate, which is what makes a
+    whole-catalog residue lookup unable to speak for what is actually on screen.
+    """
+    return any(bool(filters.get(k)) for k in
+               ("supplier", "location", "near", "in_stock", "min_length", "min_width",
+                "min_sqft"))
+
+
+def groups_with_residue(conn: sqlite3.Connection, rows: Iterable[dict]) -> set[str]:
+    """Which of these result rows draw on at least one supplier serving residue.
+
+    ANY contributor, not all. A result row's slab totals are summed across its suppliers, so
+    one stale contributor already makes the number the user acts on partly unverified —
+    and measured on the live catalog the rule marks 349 of 40,712 rows (0.9%) against 104
+    (0.3%) for all-stale, so it is not the noisy choice either. All-stale would stay silent
+    on the 245 rows in between, every one of which does contain frozen inventory figures.
+
+    Computed per rendered page rather than materialized into product_rollup: search has three
+    paths (rollup, FTS, live) and a column would have to be threaded through each, so the
+    chip would appear or vanish depending on which one served the query.
+
+    IMPORTANT: this resolves contributors by material_key across the WHOLE catalog, so it
+    only tells the truth about an unnarrowed result set. Once a filter selects a subset of
+    contributors — a supplier, a location, in-stock, a size floor — the row aggregates that
+    subset while this still sees every supplier, and the chip would accuse a row whose
+    displayed contributors are all fresh. The caller must not ask when the view is narrowed;
+    `narrows_contributors()` is that check. Under-warning is the safe direction here.
+    """
+    rows = list(rows)
+    if not rows:
+        return set()
+    bad = residue_supplier_ids(conn)
+    if not bad:
+        return set()
+    keys = {r.get("material_key") for r in rows if r.get("material_key")}
+    ids = {r.get("id") for r in rows if not r.get("material_key") and r.get("id")}
+    out: set[str] = set()
+    if keys:
+        kph = ",".join("?" for _ in keys)
+        sph = ",".join("?" for _ in bad)
+        out |= {r["material_key"] for r in conn.execute(
+            f"SELECT DISTINCT material_key FROM materials WHERE material_key IN ({kph}) "
+            f"AND supplier_id IN ({sph})", (*keys, *bad))}
+    if ids:
+        iph = ",".join("?" for _ in ids)
+        sph = ",".join("?" for _ in bad)
+        out |= {f"id:{r['id']}" for r in conn.execute(
+            f"SELECT id FROM materials WHERE id IN ({iph}) AND supplier_id IN ({sph})",
+            (*ids, *bad))}
     return out
 
 

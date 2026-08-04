@@ -99,9 +99,19 @@
     </div>
     {% if added == 1 %}<p class="hintline"><span class="okchip">✓ Added to <a href="/list?id={{ added_list }}">your list</a></span></p>
     {% elif added == 0 %}<p class="hintline"><span class="okchip warn">Already on that list</span></p>{% endif %}
+    {# The date must be the material's own crawled_at — when this data was actually
+       collected — not the supplier's last_crawled, which advances even when the crawl
+       failed and stored nothing. Six hosts have been serving 2026-07-16 rows under a
+       2026-08-03 attempt stamp, and this line asserted the later date. #}
     <p class="stamp">Inventory reflects {{ m.supplier_name }}'s public catalog
-       {% if m.supplier_updated %}as of {{ m.supplier_updated[:16].replace('T',' ') }} UTC{% endif %}.
+       {% if m.crawled_at %}as of {{ m.crawled_at[:16].replace('T',' ') }} UTC{% endif %}.
        Availability changes as slabs are sold — open the live catalog for real-time stock.</p>
+    {% if m.is_residue %}
+    <p class="stamp warnstamp">The most recent refresh of {{ m.supplier_name }}
+       {% if m.supplier_attempted %}({{ m.supplier_attempted[:10] }}){% endif %} did not
+       succeed, so this is the previous crawl's data rather than a fresh reading.
+       Treat quantities as a lead, not a live count.</p>
+    {% endif %}
   </div>
 </div>
 

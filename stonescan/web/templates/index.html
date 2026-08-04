@@ -132,6 +132,9 @@
       <span class="cardstats">
         <span class="cardslabs">{{ r.suppliers }} supplier{{ '' if r.suppliers == 1 else 's' }}{% if r.available_slabs %} · {% if r.suppliers > 1 %}up to {% endif %}{{ r.available_slabs }} slab{{ '' if r.available_slabs == 1 else 's' }}{% if r.suppliers > 1 %}/yard{% endif %}{% elif r.tile_sf %} · {{ r.tile_sf|round|int }} ft² tile{% elif r.has_tile %} · tile{% endif %}</span>
         {% if near_ok and r.miles is not none %}<span class="milechip">📍 {{ r.miles|round|int }} mi</span>{% endif %}
+        {# The grid is the DEFAULT view, so the chip has to live here as well as in the
+           table — a warning only the table shows is a warning almost nobody sees. #}
+        {% if r.has_residue %}<span class="residuechip" title="At least one supplier behind this row is serving data its last crawl failed to replace, so the slab count here includes figures that have not been reconfirmed. Open the item to see each supplier's own collection date.">unconfirmed</span>{% endif %}
       </span>
     </span>
   </a>
@@ -158,7 +161,7 @@
         {% elif r.rep_image %}<img class="thumb" loading="lazy" src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone — the actual slab varies" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
         {% else %}<span class="thumb noimg"></span>{% endif %}</a>
       </td>
-      <td class="name">{{ cmp_control(r, cmpkeys) }}<a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}{% if r.rep_image %} <span class="repchip" title="The shown photo is a representative of the same-named stone from another listing — natural stone varies">≈ ref photo</span>{% endif %}</td>
+      <td class="name">{{ cmp_control(r, cmpkeys) }}<a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}{% if r.rep_image %} <span class="repchip" title="The shown photo is a representative of the same-named stone from another listing — natural stone varies">≈ ref photo</span>{% endif %}{% if r.has_residue %} <span class="residuechip" title="At least one supplier behind this row is serving data its last crawl failed to replace, so the totals here include figures that have not been reconfirmed. Open the item to see each supplier's own collection date.">unconfirmed</span>{% endif %}</td>
       <td>{{ r.material_type }}</td>
       <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
       <td class="num">{{ r.suppliers }}</td>

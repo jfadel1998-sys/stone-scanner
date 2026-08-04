@@ -111,6 +111,7 @@
         {% if r.data_age_hours is none %}—{% elif r.data_age_hours < 1 %}just now
         {% elif r.data_age_hours < 48 %}{{ r.data_age_hours|round|int }}h ago
         {% else %}{{ (r.data_age_hours / 24)|round|int }}d ago{% endif %}
+        {% if r.residue %}<span class="residuechip" title="This supplier's newest data predates its own last crawl attempt, so the latest refresh stored nothing and these rows are left over from an earlier one. Unlike STALE, which only means the last crawl logged an error, this compares the data against the attempt.">residue</span>{% endif %}
       </td>
       <td class="muted">
         {% if r.age_hours is none %}never{% elif r.age_hours < 1 %}just now

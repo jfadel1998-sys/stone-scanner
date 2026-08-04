@@ -498,6 +498,16 @@ footer {
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
 }
 .repchip { display: inline-block; padding: 1px 7px; border-radius: var(--r-pill); background: var(--chip); color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .02em; vertical-align: middle; }
+/* Data left over from a crawl that failed to replace it. Warmer than .repchip because this
+   one qualifies a number the user acts on, rather than the photo beside it. */
+.residuechip { display: inline-block; padding: 1px 7px; border-radius: var(--r-pill); background: #f6ecd6; color: #7a5f1c; font-size: 10px; font-weight: 700; letter-spacing: .02em; vertical-align: middle; }
+.warnstamp { color: #7a5f1c; }
+:root[data-theme="dark"] .residuechip { background: #3a3118; color: #d8c489; }
+:root[data-theme="dark"] .warnstamp { color: #cbb26a; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .residuechip { background: #3a3118; color: #d8c489; }
+  :root:not([data-theme="light"]) .warnstamp { color: #cbb26a; }
+}
 .repnote { padding: 6px var(--pad-x) 2px; color: var(--muted); font-size: 12.5px; max-width: 70ch; }
 .matcard:hover { border-color: var(--accent); text-decoration: none; box-shadow: var(--shadow-lg); transform: translateY(-3px); }
 .matcard img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: var(--chip); }
