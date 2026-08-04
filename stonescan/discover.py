@@ -265,6 +265,66 @@ def filter_rejected(entries: list[dict], *, today: date | None = None):
     return keep, skipped
 
 
+def _empty_streaks(db_path=None) -> dict[str, tuple[int, str]]:
+    """host -> (empty_streak, last_error), lowercased, straight from the DB."""
+    from . import db as _db
+    conn = _db.connect(str(db_path or _db.DEFAULT_DB))
+    try:
+        return {(r["host"] or "").lower(): (r["empty_streak"] or 0, r["last_error"] or "")
+                for r in conn.execute("SELECT host, empty_streak, last_error FROM suppliers")}
+    finally:
+        conn.close()
+
+
+def _streak_reason(streak: int, last_error: str) -> str:
+    reason = f"{streak} consecutive zero-item crawls"
+    if last_error:
+        reason += f"; last: {last_error[:80]}"
+    return reason
+
+
+def reject_by_streak(db_path=None, *, threshold: int = AUTO_REJECT_STREAK,
+                     today: date | None = None) -> list[str]:
+    """Before a crawl, stamp every host that has ALREADY earned a rejection.
+
+    `reconcile_rejections` only ever sees hosts the current run attempted, so a crawl that
+    cannot finish can never reject the hosts that are making it not finish: 249 hosts sat at
+    a qualifying streak while every night dutifully re-crawled all of them. This runs first,
+    off the streaks already in the DB, so the run starts with a list that reflects what the
+    previous runs already learned.
+
+    No "was it attempted last run" guard, unlike the tail pass: `empty_streak` only moves on
+    a real attempt, so sitting at the threshold is itself proof of `threshold` real zero-item
+    crawls. Returns the hosts newly stamped.
+
+    Two deliberate omissions:
+
+    * It never restores. The restore half keys off `streak == 0`, and a hand-triaged
+      rejection on a host that was never crawled also has `streak == 0` — sweeping every
+      host would quietly undo the curator's decisions. Restores stay in the tail pass,
+      where `crawled` bounds them to hosts that genuinely just returned items.
+    * It never re-stamps a host that already carries a `rejected` block. Re-stamping would
+      move `at` to today on every run, so the lapse window would never elapse and a
+      rejection would become permanent — including for a host whose rejection has lapsed
+      and is owed a fresh probe.
+    """
+    today = today or date.today()
+    streaks = _empty_streaks(db_path)
+    data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
+    rejected = []
+    for s in data.get("suppliers", []):
+        if s.get("rejected"):
+            continue
+        streak, last_error = streaks.get((s.get("host") or "").lower(), (0, ""))
+        if streak >= threshold:
+            s["rejected"] = {"reason": _streak_reason(streak, last_error),
+                             "at": today.isoformat()}
+            rejected.append(s.get("host"))
+    if rejected:
+        SUPPLIERS_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return rejected
+
+
 def reconcile_rejections(db_path=None, crawled_hosts=None, *,
                          threshold: int = AUTO_REJECT_STREAK, today: date | None = None) -> dict:
     """After a crawl, reconcile suppliers.json rejections against the fresh empty-streak.
@@ -274,13 +334,9 @@ def reconcile_rejections(db_path=None, crawled_hosts=None, *,
     latest crawl stored items (streak back to 0) is restored to normal service. Returns
     {'rejected': [...], 'restored': [...]}.
     """
-    from . import db as _db
     today = today or date.today()
     crawled = {(h or "").lower() for h in (crawled_hosts or [])}
-    conn = _db.connect(str(db_path or _db.DEFAULT_DB))
-    streaks = {(r["host"] or "").lower(): (r["empty_streak"] or 0, r["last_error"] or "")
-               for r in conn.execute("SELECT host, empty_streak, last_error FROM suppliers")}
-    conn.close()
+    streaks = _empty_streaks(db_path)
 
     data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
     rejected, restored = [], []
@@ -290,10 +346,8 @@ def reconcile_rejections(db_path=None, crawled_hosts=None, *,
             continue
         streak, last_error = streaks.get(host, (0, ""))
         if streak >= threshold:
-            reason = f"{streak} consecutive zero-item crawls"
-            if last_error:
-                reason += f"; last: {last_error[:80]}"
-            s["rejected"] = {"reason": reason, "at": today.isoformat()}
+            s["rejected"] = {"reason": _streak_reason(streak, last_error),
+                             "at": today.isoformat()}
             rejected.append(s.get("host"))
         elif streak == 0 and s.get("rejected"):
             del s["rejected"]                       # stored items again -> back to normal service

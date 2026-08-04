@@ -33,6 +33,13 @@ INV_MATCH = ("getinventorygallery", "getitemgallery")
 TAX_MATCH = "getallsearchdetails"
 DEFAULT_ASHX = "fetchdataAngularProductionToyota.ashx"
 
+# A catalog that loaded fine and simply holds nothing. Set ONLY when no real error was
+# recorded, so it is a statement about the catalog, not about the fetch — but it lands in
+# the same `error` field as a genuine failure, which makes reachable-and-empty look identical
+# to broken. Named so ingest's circuit breaker can tell the two apart: fifteen empty Stone
+# Profits catalogs in a row must not abandon the largest provider we have.
+EMPTY_CATALOG_ERROR = "no items returned (empty or non-public catalog)"
+
 
 # Read robots.txt from *inside* the cleared page rather than with httpx. These hosts
 # sit behind Cloudflare, which answers an outside GET of /robots.txt with a challenge
@@ -358,7 +365,7 @@ async def crawl_host(
         res.taxonomy = taxonomy or []
         res.ok = bool(res.items)
         if not res.ok and not res.error:
-            res.error = "no items returned (empty or non-public catalog)"
+            res.error = EMPTY_CATALOG_ERROR
 
         # Optionally pre-fetch in-stock items' slab galleries, bounded by
         # slab_item_cap (0 = all). The deep getItemInventory call is the crawl's
@@ -422,11 +429,23 @@ async def crawl_hosts(
                 return r
 
         tasks = [asyncio.create_task(worker(h)) for h in hosts]
-        for fut in asyncio.as_completed(tasks):
-            r = await fut
-            results.append(r)
-            yield r
-        await browser.close()
+        try:
+            for fut in asyncio.as_completed(tasks):
+                r = await fut
+                results.append(r)
+                yield r
+        finally:
+            # A consumer may stop early — ingest's per-provider circuit breaker does, once a
+            # provider has errored enough times in a row. Every worker is created up front and
+            # merely gated by the semaphore, so without this the queued ones keep going after
+            # the consumer has walked away: "abandon this provider" would stop the recording
+            # but not the requests, which is the opposite of the point. Cancel what is still
+            # pending, then close the browser on both the normal and the early-exit path.
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await browser.close()
 
 
 def utc_now_iso() -> str:

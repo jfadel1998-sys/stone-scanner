@@ -1680,6 +1680,290 @@ class RejectionTests(unittest.TestCase):
         self.assertEqual(added, 0)   # stays listed (rejected) -> the "already listed" check blocks it
 
 
+def _register_fake_provider(testcase, error="403 Forbidden"):
+    """Point a 'fake' provider at an in-memory crawl and return the list of hosts it is
+    actually asked for. What a test asserts on is usually that list: the point of both
+    features below is that some hosts never get asked at all."""
+    from stonescan import providers
+    from stonescan.providers.base import SupplierData
+
+    attempted: list[str] = []
+
+    async def crawl(entry, **kw):
+        attempted.append(entry["host"])
+        return SupplierData(host=entry["host"], ok=False, error=error)
+
+    orig = providers.get
+    providers.get = lambda name: crawl if name == "fake" else orig(name)
+    testcase.addCleanup(setattr, providers, "get", orig)
+    return attempted
+
+
+class _SuppliersFileCase(unittest.TestCase):
+    """Shared temp DB + redirected suppliers.json for the two AIL-25 suites."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        self.suppliers = os.path.join(self.tmp, "suppliers.json")
+        self._orig_file = discover.SUPPLIERS_FILE
+        discover.SUPPLIERS_FILE = Path(self.suppliers)
+        self._write_suppliers([])
+
+    def tearDown(self):
+        discover.SUPPLIERS_FILE = self._orig_file
+        self.conn.close()
+
+    def _write_suppliers(self, entries):
+        Path(self.suppliers).write_text(json.dumps({"suppliers": entries}, indent=2),
+                                        encoding="utf-8")
+
+    def _read_suppliers(self):
+        return json.loads(Path(self.suppliers).read_text(encoding="utf-8"))["suppliers"]
+
+    def _supplier_row(self, host, *, empty_streak=0, last_error=""):
+        self.conn.execute(
+            "INSERT INTO suppliers (host, empty_streak, last_error) VALUES (?,?,?)",
+            (host, empty_streak, last_error))
+        self.conn.commit()
+
+    def _row(self, host):
+        """Re-read through a fresh connection: run_all writes on its own."""
+        conn = db.connect(self.path)
+        try:
+            return conn.execute(
+                "SELECT empty_streak, last_error FROM suppliers WHERE host=?", (host,)).fetchone()
+        finally:
+            conn.close()
+
+
+class StartOfRunRejectionTests(_SuppliersFileCase):
+    """AIL-25: a crawl that cannot finish can never reject the hosts that are making it not
+    finish, because the tail pass only ever sees hosts this run attempted. The start-of-run
+    pass works off the streaks already in the DB instead."""
+
+    def test_stamps_a_qualifying_host_that_was_never_attempted(self):
+        today = date(2026, 8, 4)
+        self._write_suppliers([{"host": "dead.com"}, {"host": "fine.com"}])
+        self._supplier_row("dead.com", empty_streak=3, last_error="403 Forbidden")
+        self._supplier_row("fine.com", empty_streak=2)
+        # No crawled-hosts argument exists here at all — the tail pass would touch neither.
+        self.assertEqual(discover.reject_by_streak(self.path, today=today), ["dead.com"])
+        hosts = {s["host"]: s for s in self._read_suppliers()}
+        self.assertEqual(hosts["dead.com"]["rejected"]["at"], today.isoformat())
+        self.assertIn("403 Forbidden", hosts["dead.com"]["rejected"]["reason"])
+        self.assertNotIn("rejected", hosts["fine.com"])      # below threshold, untouched
+
+    def test_never_restores_so_a_hand_triaged_rejection_survives(self):
+        # Restore keys off streak == 0, and a curator's rejection on a host that has never
+        # been crawled also has streak 0. Sweeping every host would quietly undo it.
+        self._write_suppliers([{"host": "manual.com",
+                                "rejected": {"reason": "asked us to stop", "at": "2026-08-01"}}])
+        self._supplier_row("manual.com", empty_streak=0)
+        self.assertEqual(discover.reject_by_streak(self.path, today=date(2026, 8, 4)), [])
+        self.assertIn("rejected", self._read_suppliers()[0])
+
+    def test_does_not_refresh_the_date_on_an_existing_rejection(self):
+        # Re-stamping nightly would keep moving `at` forward, so the 90-day lapse could never
+        # elapse and a rejection would quietly become permanent.
+        self._write_suppliers([{"host": "old.com",
+                                "rejected": {"reason": "dead", "at": "2026-01-01"}}])
+        self._supplier_row("old.com", empty_streak=9)
+        self.assertEqual(discover.reject_by_streak(self.path, today=date(2026, 8, 4)), [])
+        self.assertEqual(self._read_suppliers()[0]["rejected"]["at"], "2026-01-01")
+
+    def test_a_stamped_host_is_dropped_from_this_runs_crawl_list(self):
+        import asyncio
+        from stonescan.ingest import run_all
+        self._write_suppliers([{"host": "dead.com", "provider": "fake"},
+                               {"host": "live.com", "provider": "fake"}])
+        self._supplier_row("dead.com", empty_streak=3)
+        self._supplier_row("live.com", empty_streak=0)
+        attempted = _register_fake_provider(self)
+        asyncio.run(run_all([{"host": "dead.com", "provider": "fake"},
+                             {"host": "live.com", "provider": "fake"}], db_path=self.path))
+        self.assertEqual(attempted, ["live.com"])            # stamped first, then never asked
+        self.assertIn("rejected", {s["host"]: s for s in self._read_suppliers()}["dead.com"])
+
+    def test_only_bypasses_the_start_of_run_pass(self):
+        import asyncio
+        from stonescan.ingest import run_all
+        self._write_suppliers([{"host": "dead.com"}])
+        self._supplier_row("dead.com", empty_streak=4)
+        # --only sets honor_rejections=False: a request for named hosts must not restamp
+        # the rest of the catalog on its way past.
+        asyncio.run(run_all([], db_path=self.path, honor_rejections=False))
+        self.assertNotIn("rejected", self._read_suppliers()[0])
+        asyncio.run(run_all([], db_path=self.path))
+        self.assertIn("rejected", self._read_suppliers()[0])
+
+
+class CircuitBreakerTests(_SuppliersFileCase):
+    """AIL-25: one washed-out provider must not cost the whole run — 192 of SlabWare's 212
+    tenants answer 403, and at ~0.4 catalogs/min that alone outlasts the night."""
+
+    def test_trips_on_the_fifteenth_consecutive_error_not_the_fourteenth(self):
+        from stonescan.ingest import PROVIDER_ERROR_LIMIT, _Breaker
+        self.assertEqual(PROVIDER_ERROR_LIMIT, 15)
+        b = _Breaker()
+        for _ in range(PROVIDER_ERROR_LIMIT - 1):
+            b.record("slabware", False, "403 Forbidden")
+        self.assertFalse(b.tripped("slabware"))
+        b.record("slabware", False, "403 Forbidden")
+        self.assertTrue(b.tripped("slabware"))
+
+    def test_a_success_resets_the_run_of_errors(self):
+        from stonescan.ingest import PROVIDER_ERROR_LIMIT, _Breaker
+        b = _Breaker()
+        for _ in range(PROVIDER_ERROR_LIMIT - 1):
+            b.record("slabware", False, "403 Forbidden")
+        b.record("slabware", True, "")
+        for _ in range(PROVIDER_ERROR_LIMIT - 1):
+            b.record("slabware", False, "403 Forbidden")
+        self.assertFalse(b.tripped("slabware"))
+
+    def test_a_robots_block_neither_advances_nor_resets(self):
+        from stonescan.ingest import _Breaker
+        b = _Breaker(limit=3)
+        b.record("slabware", False, "403 Forbidden")
+        b.record("slabware", False, "robots-blocked: disallowed")   # a decision, not a failure
+        b.record("slabware", False, "403 Forbidden")
+        self.assertFalse(b.tripped("slabware"))     # the block did not count as the third
+        b.record("slabware", False, "403 Forbidden")
+        self.assertTrue(b.tripped("slabware"))      # ...nor did it reset the two before it
+
+    def test_a_successful_but_empty_catalog_resets(self):
+        from stonescan.ingest import _Breaker
+        b = _Breaker(limit=3)
+        b.record("slabware", False, "403 Forbidden")
+        b.record("slabware", False, "403 Forbidden")
+        b.record("slabware", False, "")             # fetched fine, catalog simply empty
+        b.record("slabware", False, "403 Forbidden")
+        b.record("slabware", False, "403 Forbidden")
+        self.assertFalse(b.tripped("slabware"))
+
+    def test_an_empty_stone_profits_catalog_is_not_an_error(self):
+        # The two crawl paths report an empty catalog differently and only one LOOKS empty:
+        # a provider leaves `error` blank, while the Stone Profits crawler fills it with a
+        # sentence that reads like a failure. Scored as an error, fifteen empty catalogs in a
+        # row would abandon the largest source we have — and empty ones return fastest, so
+        # under as_completed they arrive bunched at the front.
+        from stonescan.crawler import EMPTY_CATALOG_ERROR
+        from stonescan.ingest import _Breaker, _breaker_outcome
+        self.assertEqual(_breaker_outcome(False, EMPTY_CATALOG_ERROR), "ok")
+        b = _Breaker(limit=3)
+        for _ in range(5):
+            b.record("stoneprofits", False, EMPTY_CATALOG_ERROR)
+        self.assertFalse(b.tripped("stoneprofits"))
+        # ...while the genuine failure it is easily mistaken for still counts.
+        for _ in range(3):
+            b.record("stoneprofits", False, "Timeout 30000ms exceeded")
+        self.assertTrue(b.tripped("stoneprofits"))
+
+    def test_a_trip_inside_the_retry_pass_is_still_reported(self):
+        # The retry builds its own breaker, so it can abandon hosts of its own. Interleaved
+        # successes keep the main pass under the limit while the retry list — errors only —
+        # runs straight through it, which makes this the one place a cap could go unlogged.
+        import asyncio
+        from stonescan import ingest, providers
+        from stonescan.ingest import run_all
+        from stonescan.providers.base import SupplierData
+
+        good = {"s1.example.com", "s2.example.com"}
+
+        async def crawl(entry, **kw):
+            h = entry["host"]
+            if h in good:
+                return SupplierData(host=h, ok=True, materials=[], error="")
+            return SupplierData(host=h, ok=False, error="403 Forbidden")
+
+        orig_get = providers.get
+        providers.get = lambda name: crawl if name == "mix" else orig_get(name)
+        self.addCleanup(setattr, providers, "get", orig_get)
+        orig = ingest.PROVIDER_ERROR_LIMIT
+        ingest.PROVIDER_ERROR_LIMIT = 3
+        self.addCleanup(setattr, ingest, "PROVIDER_ERROR_LIMIT", orig)
+
+        hosts = ["e1.example.com", "e2.example.com", "s1.example.com", "e3.example.com",
+                 "e4.example.com", "s2.example.com", "e5.example.com", "e6.example.com"]
+        asyncio.run(run_all([{"host": h, "provider": "mix"} for h in hosts],
+                            db_path=self.path, retry_errored=True))
+
+        log = Path(self.path).resolve().parent / "refresh-history.log"
+        self.assertIn("circuit breaker", log.read_text(encoding="utf-8"),
+                      "a cap applied during the retry pass went unrecorded")
+
+    def test_one_dead_provider_does_not_abandon_a_healthy_one(self):
+        from stonescan.ingest import _Breaker
+        b = _Breaker(limit=2)
+        b.record("slabware", False, "403 Forbidden")
+        b.record("slabware", False, "403 Forbidden")
+        self.assertTrue(b.tripped("slabware"))
+        self.assertFalse(b.tripped("umi"))
+
+    def test_abandoned_hosts_are_neither_recorded_nor_retried(self):
+        import asyncio
+        from stonescan import ingest
+        from stonescan.ingest import run_all
+
+        hosts = [f"h{i}.example.com" for i in range(10)]
+        for h in hosts:
+            self._supplier_row(h, empty_streak=1, last_error="old error")
+        attempted = _register_fake_provider(self)
+
+        orig = ingest.PROVIDER_ERROR_LIMIT
+        ingest.PROVIDER_ERROR_LIMIT = 3
+        self.addCleanup(setattr, ingest, "PROVIDER_ERROR_LIMIT", orig)
+
+        asyncio.run(run_all([{"host": h, "provider": "fake"} for h in hosts],
+                            db_path=self.path, retry_errored=True))
+
+        # AC-5: stopped at the limit instead of grinding through all ten.
+        self.assertEqual(attempted, hosts[:3])
+        # AC-7: the seven it never asked must look exactly as they did before the run. If a
+        # skipped host banked an empty crawl, three such nights would auto-reject a healthy
+        # supplier we never actually contacted — the breaker manufacturing its own evidence.
+        for h in hosts[3:]:
+            row = self._row(h)
+            self.assertEqual(row["empty_streak"], 1, f"{h}: streak moved without a crawl")
+            self.assertEqual(row["last_error"], "old error", f"{h}: last_error overwritten")
+
+    def test_the_retry_pass_skips_an_abandoned_provider_but_not_a_healthy_one(self):
+        import asyncio
+        from stonescan import ingest
+        from stonescan.ingest import run_all
+        from stonescan import providers
+        from stonescan.providers.base import SupplierData
+
+        # 'dead' washes out; 'live' fails once, which is a normal retryable blip.
+        attempted: list[str] = []
+
+        async def crawl(entry, **kw):
+            attempted.append(entry["host"])
+            return SupplierData(host=entry["host"], ok=False, error="403 Forbidden")
+
+        orig_get = providers.get
+        providers.get = lambda name: crawl if name in ("dead", "live") else orig_get(name)
+        self.addCleanup(setattr, providers, "get", orig_get)
+
+        orig = ingest.PROVIDER_ERROR_LIMIT
+        ingest.PROVIDER_ERROR_LIMIT = 2
+        self.addCleanup(setattr, ingest, "PROVIDER_ERROR_LIMIT", orig)
+
+        entries = ([{"host": f"d{i}.example.com", "provider": "dead"} for i in range(4)]
+                   + [{"host": "l0.example.com", "provider": "live"}])
+        asyncio.run(run_all(entries, db_path=self.path, retry_errored=True))
+
+        # The dead provider is asked twice, then abandoned and kept out of the retry.
+        self.assertEqual([h for h in attempted if h.startswith("d")],
+                         ["d0.example.com", "d1.example.com"])
+        # The healthy provider still gets its retry — the breaker is per provider, and AC-8
+        # must not turn into "one bad platform disables retries for everyone".
+        self.assertEqual([h for h in attempted if h.startswith("l")],
+                         ["l0.example.com", "l0.example.com"])
+
+
 class StorefrontFilterTests(unittest.TestCase):
     """A mirror that is really a single-type storefront (American Quartz sells only KLZ's
     quartz) can be re-scoped to that type — but only after a human confirms, and never in a
