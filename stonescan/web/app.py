@@ -350,6 +350,7 @@ def _invalidate_caches() -> None:
     _alert_cache.clear()  # a crawl adds a snapshot -> new change events / badge count
     _NAME_WORDS = None  # the fuzzy-match vocabulary is derived from the catalog too
     db._stats_cache.clear()
+    db._residue_cache.clear()   # which suppliers serve residue changes only on a crawl
 
 
 def _db_path(conn) -> str:
@@ -799,6 +800,20 @@ def index(
         limit=limit, offset=offset,
     )
     _attach_rep_photos(conn, rows)
+    # Mark rows drawing on a supplier that is serving residue. Applied here, after _search
+    # returns, so it holds for all three search paths (rollup, FTS, live) — a column on
+    # product_rollup would only have covered the first.
+    #
+    # Skipped once a filter narrows which suppliers contribute: the row then aggregates a
+    # subset, while the residue lookup still sees the whole catalog, so the chip would
+    # accuse a row whose visible contributors are all current. Filter to one healthy
+    # supplier and the warning must not follow you there.
+    _narrowed = db.narrows_contributors(
+        supplier=supplier, location=location, near=origin, in_stock=in_stock,
+        min_length=min_length, min_width=min_width, min_sqft=min_sqft)
+    _stale = set() if _narrowed else db.groups_with_residue(conn, rows)
+    for _r in rows:
+        _r["has_residue"] = (_r.get("material_key") or f"id:{_r.get('id')}") in _stale
     ctx = {
         "request": request,
         "rows": rows,
@@ -1010,7 +1025,7 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
     m = conn.execute(
         """SELECT m.*, COALESCE(NULLIF(s.company,''), s.host) AS supplier_name,
                   s.host AS supplier_host, s.products AS supplier_products,
-                  s.last_crawled AS supplier_updated,
+                  s.last_crawled AS supplier_attempted, s.last_error AS supplier_error,
                   s.phone AS supplier_phone, s.email AS supplier_email,
                   s.token AS supplier_token
            FROM materials m JOIN suppliers s ON s.id = m.supplier_id
@@ -1022,6 +1037,9 @@ def item(request: Request, id: int, added: int = -1, list: int = 0):
         return HTMLResponse("<p style='padding:40px;font-family:sans-serif'>Item not found. "
                             "<a href='/'>Back to search</a></p>", status_code=404)
     m = dict(m)
+    # Is this supplier serving rows its last crawl failed to replace? Cheap: the residue set
+    # is a handful of suppliers out of ~141.
+    m["is_residue"] = m.get("supplier_id") in db.residue_supplier_ids(conn)
     # Every supplier that carries this material (one row per supplier).
     others = conn.execute(
         f"""SELECT COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host,
@@ -2027,6 +2045,29 @@ def quality_types(request: Request):
     return templates.TemplateResponse(request, "quality_types.html", ctx)
 
 
+def discovery_status(*, probed: bool, items: int, error: str) -> str:
+    """Which triage bucket a discovery candidate belongs in (a triage rejection wins earlier).
+
+    The ERROR is examined before the item count, and that order is the whole point. Six
+    SlabWare hosts carry items > 0 alongside a 403 on their latest attempt, because a failed
+    crawl leaves the previous rows in place — up to 18 days old. Counting those as "live"
+    told this page SlabWare had 9 working catalogs when it had 3, which is the opposite of
+    what a triage view is for.
+
+    A pure function so the ordering is testable; the route only maps the result to a list.
+    """
+    from ..robots import is_block_error
+    if not probed:
+        return "unprobed"
+    if is_block_error(error):
+        # Declined, not broken. Filing a supplier who told us not to crawl them under
+        # "errored" invites someone to go fix it.
+        return "blocked"
+    if error:
+        return "broken"
+    return "live" if items > 0 else "empty"
+
+
 @app.get("/discovery", response_class=HTMLResponse)
 def discovery(request: Request):
     """Triage the discovery pipeline: which suppliers.json candidates are live public
@@ -2037,7 +2078,6 @@ def discovery(request: Request):
     entries = discover.load_suppliers()
     rows = {r["host"]: dict(r) for r in conn.execute(
         "SELECT host, company, item_count, slab_count, last_crawled, last_error FROM suppliers")}
-    from ..robots import is_block_error
     from datetime import date
     today = date.today()
     cats: dict[str, list] = {"unprobed": [], "empty": [], "broken": [], "blocked": [],
@@ -2065,18 +2105,9 @@ def discovery(request: Request):
         if rej:
             rec.update(status="rejected", reason=rej.reason, rejected_at=rej.at.isoformat(),
                        days_left=rej.days_until_lapse(today), active=rej.is_active(today))
-        elif r is None:
-            rec["status"] = "unprobed"
-        elif rec["items"] > 0:
-            rec["status"] = "live"
-        elif is_block_error(rec["error"]):
-            # Declined, not broken. Filing a supplier who told us not to crawl them
-            # under "errored" invites someone to go fix it.
-            rec["status"] = "blocked"
-        elif rec["error"]:
-            rec["status"] = "broken"
         else:
-            rec["status"] = "empty"
+            rec["status"] = discovery_status(probed=r is not None, items=rec["items"],
+                                             error=rec["error"])
         cats[rec["status"]].append(rec)
         p = by_provider.setdefault(rec["provider"],
                                    {"provider": rec["provider"], "total": 0, "live": 0, "materials": 0})
