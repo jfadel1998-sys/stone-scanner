@@ -39,16 +39,44 @@ foreach ($cand in @("browsers", ".browsers", "dist\StoneScanner\browsers")) {
 # Tee-Object (UTF-16LE) into the same file, so the log came out as garbled spaced-out
 # characters that couldn't be grepped — useless for diagnosing a failed run. Everything
 # now goes through Write-Log, which appends UTF-8 and echoes to the console.
+# Every write to the log is best-effort. The log lives on the project drive, which is
+# removable and has gone away mid-run; with $ErrorActionPreference = "Stop" a single failed
+# Add-Content terminated THIS script, which broke the pipe its Python child was writing to,
+# which killed a three-hour crawl on its next print. Losing log lines is a cosmetic problem.
+# Losing the crawl is not. (-ErrorAction Stop is belt-and-braces: the script-level "Stop"
+# preference already promotes Add-Content's non-terminating failure into the catch, but the
+# explicit switch keeps this function correct if that preference is ever relaxed — as
+# Invoke-Logged below now does deliberately.)
+function Write-LogLine([string]$line) {
+    try { Add-Content -Path $log -Value $line -Encoding utf8 -ErrorAction Stop } catch { }
+}
 function Write-Log([string]$msg) {
     $line = "{0}  {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
-    Add-Content -Path $log -Value $line -Encoding utf8
+    Write-LogLine $line
     Write-Host $line
 }
 function Invoke-Logged {
     # Run a native command, tee-ing its output into the log in one encoding.
     param([string]$file, [string[]]$cmdArgs)
-    & $file @cmdArgs 2>&1 |
-        ForEach-Object { Add-Content -Path $log -Value ([string]$_) -Encoding utf8; Write-Host $_ }
+    # Windows PowerShell 5.1 wraps each line a native command writes to stderr in an
+    # ErrorRecord, and "Stop" promotes the FIRST of them to a terminating error — killing
+    # this script mid-pipeline and, with it, the child's stdout pipe. That is the same
+    # failure this file's logging fix exists to prevent, arriving through a different door,
+    # and it is not hypothetical: `imagesearch --index` emits PIL warnings (palette
+    # transparency, DecompressionBomb) on stderr during any large index, which runs on every
+    # nightly whose crawl succeeded. The parent would die at that line, so the crawl's real
+    # exit code and the "refresh finished" line would both be lost.
+    #
+    # A native command's stderr is output, not a PowerShell error, so relax the preference
+    # for exactly the length of the pipeline and put it back afterwards.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $file @cmdArgs 2>&1 |
+            ForEach-Object { Write-LogLine ([string]$_); Write-Host $_ }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
     return $LASTEXITCODE
 }
 

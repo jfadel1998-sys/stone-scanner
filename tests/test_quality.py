@@ -1797,6 +1797,114 @@ class _SuppliersFileCase(unittest.TestCase):
             conn.close()
 
 
+class _DeadStdout:
+    """A stdout whose every write raises, like a pipe whose reader has gone."""
+
+    def __init__(self, exc):
+        self.exc = exc
+        self.attempts = 0
+
+    def write(self, *a, **k):
+        self.attempts += 1
+        raise self.exc
+
+    def flush(self, *a, **k):
+        pass
+
+
+class OutputFailureTests(_SuppliersFileCase):
+    """AIL-27: on 2026-08-03 a three-hour crawl committed every row, then died on a cosmetic
+    print() thirteen lines before reconcile_rejections. It was recorded FAILED despite having
+    succeeded, and the 249 rejections it earned went unstamped."""
+
+    def _run_with_dead_stdout(self, exc, entries=()):
+        """Run a crawl whose every console write raises, and give back the sink."""
+        import asyncio
+        from stonescan.ingest import run_all
+        sink = _DeadStdout(exc)
+        real = sys.stdout
+        sys.stdout = sink
+        try:
+            asyncio.run(run_all(list(entries), db_path=self.path))   # must NOT raise
+        finally:
+            sys.stdout = real
+        return sink
+
+    def _history(self):
+        return (Path(self.path).resolve().parent / "refresh-history.log").read_text(
+            encoding="utf-8")
+
+    def test_an_oserror_on_write_does_not_end_the_run(self):
+        # The exact shape of 8/3: EINVAL, not EPIPE, because on Windows that is how a write
+        # to a dead pipe surfaces.
+        sink = self._run_with_dead_stdout(OSError(22, "Invalid argument"))
+        self.assertGreater(sink.attempts, 0, "the test never actually exercised a write")
+        self.assertIn("Done", self._history())
+
+    def test_a_unicode_error_on_write_does_not_end_the_run(self):
+        # The same bug in a different coat: a supplier name the console's cp1252 codepage
+        # cannot encode. Catching only OSError would leave this one fatal.
+        self._run_with_dead_stdout(
+            UnicodeEncodeError("charmap", "→", 0, 1, "character maps to <undefined>"))
+        self.assertIn("Done", self._history())
+
+    def test_the_run_still_completes_its_tail_and_records_done_not_failed(self):
+        # AC-5 + AC-6, the actual regression: the work AFTER the last DB write must happen.
+        # reconcile_rejections is the specific casualty from 8/3.
+        from stonescan import discover as disc
+        called = []
+        real = disc.reconcile_rejections
+
+        def spy(*a, **k):
+            called.append(True)
+            return real(*a, **k)
+
+        disc.reconcile_rejections = spy
+        self.addCleanup(setattr, disc, "reconcile_rejections", real)
+
+        self._run_with_dead_stdout(OSError(22, "Invalid argument"))
+        self.assertTrue(called, "reconcile_rejections never ran — the tail died again")
+        hist = self._history()
+        self.assertIn("Done", hist)
+        self.assertNotIn("FAILED", hist)
+
+    def test_many_failed_writes_leave_exactly_one_note(self):
+        # A crawl prints per supplier; one line per failure would bury the history log.
+        for i in range(6):
+            self._supplier_row(f"h{i}.example.com")
+        attempted = _register_fake_provider(self)
+        sink = self._run_with_dead_stdout(
+            OSError(22, "Invalid argument"),
+            [{"host": f"h{i}.example.com", "provider": "fake"} for i in range(6)])
+        self.assertEqual(len(attempted), 6)
+        self.assertGreater(sink.attempts, 6, "not enough writes failed to prove the point")
+        notes = [ln for ln in self._history().splitlines() if "console output lost" in ln]
+        self.assertEqual(len(notes), 1, f"expected exactly one note, got {len(notes)}")
+        self.assertIn("OSError", notes[0])
+
+    def test_state_resets_so_a_second_run_can_report_its_own_failure(self):
+        # The web Refresh button starts a second crawl in the same process. A stuck flag
+        # would leave that run silently mute about its own console dying.
+        self._run_with_dead_stdout(OSError(22, "Invalid argument"))
+        self._run_with_dead_stdout(OSError(22, "Invalid argument"))
+        notes = [ln for ln in self._history().splitlines() if "console output lost" in ln]
+        self.assertEqual(len(notes), 2, "the second run did not report its own output loss")
+
+    def test_a_healthy_run_leaves_no_note_and_still_prints(self):
+        import asyncio
+        import io
+        from stonescan.ingest import run_all
+        buf = io.StringIO()
+        real = sys.stdout
+        sys.stdout = buf
+        try:
+            asyncio.run(run_all([], db_path=self.path))
+        finally:
+            sys.stdout = real
+        self.assertIn("product rollup", buf.getvalue(), "say() stopped printing")
+        self.assertNotIn("console output lost", self._history())
+
+
 class RefreshLedgerTests(_SuppliersFileCase):
     """AIL-20: refresh-history.log only gets a terminal line if the process reaches the end
     of run_all, so a run killed mid-crawl left nothing at all — 4 of 11 logged runs have a
