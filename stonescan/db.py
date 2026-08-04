@@ -73,6 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_mat_type       ON materials(material_type);
 CREATE INDEX IF NOT EXISTS idx_mat_name       ON materials(name_norm);
 CREATE INDEX IF NOT EXISTS idx_mat_color      ON materials(color);
 CREATE INDEX IF NOT EXISTS idx_mat_thickness  ON materials(thickness);
+CREATE INDEX IF NOT EXISTS idx_mat_finish     ON materials(finish);
 CREATE INDEX IF NOT EXISTS idx_mat_supplier   ON materials(supplier_id);
 
 CREATE TABLE IF NOT EXISTS slabs (

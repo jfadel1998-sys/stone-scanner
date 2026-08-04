@@ -21,6 +21,7 @@ from ..normalize import (
     canonical_type,
     clean_color,
     clean_name,
+    derive_finish,
     material_key,
     normalize_thickness,
 )
@@ -87,7 +88,9 @@ def material_row(
         "category": category or "",
         "subcategory": subcategory or "",
         "color": clean_color(color),
-        "finish": (finish or "").strip(),
+        # Derived here as well as in reclassify: a crawl replaces the supplier's rows
+        # wholesale, so a reclassify-only value would survive less than a day.
+        "finish": derive_finish(nm, finish or ""),
         "thickness": thk,
         "product_form": (product_form or "").strip().upper(),
         "origin": (origin or "").strip(),
