@@ -985,6 +985,12 @@ footer {
 .alert-new  { border-left-color: var(--gold); }
 .alert-drop { border-left-color: var(--brick); }
 .alert-out  { border-left-color: var(--brick); }
+/* Delisted is the end of the down direction, not a deeper shade of sold-out: the listing is
+   gone from the catalog rather than at zero. Muted rather than red — a supplier retiring a
+   line is normal, and colouring it as alarm would drown the sold-outs that are actionable. */
+.alert-gone { border-left-color: var(--line-strong); }
+.alert-gone .alert-change { color: var(--muted); font-style: italic; }
+.delist-skip { margin-top: 18px; }
 
 /* Unread rows: a subtle tint + the NEW chip until the page marks them seen. */
 .alert-unread { background: var(--accent-soft); }

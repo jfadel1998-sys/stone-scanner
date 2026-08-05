@@ -1700,11 +1700,17 @@ def _stock_changes(conn) -> tuple[list[dict], list[dict], bool]:
 # variants that snapshot_history writes as separate rows — so a listing's stock is one
 # number per date and a variant split can't masquerade as a drop.
 
-_ALERT_ROWS_SQL = """
+# The two alert queries share these CTEs verbatim rather than each defining its own, so the
+# per-supplier-latest-vs-its-own-previous comparison cannot come to mean two different things
+# in the same digest. Any two GLOBAL dates rarely cover the same suppliers — the 9 dates in
+# the live table cover 65/83/6/18/3/85/17/115/19 of them — so "since yesterday" across dates
+# is fiction, and it is fiction that would read as plausible if the two queries drifted.
+_ALERT_CTES = """
 WITH agg AS (
     SELECT supplier_id, snapshot_date, name_norm, thickness,
            SUM(slabs) AS slabs, MAX(material_type) AS material_type,
            MAX(color) AS color, MAX(image_url) AS image_url,
+           MAX(material_key) AS material_key,
            MAX(COALESCE(rebased,0)) AS rebased
     FROM history GROUP BY supplier_id, snapshot_date, name_norm, thickness
 ),
@@ -1714,6 +1720,9 @@ prev AS (
     FROM history h JOIN latest l ON l.supplier_id = h.supplier_id AND h.snapshot_date < l.d
     GROUP BY h.supplier_id
 )
+"""
+
+_ALERT_ROWS_SQL = _ALERT_CTES + """
 SELECT a.supplier_id, a.name_norm, a.thickness, a.material_type, a.color, a.image_url,
        a.slabs AS latest_slabs, p.slabs AS prev_slabs, l.d AS latest_date, pr.d AS prev_date,
        a.rebased AS latest_rebased, COALESCE(p.rebased, 0) AS prev_rebased,
@@ -1728,6 +1737,63 @@ LEFT JOIN agg p ON p.supplier_id = a.supplier_id AND p.snapshot_date = pr.d
               AND p.name_norm = a.name_norm AND p.thickness = a.thickness
 JOIN suppliers s ON s.id = a.supplier_id
 """
+
+# Listings that were IN STOCK at a supplier's previous snapshot and are absent from its
+# latest one — gone from the catalog, not sold out. The digest was structurally blind to
+# these: _ALERT_ROWS_SQL starts FROM agg a JOIN latest, so a row with no latest snapshot
+# never reached _classify_alert at all, and grepping the project for "delist" returned
+# nothing. Absence really does mean removed rather than masking a zero, because history
+# stores zero-stock rows too (22,881 of them carry slabs = 0).
+#
+# The NOT EXISTS deliberately matches on name_norm ALONE, not name_norm + thickness. A
+# listing that comes back at the latest snapshot under a different thickness has been
+# re-listed, not removed, and reporting it as a delisting is a lie about the catalog.
+#
+# No `id` column here, unlike every other kind. The (SELECT MIN(mm.id) FROM materials …)
+# subquery those use is NULL by construction once the material is gone, so these rows carry
+# `material_key` and link to /material instead of a dead /item.
+_DELISTED_ROWS_SQL = _ALERT_CTES + """
+SELECT p.supplier_id, p.name_norm, p.thickness, p.material_type, p.color, p.image_url,
+       p.material_key, p.slabs AS prev_slabs, l.d AS latest_date, pr.d AS prev_date,
+       COALESCE(NULLIF(s.company,''), s.host) AS supplier_name, s.host AS supplier_host
+FROM agg p
+JOIN prev pr  ON pr.supplier_id = p.supplier_id AND p.snapshot_date = pr.d
+JOIN latest l ON l.supplier_id = p.supplier_id
+JOIN suppliers s ON s.id = p.supplier_id
+WHERE p.slabs > 0
+  AND NOT EXISTS (SELECT 1 FROM agg a
+                   WHERE a.supplier_id = p.supplier_id AND a.snapshot_date = l.d
+                     AND a.name_norm = p.name_norm)
+"""
+
+# How many distinct listings each supplier had at its latest snapshot and at its previous
+# one — the sanity check the delisted kind cannot ship without. See _DELIST_COLLAPSE.
+_DELIST_SCALE_SQL = _ALERT_CTES + """
+SELECT l.supplier_id,
+       COALESCE(NULLIF(s.company,''), s.host) AS supplier_name,
+       (SELECT COUNT(DISTINCT name_norm) FROM history x
+         WHERE x.supplier_id = l.supplier_id AND x.snapshot_date = l.d) AS now_names,
+       (SELECT COUNT(DISTINCT name_norm) FROM history x
+         WHERE x.supplier_id = pr.supplier_id AND x.snapshot_date = pr.d) AS prev_names
+FROM latest l JOIN prev pr ON pr.supplier_id = l.supplier_id
+JOIN suppliers s ON s.id = l.supplier_id
+"""
+
+# A supplier that lost more than this share of its listings in one crawl did not sell them.
+# Measured: 133 of 134 suppliers lose under 2.5% between their two most recent snapshots.
+# The one exception is americanquartz at 81.2% (848 -> 159), and it is not a sell-off — a
+# curator confirmed a storefront filter on 2026-07-29 re-scoping that mirror to Quartz only,
+# so the rest of the catalog was deliberately removed. Left unguarded it would supply 566 of
+# 957 delistings and, with the 300-row cap, crowd out nearly every real one.
+#
+# The same signature covers the other way this goes wrong: a crawl that half-succeeded
+# behind Cloudflare looks identical to a mass delisting from history alone.
+#
+# 0.5 sits an order of magnitude clear of both ends, so it is a statement rather than a fit:
+# more than half a catalog vanishing between two crawls is a re-scope or a partial crawl.
+# Suppressed suppliers are NAMED on the page — silently dropping them would be the same
+# invisible failure this whole section exists to end.
+_DELIST_COLLAPSE = 0.5
 
 # A sharp drop: fell to <= half AND by at least this many slabs (the absolute floor keeps
 # routine 2->1 sales out). A sold-out (in-stock -> 0) is its own kind, not a "drop".
@@ -1758,7 +1824,36 @@ def _classify_alert(latest: int, prev, *, crossed_rebase: bool = False):
     return None
 
 
-_ALERT_KINDS = ("restock", "listed", "dropped", "soldout")
+_ALERT_KINDS = ("restock", "listed", "dropped", "soldout", "delisted")
+
+
+def _delisted(conn) -> tuple[list[dict], list[dict]]:
+    """(delisted listings, suppliers whose catalog collapsed and were therefore skipped).
+
+    Kept out of `_classify_alert` on purpose: that function classifies a latest-vs-previous
+    pair of numbers, and the whole point here is that there is no latest row to pair with.
+    """
+    skipped, suppress = [], set()
+    for r in conn.execute(_DELIST_SCALE_SQL):
+        prev_n, now_n = r["prev_names"] or 0, r["now_names"] or 0
+        if prev_n and (prev_n - now_n) / prev_n > _DELIST_COLLAPSE:
+            suppress.add(r["supplier_id"])
+            skipped.append({"supplier_name": r["supplier_name"],
+                            "prev_names": prev_n, "now_names": now_n})
+    out = []
+    for r in conn.execute(_DELISTED_ROWS_SQL):
+        if r["supplier_id"] in suppress:
+            continue
+        item = dict(r)
+        item["kind"] = "delisted"
+        item["id"] = None            # explicit: there is no material row left to link to
+        item["latest_slabs"] = 0
+        item["sig"] = (f"delisted|{r['supplier_id']}|{r['name_norm']}|{r['thickness']}"
+                       f"|{r['latest_date']}")
+        out.append(item)
+    out.sort(key=lambda x: -(x["prev_slabs"] or 0))
+    skipped.sort(key=lambda s: s["prev_names"] - s["now_names"], reverse=True)
+    return out, skipped
 
 
 def _alert_digest(conn) -> dict:
@@ -1774,9 +1869,11 @@ def _alert_digest(conn) -> dict:
     ).fetchone() is not None
     digest = {k: [] for k in _ALERT_KINDS}
     digest["has_baseline"] = has_baseline
+    digest["delist_skipped"] = []
     if not has_baseline:
         _alert_cache[sk] = (time.time(), digest)
         return digest
+    digest["delisted"], digest["delist_skipped"] = _delisted(conn)
     for r in conn.execute(_ALERT_ROWS_SQL).fetchall():
         latest = r["latest_slabs"] or 0
         prev = r["prev_slabs"]  # None => absent at previous snapshot
@@ -1796,6 +1893,7 @@ def _alert_digest(conn) -> dict:
     digest["listed"].sort(key=lambda x: -(x["latest_slabs"] or 0))
     digest["dropped"].sort(key=lambda x: -((x["prev_slabs"] or 0) - (x["latest_slabs"] or 0)))
     digest["soldout"].sort(key=lambda x: -(x["prev_slabs"] or 0))
+    # "delisted" is already sorted inside _delisted(); the cap below still applies to it.
     for k in _ALERT_KINDS:
         digest[k] = digest[k][:300]
     _alert_cache[sk] = (time.time(), digest)

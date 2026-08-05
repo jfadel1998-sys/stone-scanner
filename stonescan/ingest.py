@@ -499,6 +499,9 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             # re-take today's for everyone who has one. Otherwise history keeps the
             # pre-collapse numbers and the next digest reads it as a catalog-wide sell-off.
             resnapped = db.resnapshot_history(conn, utc_now_iso()[:10])
+            # Then drop what no reader can see. AFTER the re-snapshot, so today's row is
+            # already in its final form and counts as one of the kept ones.
+            pruned = db.prune_history(conn, db.HISTORY_KEEP)
             # Flag duplicate-catalog storefronts (one tenant under two supplier names) so they
             # aren't double-counted in supplier totals/facets. Recomputed here every crawl.
             mirrors = db.detect_mirrors(conn)
@@ -524,6 +527,9 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         if collapsed:
             say(f"  slab counts: collapsed {collapsed} multi-row item(s) to one figure each."
                   f" Re-snapshotted history for {resnapped} supplier(s).")
+        if pruned:
+            say(f"  history: pruned {pruned} row(s) beyond each supplier's newest "
+                  f"{db.HISTORY_KEEP} snapshots.")
         if mirrors:
             say(f"  mirrors: {len(mirrors)} duplicate storefront(s) flagged, excluded "
                   f"from supplier counts ({', '.join(m['mirror_host'] for m in mirrors)}).")

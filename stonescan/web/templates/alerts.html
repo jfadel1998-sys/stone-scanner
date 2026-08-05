@@ -5,11 +5,19 @@
 <div class="stats">{% include "_freshness.html" %}</div>
 {% endblock %}
 
-{# One change row. `change` is the pre-formatted quantity delta for this kind. #}
+{# One change row. `change` is the pre-formatted quantity delta for this kind.
+
+   Where the row points depends on whether the material still exists. Four of the five kinds
+   describe a listing that is still in the catalog, so they link to /item. A DELISTED one is
+   gone by definition — the digest's usual (SELECT MIN(mm.id) FROM materials …) is NULL for
+   it — so it links to the canonical /material page for the stone, which still has every
+   other supplier who carries it. That is also the more useful destination: someone reading
+   a delisting wants to know who else has it. #}
 {% macro alert_row(it, change) -%}
+{% set href = ('/item?id=' ~ it.id) if it.id else (('/material?key=' ~ it.material_key|urlencode) if it.material_key else '') %}
 <tr class="{{ 'alert-unread' if it.unread }}">
-  <td class="thumbcell">{% if it.id %}<a href="/item?id={{ it.id }}">{% endif %}{% if it.image_url %}<img class="thumb" loading="lazy" src="{{ it.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}{% if it.id %}</a>{% endif %}</td>
-  <td class="name">{% if it.id %}<a class="itemlink" href="/item?id={{ it.id }}">{{ it.name_norm|title }}</a>{% else %}{{ it.name_norm|title }}{% endif %}{% if it.unread %} <span class="new">NEW</span>{% endif %}</td>
+  <td class="thumbcell">{% if href %}<a href="{{ href }}">{% endif %}{% if it.image_url %}<img class="thumb" loading="lazy" src="{{ it.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}{% if href %}</a>{% endif %}</td>
+  <td class="name">{% if href %}<a class="itemlink" href="{{ href }}">{{ it.name_norm|title }}</a>{% else %}{{ it.name_norm|title }}{% endif %}{% if it.unread %} <span class="new">NEW</span>{% endif %}</td>
   <td>{{ it.material_type }}</td>
   <td>{% if it.color %}<span class="chip">{{ it.color }}</span>{% endif %}</td>
   <td>{{ it.thickness }}</td>
@@ -28,6 +36,7 @@
       {% for it in items %}
         {% if kind == 'dropped' %}{{ alert_row(it, it.prev_slabs ~ ' → ' ~ it.latest_slabs) }}
         {% elif kind == 'soldout' %}{{ alert_row(it, it.prev_slabs ~ ' → 0') }}
+        {% elif kind == 'delisted' %}{{ alert_row(it, it.prev_slabs ~ ' → gone') }}
         {% elif kind == 'restock' %}{{ alert_row(it, '0 → ' ~ it.latest_slabs) }}
         {% else %}{{ alert_row(it, it.latest_slabs) }}{% endif %}
       {% endfor %}
@@ -53,14 +62,24 @@
 <div class="alert-empty">
   <p class="alert-empty-icon">✓</p>
   <h2>Nothing changed</h2>
-  <p>No restocks, new listings, sharp drops or sold-outs since each supplier's previous crawl.</p>
+  <p>No restocks, new listings, sharp drops, sold-outs or delistings since each supplier's previous crawl.</p>
 </div>
 {% else %}
 {{ alert_section('alert-up', '↑ Restocked', "listed with zero stock at the supplier's previous crawl, in stock now", digest.restock, 'restock') }}
 {{ alert_section('alert-new', '✨ New listings', "first seen in the supplier's latest crawl", digest.listed, 'listed') }}
 {{ alert_section('alert-drop', '↓ Sharp drops', "fell to half or less (and by ≥5 slabs) since the previous crawl", digest.dropped, 'dropped') }}
 {{ alert_section('alert-out', '✖ Sold out', "in stock at the previous crawl, zero now", digest.soldout, 'soldout') }}
+{{ alert_section('alert-gone', '⌫ Delisted', "in stock at the previous crawl, no longer in the catalog at all", digest.delisted, 'delisted') }}
+{% endif %}
+
+{% if digest.delist_skipped %}
+{# Named rather than silently dropped. A supplier that loses more than half its listings in
+   one crawl has been re-scoped or was crawled incompletely, not sold out — but that is a
+   judgement the page makes, so the page has to own it where someone can check. #}
+<p class="hintline muted delist-skip">Delistings were not reported for
+  {% for s in digest.delist_skipped %}<b>{{ s.supplier_name }}</b> ({{ s.prev_names }} listings → {{ s.now_names }}){{ ', ' if not loop.last }}{% endfor %}.
+  Losing more than half a catalog between two crawls means it was re-scoped or crawled incompletely — not that the stone sold.</p>
 {% endif %}
 {% endblock %}
 
-{% block footer %}Changes are detected by comparing each supplier's two most recent crawls. Quantities are slab counts (tile area is excluded).{% endblock %}
+{% block footer %}Changes are detected by comparing each supplier's two most recent crawls. Quantities are slab counts (tile area is excluded). A delisted listing links to its canonical material page, since the supplier's own item no longer exists.{% endblock %}

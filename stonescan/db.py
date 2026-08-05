@@ -75,6 +75,13 @@ CREATE INDEX IF NOT EXISTS idx_mat_color      ON materials(color);
 CREATE INDEX IF NOT EXISTS idx_mat_thickness  ON materials(thickness);
 CREATE INDEX IF NOT EXISTS idx_mat_finish     ON materials(finish);
 CREATE INDEX IF NOT EXISTS idx_mat_supplier   ON materials(supplier_id);
+-- The alert digest resolves each changed listing back to a material with a correlated
+-- (SELECT MIN(mm.id) … WHERE supplier_id = ? AND name_norm = ? AND thickness = ?), once per
+-- output row. On idx_mat_supplier alone that re-scans the supplier's whole catalog every
+-- time: measured at 24.62s of the query's 25.66s, i.e. 96% of /alerts. The history index
+-- below is the fix the issue predicted and it made no difference to this page at all —
+-- worth remembering before optimising the half of a join you happen to be looking at.
+CREATE INDEX IF NOT EXISTS idx_mat_grp        ON materials(supplier_id, name_norm, thickness);
 
 CREATE TABLE IF NOT EXISTS slabs (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,6 +116,11 @@ CREATE TABLE IF NOT EXISTS history (
 CREATE INDEX IF NOT EXISTS idx_hist_date ON history(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_hist_key  ON history(material_key);
 CREATE INDEX IF NOT EXISTS idx_hist_grp  ON history(supplier_id, name_norm, thickness);
+-- Every reader of this table works PER SUPPLIER — each supplier's latest snapshot against
+-- its own previous one — and none of the three indexes above leads with supplier_id alone,
+-- so the alert digest and _stock_changes both scanned all 211,238 rows repeatedly. /alerts
+-- measured 30.7s cold and 29.2s warm before this.
+CREATE INDEX IF NOT EXISTS idx_hist_sup_date ON history(supplier_id, snapshot_date);
 
 -- Saved searches the user wants to keep an eye on.
 CREATE TABLE IF NOT EXISTS watchlist (
@@ -714,6 +726,39 @@ def snapshot_history(conn: sqlite3.Connection, supplier_id: int, snapshot_date: 
     )
     conn.commit()
     return cur.rowcount
+
+
+# Snapshots to keep PER SUPPLIER. Every reader compares a supplier's latest against its own
+# immediately previous one, so two is the working set and three leaves one spare for anything
+# that wants to look one step further back.
+#
+# Per supplier, never per global date, and the difference is not cosmetic: the 9 dates in the
+# live table cover 65/83/6/18/3/85/17/115/19 suppliers respectively, so "keep the 3 most
+# recent dates" would delete the entire history of a supplier last crawled on one of the
+# older ones. Its next alert digest would then have no baseline at all.
+HISTORY_KEEP = 3
+
+
+def prune_history(conn: sqlite3.Connection, keep: int = HISTORY_KEEP) -> int:
+    """Drop each supplier's snapshots beyond its `keep` most recent. Returns rows deleted.
+
+    DENSE_RANK over DISTINCT (supplier_id, snapshot_date) so the rank counts snapshots, not
+    rows — a supplier with 800 listings on one date must not have that date rank 800 times.
+    """
+    keep = max(int(keep), 2)          # two is the working set; below that the digest breaks
+    before = conn.total_changes
+    conn.execute(
+        """WITH ranked AS (
+               SELECT supplier_id, snapshot_date,
+                      DENSE_RANK() OVER (PARTITION BY supplier_id
+                                             ORDER BY snapshot_date DESC) rk
+                 FROM (SELECT DISTINCT supplier_id, snapshot_date FROM history)
+           )
+           DELETE FROM history WHERE (supplier_id, snapshot_date) IN
+               (SELECT supplier_id, snapshot_date FROM ranked WHERE rk > ?)""",
+        (keep,))
+    conn.commit()
+    return conn.total_changes - before
 
 
 def resnapshot_history(conn: sqlite3.Connection, snapshot_date: str) -> int:
