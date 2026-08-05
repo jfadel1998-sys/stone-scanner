@@ -3543,9 +3543,17 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         # because someone rebuilt the exe is worse.
         build = Path("build_exe.ps1").read_text(encoding="utf-8")
         self.assertIn("/MIR", build)
-        self.assertIn("/XD data", build)
-        self.assertIn("$LASTEXITCODE -ge 8", build,
+        # A FULL PATH, never the bare name. robocopy matches a bare /XD name at every depth,
+        # so `/XD data` also skipped _internal\geonamescache\data — 164 MB of offline city
+        # coordinates, the only source geocode.py resolves the map from. The copy launched
+        # and looked healthy; its map simply had nothing to resolve against. Caught by
+        # diffing the two trees after the first real build, which is the only way it shows.
+        self.assertIn('/XD (Join-Path $local "data")', build)
+        self.assertNotIn("/XD data ", build, "a bare /XD name matches at every depth")
+        self.assertIn("$sync -ge 8", build,
                       "robocopy's exit code is a bitmask; 1-7 are success")
+        self.assertIn("$global:LASTEXITCODE = 0", build,
+                      "robocopy's bitmask must not become the script's own exit code")
 
 
 class LostNightsTests(_SuppliersFileCase):

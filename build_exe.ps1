@@ -44,26 +44,36 @@ foreach ($f in @("refresh.ps1", "install-refresh-task.ps1")) {
 # worth having. A fallback quietly rotting a few releases behind the source is worse than
 # none — it would crawl with old parsing rules into an old schema and report success.
 #
-# /XD data is the important flag. The local copy owns its own data\ folder: desktop.setup_env
-# seeds stonescan.db, suppliers.json, denylist.json and locations.json there on first launch,
-# and a spill crawl's results and its refresh_runs ledger live in it. /MIR would delete the
-# lot on the next build. Excluded directories are not purged.
+# The exclusion is the important flag, and it must name the ONE directory it means. The local
+# copy owns its own top-level data\ folder: desktop.setup_env seeds stonescan.db,
+# suppliers.json, denylist.json and locations.json there on first launch, and a spill crawl's
+# results and its refresh_runs ledger live in it. /MIR would delete the lot on the next build.
+#
+# `/XD data` — the bare NAME — was wrong, and the first real build proved it: robocopy matches
+# a bare name at every depth, so it also skipped _internal\geonamescache\data (164 MB of
+# offline city coordinates, which is the entire source geocode.py resolves the map from) and
+# _internal\stonescan\data\us_zips.json.gz. The copy launched and looked fine; its map would
+# simply have had nothing to resolve against. A FULL PATH matches only that one directory.
 $local = Join-Path $env:ProgramData "StoneScanner"
 Write-Output "== Syncing to the local fallback copy: $local =="
-robocopy $dist $local /MIR /XD data /NFL /NDL /NJH /NJS /NP | Out-Null
+robocopy $dist $local /MIR /XD (Join-Path $local "data") /NFL /NDL /NJH /NJS /NP | Out-Null
 # robocopy's exit code is a BITMASK, not a status: 1 = files copied, 2 = extra files present,
 # 4 = mismatches, and only >= 8 is a real failure. `if ($LASTEXITCODE)` would treat every
 # build that actually copied something as broken.
-if ($LASTEXITCODE -ge 8) {
-    Write-Warning "Local copy NOT updated (robocopy $LASTEXITCODE) - it is now STALE."
+$sync = $LASTEXITCODE
+if ($sync -ge 8) {
+    Write-Warning "Local copy NOT updated (robocopy $sync) - it is now STALE."
     Write-Warning "  Usually this means the copy is running: close Stone Scanner and re-run"
     Write-Warning "  .\build_exe.ps1 -SkipBuild. Until then a lost drive is still a lost night."
 } else {
     Write-Output "   + local copy updated"
 }
+$global:LASTEXITCODE = 0   # else robocopy's bitmask becomes this SCRIPT's exit code (a
+                           # successful build exited 3, which any caller reads as failure)
 
 $size = "{0:N0} MB" -f ((Get-ChildItem $dist -Recurse | Measure-Object Length -Sum).Sum / 1MB)
 Write-Output ""
 Write-Output "Done. App folder: $dist  ($size)"
 Write-Output "Run it:  $dist\StoneScanner.exe"
 Write-Output "Nightly fallback copy: $local"
+exit 0
