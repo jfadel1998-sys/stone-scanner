@@ -1931,6 +1931,10 @@ def health(request: Request):
     # is blind to it and every scheduled run has been invisible here. This is the durable
     # record; it returns [] rather than raising on a snapshot DB predating the table.
     runs = db.recent_refresh_runs(conn)
+    # A spill crawl happened in a different database on a different drive; without this the
+    # only trace on this page is a night with no run at all, which reads as "nothing
+    # happened" rather than "it happened over there and was folded in".
+    spills = db.recent_spill_merges(conn, limit=3)
     conn.close()
     # What the SCHEDULER thinks, which is a different question from what the runs recorded:
     # a task that never fired leaves no run at all, so the ledger above cannot report it.
@@ -1940,6 +1944,7 @@ def health(request: Request):
     return templates.TemplateResponse(request, "health.html", {
         "rows": rows, "counts": counts, "stats": stats, "total": len(rows),
         "mirrors": mirrors, "proposals": proposals, "runs": runs, "task": task,
+        "spills": spills,
     })
 
 

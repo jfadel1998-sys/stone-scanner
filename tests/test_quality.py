@@ -2520,6 +2520,351 @@ class RefreshLedgerTests(_SuppliersFileCase):
         conn.close()
 
 
+class SpillMergeTests(unittest.TestCase):
+    """AIL-29: this is the only thing besides a crawl that writes into the primary catalog,
+    and unlike a crawl it writes data it did not collect. Every test here is about a way it
+    could damage the thing it is supposed to rescue."""
+
+    def setUp(self):
+        import shutil
+        from stonescan import spill
+        self.spill = spill
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.primary = os.path.join(self.tmp, "primary.db")
+        self.spilldb = os.path.join(self.tmp, "spill.db")
+        db.init_db(self.primary).close()
+        db.init_db(self.spilldb).close()
+
+    # --- fixtures -----------------------------------------------------------
+
+    def _stock(self, path, host, *, when, names=("Alpha",), slabs=3, qty=5.0):
+        """Give a database one supplier's worth of crawl output, stamped `when`."""
+        conn = db.connect(path)
+        sid = db.upsert_supplier(conn, host, last_crawled=when, company=host.split(".")[0])
+        db.replace_materials(conn, sid, [
+            {"supplier_id": sid, "item_id": f"i{i}", "item_name": n, "name_norm": n.lower(),
+             "material_key": f"{n.lower()}|granite", "material_type": "Granite",
+             "available_slabs": slabs, "crawled_at": when, "thickness": "3cm"}
+            for i, n in enumerate(names)])
+        db.replace_slabs(conn, sid, [
+            {"supplier_id": sid, "item_id": "i0", "slab_no": "1", "location": "Yard",
+             "qty": qty, "crawled_at": when}], when)
+        db.snapshot_history(conn, sid, when[:10])
+        conn.commit()
+        conn.close()
+        return sid
+
+    def _names(self, path, host):
+        conn = db.connect(path)
+        try:
+            return sorted(r["item_name"] for r in conn.execute(
+                "SELECT m.item_name FROM materials m JOIN suppliers s ON s.id = m.supplier_id"
+                " WHERE s.host = ?", (host,)))
+        finally:
+            conn.close()
+
+    def _merge(self, **kw):
+        return self.spill.merge_spill(self.primary, self.spilldb, **kw)
+
+    # --- newest wins, per supplier, strictly --------------------------------
+
+    def test_a_newer_spill_supplier_is_merged(self):
+        self._stock(self.primary, "a.example.com", when="2026-08-01T03:00:00", names=("Old",))
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00",
+                    names=("Fresh", "Newer"))
+        r = self._merge()
+        self.assertEqual(r.status, "merged")
+        self.assertEqual(r.moved, ["a.example.com"])
+        self.assertEqual(self._names(self.primary, "a.example.com"), ["Fresh", "Newer"])
+
+    def test_a_stale_spill_supplier_is_left_alone(self):
+        # AC-3. The drive comes back at unpredictable times, so a normal crawl can easily
+        # have already refreshed a supplier by the time anyone merges last night's spill.
+        self._stock(self.primary, "a.example.com", when="2026-08-05T03:00:00", names=("New",))
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", names=("Old",))
+        r = self._merge()
+        self.assertEqual(r.moved, [])
+        self.assertEqual(r.skipped, ["a.example.com"])
+        self.assertEqual(self._names(self.primary, "a.example.com"), ["New"])
+
+    def test_both_directions_inside_one_merge(self):
+        # AC-3 as written: a spill newer for A and older for B must move A ONLY. A merge that
+        # decided per-spill rather than per-supplier would get one of these wrong whichever
+        # way it chose.
+        self._stock(self.primary, "a.example.com", when="2026-08-01T03:00:00", names=("A-old",))
+        self._stock(self.primary, "b.example.com", when="2026-08-05T03:00:00", names=("B-new",))
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", names=("A-new",))
+        self._stock(self.spilldb, "b.example.com", when="2026-08-02T03:00:00", names=("B-old",))
+        r = self._merge()
+        self.assertEqual(r.moved, ["a.example.com"])
+        self.assertEqual(r.skipped, ["b.example.com"])
+        self.assertEqual(self._names(self.primary, "a.example.com"), ["A-new"])
+        self.assertEqual(self._names(self.primary, "b.example.com"), ["B-new"])
+
+    def test_equal_timestamps_move_nothing(self):
+        # AC-2. "Newest wins" with >= instead of > would rewrite the catalog with identical
+        # data every night, reassigning every materials.id for no reason.
+        same = "2026-08-04T03:00:00"
+        self._stock(self.primary, "a.example.com", when=same, names=("Mine",))
+        self._stock(self.spilldb, "a.example.com", when=same, names=("Theirs",))
+        r = self._merge()
+        self.assertEqual(r.moved, [])
+        self.assertEqual(self._names(self.primary, "a.example.com"), ["Mine"])
+
+    def test_merging_twice_is_a_no_op(self):
+        # AC-9, and it falls out of AC-2 rather than being enforced separately: the merge
+        # copies crawled_at, so the second pass sees equal stamps.
+        self._stock(self.primary, "a.example.com", when="2026-08-01T03:00:00", names=("Old",))
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", names=("New",))
+        self.assertEqual(self._merge().moved, ["a.example.com"])
+        second = self._merge()
+        self.assertEqual(second.moved, [])
+        self.assertEqual(self._names(self.primary, "a.example.com"), ["New"])
+
+    def test_a_supplier_with_no_materials_cannot_empty_the_primary(self):
+        # The sharpest edge in the whole feature. A spill whose crawl failed for a host still
+        # has a suppliers row; replaying it would DELETE the primary's materials for that host
+        # and insert nothing — a merge that silently deletes a working catalog.
+        self._stock(self.primary, "a.example.com", when="2026-08-01T03:00:00", names=("Keep",))
+        conn = db.connect(self.spilldb)
+        db.upsert_supplier(conn, "a.example.com", last_error="Cloudflare 403",
+                           last_crawled="2026-08-09T03:00:00")
+        conn.close()
+        r = self._merge()
+        self.assertEqual(r.moved, [])
+        self.assertEqual(self._names(self.primary, "a.example.com"), ["Keep"])
+
+    def test_a_supplier_only_the_spill_has_is_added(self):
+        self._stock(self.spilldb, "new.example.com", when="2026-08-04T03:00:00", names=("N",))
+        r = self._merge()
+        self.assertEqual(r.moved, ["new.example.com"])
+        self.assertEqual(self._names(self.primary, "new.example.com"), ["N"])
+
+    # --- replay, not copy ---------------------------------------------------
+
+    def test_rows_are_replayed_under_the_primarys_own_supplier_id(self):
+        # AC-4. materials.id is reassigned every crawl and the app keys off
+        # (supplier_id, item_id), so a merge that carried the spill's ids across would point
+        # every watchlist and sourcing-list entry at the wrong supplier.
+        self._stock(self.primary, "z.example.com", when="2026-08-01T03:00:00")   # takes id 1
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00")   # also id 1
+        self._merge()
+        conn = db.connect(self.primary)
+        try:
+            rows = conn.execute(
+                "SELECT s.host host, COUNT(*) n FROM materials m"
+                " JOIN suppliers s ON s.id = m.supplier_id GROUP BY s.host").fetchall()
+            got = {r["host"]: r["n"] for r in rows}
+            orphans = conn.execute(
+                "SELECT COUNT(*) c FROM materials m LEFT JOIN suppliers s"
+                " ON s.id = m.supplier_id WHERE s.id IS NULL").fetchone()["c"]
+        finally:
+            conn.close()
+        self.assertEqual(got, {"z.example.com": 1, "a.example.com": 1})
+        self.assertEqual(orphans, 0)
+
+    def test_slabs_and_history_come_across_with_their_own_dates(self):
+        # AC-5's positive half. History keeps the spill's snapshot_date rather than being
+        # restamped today: the rows describe the night the drive was missing, and relabelling
+        # them would tell the alert digest that last night's stock is tonight's.
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", qty=9.0)
+        self._merge()
+        conn = db.connect(self.primary)
+        try:
+            self.assertEqual(conn.execute("SELECT qty FROM slabs").fetchone()["qty"], 9.0)
+            dates = [r["snapshot_date"] for r in
+                     conn.execute("SELECT DISTINCT snapshot_date FROM history")]
+        finally:
+            conn.close()
+        self.assertEqual(dates, ["2026-08-04"])
+
+    # --- what must not move -------------------------------------------------
+
+    def test_user_owned_data_on_the_primary_survives_untouched(self):
+        # AC-5. The primary holds everything the user made; the spill is a packaged app's
+        # empty defaults. A merge that treated the two symmetrically would wipe the lot.
+        self._stock(self.primary, "a.example.com", when="2026-08-01T03:00:00", names=("Old",))
+        conn = db.connect(self.primary)
+        db.add_watch(conn, "blue marble", "2026-08-01")
+        lid = db.create_list(conn, "Kitchen job", "2026-08-01")
+        db.add_alias(conn, "old|granite", "new|granite", "Granite")
+        db.add_rejection(conn, "sig-1")
+        db.add_to_compare(conn, "new|granite", "New", "", "")
+        conn.commit()
+        before = {t: conn.execute(f"SELECT COUNT(*) c FROM {t}").fetchone()["c"]
+                  for t in ("watchlist", "lists", "material_aliases", "merge_rejections",
+                            "compare_tray")}
+        conn.close()
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", names=("New",))
+        self.assertEqual(self._merge().moved, ["a.example.com"])
+        conn = db.connect(self.primary)
+        try:
+            after = {t: conn.execute(f"SELECT COUNT(*) c FROM {t}").fetchone()["c"]
+                     for t in before}
+            watch = [r["query"] for r in conn.execute("SELECT query FROM watchlist")]
+            lname = conn.execute("SELECT name FROM lists WHERE id = ?", (lid,)).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(before, after)
+        self.assertEqual(watch, ["blue marble"])
+        self.assertEqual(lname["name"], "Kitchen job")
+
+    def test_confirmed_merges_are_re_applied_to_merged_rows(self):
+        # AC-8. Replayed rows arrive with the material_key the crawl derived, which is exactly
+        # what a curator merge exists to override. Without the fold, one spill merge silently
+        # undoes every decision on /quality — the trap run_all already documents.
+        conn = db.connect(self.primary)
+        db.add_alias(conn, "alpha|granite", "canonical|granite", "Granite")
+        conn.commit()
+        conn.close()
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", names=("Alpha",))
+        self.assertEqual(self._merge().moved, ["a.example.com"])
+        conn = db.connect(self.primary)
+        try:
+            keys = [r["material_key"] for r in
+                    conn.execute("SELECT material_key FROM materials")]
+            rollup = conn.execute("SELECT COUNT(*) c FROM product_rollup").fetchone()["c"]
+        finally:
+            conn.close()
+        self.assertEqual(keys, ["canonical|granite"])
+        self.assertGreater(rollup, 0, "the search fast path was not rebuilt after the merge")
+
+    # --- all of it or none of it -------------------------------------------
+
+    def test_a_failure_part_way_leaves_the_primary_unchanged(self):
+        # AC-7. A merge that banked supplier A and died on B would leave the catalog in a
+        # state nobody chose and no record of which half is which.
+        self._stock(self.primary, "a.example.com", when="2026-08-01T03:00:00", names=("A-old",))
+        self._stock(self.primary, "b.example.com", when="2026-08-01T03:00:00", names=("B-old",))
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", names=("A-new",))
+        self._stock(self.spilldb, "b.example.com", when="2026-08-04T03:00:00", names=("B-new",))
+
+        def boom(host):
+            if host == "b.example.com":
+                raise RuntimeError("disk went away mid-merge")
+
+        r = self._merge(on_supplier=boom)
+        self.assertEqual(r.status, "failed")
+        self.assertIn("disk went away", r.reason)
+        # Not "b is unchanged" — NOTHING is, including the supplier that had already been
+        # written when the failure hit.
+        self.assertEqual(self._names(self.primary, "a.example.com"), ["A-old"])
+        self.assertEqual(self._names(self.primary, "b.example.com"), ["B-old"])
+        conn = db.connect(self.primary)
+        try:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) c FROM spill_merges").fetchone()["c"], 0,
+                "a rolled-back merge must not leave a record claiming it happened")
+        finally:
+            conn.close()
+
+    def test_a_failed_merge_does_not_take_the_crawl_with_it(self):
+        # It runs at the top of run_all. Raising here would turn a recoverable merge problem
+        # into a lost night, which is the thing this whole chain exists to stop.
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00")
+
+        def boom(host):
+            raise RuntimeError("nope")
+
+        r = self._merge(on_supplier=boom)      # must NOT raise
+        self.assertEqual(r.status, "failed")
+
+    # --- refusals -----------------------------------------------------------
+
+    def test_an_older_spill_schema_is_refused_not_merged(self):
+        # AC-10. The local copy is only as current as the last build. A spill missing a column
+        # the primary has would replay NULL into it for every row — a spill from before
+        # AIL-22 would blank every derived finish. Refusing is the only honest option.
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00")
+        conn = db.connect(self.spilldb)
+        conn.executescript(
+            "ALTER TABLE materials RENAME TO m_old;"
+            "CREATE TABLE materials AS SELECT id, supplier_id, item_id, item_name, name_norm,"
+            " material_key, material_type, crawled_at FROM m_old;"
+            "DROP TABLE m_old;")
+        conn.commit()
+        conn.close()
+        r = self._merge()
+        self.assertEqual(r.status, "refused")
+        self.assertIn("missing", r.reason)
+        self.assertIn("materials", r.reason)
+
+    def test_a_newer_spill_schema_is_also_refused(self):
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00")
+        conn = db.connect(self.spilldb)
+        conn.execute("ALTER TABLE slabs ADD COLUMN from_the_future TEXT")
+        conn.commit()
+        conn.close()
+        r = self._merge()
+        self.assertEqual(r.status, "refused")
+        self.assertIn("NEWER", r.reason)
+
+    def test_no_spill_database_is_a_normal_state(self):
+        r = self.spill.merge_spill(self.primary, os.path.join(self.tmp, "absent.db"))
+        self.assertEqual(r.status, "no-spill")
+
+    def test_the_spill_is_never_the_primary(self):
+        # A misconfigured STONESCAN_SPILL pointing at the live catalog would have it replay
+        # into itself. Cheap to check, unbounded to debug.
+        r = self.spill.merge_spill(self.primary, self.primary)
+        self.assertEqual(r.status, "no-spill")
+
+    # --- bookkeeping --------------------------------------------------------
+
+    def test_a_successful_merge_is_recorded_for_health(self):
+        # AC-11. A spill crawl runs against a different database on a different drive, so it
+        # leaves no refresh_runs row here — without this the night reads as "nothing happened".
+        self._stock(self.primary, "b.example.com", when="2026-08-09T03:00:00")
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00")
+        self._stock(self.spilldb, "b.example.com", when="2026-08-04T03:00:00")
+        self._merge()
+        conn = db.connect(self.primary)
+        try:
+            rows = db.recent_spill_merges(conn)
+        finally:
+            conn.close()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["moved"], 1)
+        self.assertEqual(rows[0]["skipped"], 1)
+        self.assertIn("a.example.com", rows[0]["detail"])
+
+    def test_it_backs_the_primary_up_before_writing_and_only_then(self):
+        # AC-6: a merge is at least as dangerous as a crawl, which already backs up first.
+        # The second half matters too — a ~25s checkpoint+copy on 364 nights with no spill
+        # would be a real cost for nothing.
+        bak = Path(self.primary + ".bak")
+        self._merge()
+        self.assertFalse(bak.exists(), "backed up with nothing to merge")
+        self._stock(self.primary, "a.example.com", when="2026-08-01T03:00:00", names=("Old",))
+        self._stock(self.spilldb, "a.example.com", when="2026-08-04T03:00:00", names=("New",))
+        self._merge()
+        self.assertTrue(bak.exists(), "no backup taken before writing")
+        conn = db.connect(str(bak))
+        try:
+            names = [r["item_name"] for r in conn.execute("SELECT item_name FROM materials")]
+        finally:
+            conn.close()
+        self.assertEqual(names, ["Old"], "the backup was taken AFTER the merge, not before")
+
+    def test_the_default_spill_path_matches_where_the_installer_spills_to(self):
+        # install-refresh-task.ps1 runs %ProgramData%\StoneScanner\StoneScanner.exe, and
+        # desktop.setup_env puts the database in data\ beside the exe. If these two ever
+        # disagree the merge silently finds nothing, forever, and says so quietly.
+        # tests/__init__.py pins STONESCAN_SPILL for the whole suite so no test merges the
+        # machine's real spill; drop it for this one assertion and put it straight back.
+        saved = os.environ.pop("STONESCAN_SPILL", None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, "STONESCAN_SPILL", saved)
+        p = self.spill.default_spill_db()
+        self.assertEqual(p.name, "stonescan.db")
+        self.assertEqual(p.parent.name, "data")
+        self.assertEqual(p.parent.parent.name, "StoneScanner")
+        install = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
+        self.assertIn('Join-Path $env:ProgramData "StoneScanner"', install)
+        self.assertIn('Join-Path $LocalCopy "StoneScanner.exe"', install)
+
+
 _GUARD_BLOCK_RE = __import__("re").compile(r"^\$guard = @\(.*?^\) -join '; '$",
                                            __import__("re").S | __import__("re").M)
 

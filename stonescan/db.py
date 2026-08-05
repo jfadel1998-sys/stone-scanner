@@ -274,6 +274,20 @@ CREATE TABLE IF NOT EXISTS refresh_runs (
     detail       TEXT               -- error type + message on failure
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_runs_started ON refresh_runs(started_at DESC);
+
+-- One row per spill merge (see spill.py). Bookkeeping only: what stops a spill being merged
+-- twice is that merging copies its crawled_at stamps, so the strictly-newer test can never
+-- fire again for the same data. This table is what /health and the log read afterwards, and
+-- a fast pre-check that skips a watermark already dealt with.
+CREATE TABLE IF NOT EXISTS spill_merges (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    merged_at  TEXT NOT NULL,
+    source     TEXT NOT NULL,     -- the spill database this came from
+    watermark  TEXT,              -- the spill's newest materials.crawled_at at merge time
+    moved      INTEGER DEFAULT 0, -- suppliers taken from the spill
+    skipped    INTEGER DEFAULT 0, -- suppliers left alone because the primary was fresher
+    detail     TEXT
+);
 """
 
 
@@ -1030,6 +1044,36 @@ def recent_refresh_runs(conn: sqlite3.Connection, limit: int = 8) -> list[dict[s
             d["state"] = "running"
         out.append(d)
     return out
+
+
+def record_spill_merge(conn: sqlite3.Connection, *, source: str, watermark: str,
+                       moved: int, skipped: int, detail: str = "") -> None:
+    """Bank the outcome of a spill merge. Written inside the merge's own transaction, so a
+    merge that rolls back leaves no claim to have happened."""
+    conn.execute(
+        "INSERT INTO spill_merges (merged_at, source, watermark, moved, skipped, detail)"
+        " VALUES (?,?,?,?,?,?)",
+        (_now_iso(), source, watermark, int(moved), int(skipped), (detail or "")[:500]))
+
+
+def recent_spill_merges(conn: sqlite3.Connection, limit: int = 5) -> list[dict[str, Any]]:
+    """Recent spill merges, newest first. [] on a DB predating the table — /health draws this
+    and must not 500 on a snapshot from before the feature existed."""
+    try:
+        rows = conn.execute("SELECT * FROM spill_merges ORDER BY id DESC LIMIT ?",
+                            (int(limit),)).fetchall()
+    except sqlite3.Error:
+        return []
+    return [dict(r) for r in rows]
+
+
+def spill_watermarks_merged(conn: sqlite3.Connection) -> set[str]:
+    """Watermarks already merged, for the cheap pre-check in spill.merge_spill."""
+    try:
+        return {r["watermark"] for r in conn.execute(
+            "SELECT watermark FROM spill_merges WHERE watermark IS NOT NULL")}
+    except sqlite3.Error:
+        return set()
 
 
 # Consecutive days without a successful refresh before the app says so unprompted. Two, not
