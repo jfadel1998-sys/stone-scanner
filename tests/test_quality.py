@@ -3760,6 +3760,134 @@ class RefreshGuardDecisionTests(unittest.TestCase):
                       "robocopy's bitmask must not become the script's own exit code")
 
 
+class VoteAfterCrawlTests(_SuppliersFileCase):
+    """AIL-32: `recover_by_majority_vote` is the project's only cross-row classification, and
+    it lived only in the `reclassify` CLI. `replace_materials` deletes a supplier's rows
+    outright, so every crawl undid it and the catalog regressed overnight, every night."""
+
+    def _mat(self, sid, name, mtype, item_id="i1"):
+        self.conn.execute(
+            "INSERT OR IGNORE INTO suppliers (id, host) VALUES (?,?)", (sid, f"s{sid}.example.com"))
+        self.conn.execute(
+            "INSERT INTO materials (supplier_id, item_id, item_name, name_norm, material_type,"
+            " material_key, crawled_at) VALUES (?,?,?,?,?,?,?)",
+            (sid, item_id, name, name.upper(), mtype,
+             f"{name.lower()}|{mtype.lower()}", "2026-08-01T00:00:00"))
+        self.conn.commit()
+
+    def _types(self, name):
+        return sorted(r["material_type"] for r in self.conn.execute(
+            "SELECT material_type FROM materials WHERE item_name = ?", (name,)))
+
+    def _run(self):
+        import asyncio
+        from stonescan.ingest import run_all
+        asyncio.run(run_all([], db_path=self.path))
+
+    def test_a_crawl_now_recovers_other_rows_by_sibling_vote(self):
+        self._mat(1, "Absolute Black", "Granite")
+        self._mat(2, "Absolute Black", "Granite")
+        self._mat(3, "Absolute Black", "Other")       # the stray a crawl leaves behind
+        self._run()
+        self.assertEqual(self._types("Absolute Black"), ["Granite"] * 3)
+
+    def test_the_vote_runs_before_aliases_so_its_keys_get_folded(self):
+        # AC-2, and it needs the case that actually DISCRIMINATES. On the live catalog both
+        # orders converge, so a test that just runs each and compares totals proves nothing.
+        # The discriminating case is an alias keyed on the POST-vote key: with the vote first,
+        # the row becomes 'absolute black|granite' and the alias folds it. With aliases first,
+        # the row is still 'absolute black|other', the alias never matches, and the curator's
+        # merge is silently orphaned.
+        self._mat(1, "Absolute Black", "Granite")
+        self._mat(2, "Absolute Black", "Granite")
+        self._mat(3, "Absolute Black", "Other")
+        db.add_alias(self.conn, "absolute black|granite", "canonical black|granite", "Granite")
+        self.conn.commit()
+        self._run()
+        keys = sorted(r["material_key"] for r in self.conn.execute(
+            "SELECT material_key FROM materials WHERE item_name = 'Absolute Black'"))
+        self.assertEqual(keys, ["canonical black|granite"] * 3,
+                         "the vote's key was not folded — aliases ran first")
+
+    def test_a_tie_is_still_left_in_other(self):
+        # NG-4: the decision rules are untouched. A strict majority only.
+        self._mat(1, "Split Stone", "Granite")
+        self._mat(2, "Split Stone", "Marble")
+        self._mat(3, "Split Stone", "Other")
+        self._run()
+        self.assertIn("Other", self._types("Split Stone"))
+
+    def test_a_row_with_no_typed_siblings_is_untouched(self):
+        self._mat(1, "Lonely Stone", "Other")
+        self._run()
+        self.assertEqual(self._types("Lonely Stone"), ["Other"])
+
+    def test_an_existing_type_is_never_overwritten(self):
+        # The vote only ever promotes OUT of 'Other'. A row that already has a concrete type
+        # keeps it even when its siblings disagree.
+        self._mat(1, "Taj Mahal", "Quartzite")
+        self._mat(2, "Taj Mahal", "Granite")
+        self._mat(3, "Taj Mahal", "Granite")
+        self._run()
+        self.assertEqual(self._types("Taj Mahal"), ["Granite", "Granite", "Quartzite"])
+
+    def test_it_moves_a_row_that_the_vote_types_differently(self):
+        # AC-8. The vote is not a faithful restore: on the live catalog 2 of the recovered
+        # rows come back under a DIFFERENT type than they held before. That is the vote
+        # working as designed — siblings outvote a lone row — but it must be visible in the
+        # count the run reports rather than hidden inside "recovered N".
+        self._mat(1, "Blue Roma", "Quartzite")
+        self._mat(2, "Blue Roma", "Quartzite")
+        self._mat(3, "Blue Roma", "Other")
+        self._run()
+        self.assertEqual(self._types("Blue Roma"), ["Quartzite"] * 3)
+
+    def test_two_consecutive_runs_are_stable(self):
+        # AC-7: the crawl reverts, the vote restores, and nothing drifts on a second pass.
+        self._mat(1, "Absolute Black", "Granite")
+        self._mat(2, "Absolute Black", "Granite")
+        self._mat(3, "Absolute Black", "Other")
+        self._run()
+        first = (self._types("Absolute Black"),
+                 sorted(r["material_key"] for r in self.conn.execute(
+                     "SELECT material_key FROM materials")))
+        self._run()
+        second = (self._types("Absolute Black"),
+                  sorted(r["material_key"] for r in self.conn.execute(
+                      "SELECT material_key FROM materials")))
+        self.assertEqual(first, second)
+
+    def test_a_run_that_recovers_nothing_says_nothing(self):
+        import asyncio
+        import io
+        from stonescan.ingest import run_all
+        self._mat(1, "Absolute Black", "Granite")
+        buf, real = io.StringIO(), sys.stdout
+        sys.stdout = buf
+        try:
+            asyncio.run(run_all([], db_path=self.path))
+        finally:
+            sys.stdout = real
+        self.assertNotIn("recovered", buf.getvalue())
+
+    def test_ingest_imports_reclassify_so_the_frozen_build_carries_it(self):
+        # AC-4. PyInstaller's analysis starts at main.py and follows imports; nothing shipped
+        # imported reclassify, so it was the one stonescan module absent from the bundle.
+        # An import from ingest is the fix — NOT a hiddenimports entry (NG-2), which would
+        # ship a module with no caller and hide the real gap.
+        import ast
+        tree = ast.parse(Path("stonescan/ingest.py").read_text(encoding="utf-8"))
+        top_level = {n
+                     for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
+                     for n in (a.name for a in node.names)}
+        self.assertIn("reclassify", top_level,
+                      "reclassify must be imported at ingest MODULE level — a function-local "
+                      "import would run fine but PyInstaller's analysis would still miss it")
+        spec = Path("stonescan.spec").read_text(encoding="utf-8")
+        self.assertNotIn("stonescan.reclassify", spec,
+                         "NG-2: the fix is a real import, not a hiddenimports entry")
+
+
 class LostNightsTests(_SuppliersFileCase):
     """AIL-30: two consecutive nights were lost (2026-08-04, 2026-08-05) and nobody noticed,
     because both the ledger and the task state require someone to go and look at them."""

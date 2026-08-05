@@ -14,7 +14,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from . import db, denylist, discover, output, spill
+from . import db, denylist, discover, output, reclassify, spill
 from .crawler import EMPTY_CATALOG_ERROR, crawl_hosts, utc_now_iso
 from .normalize import fix_dimension_rows, normalize_item
 from .output import say
@@ -485,6 +485,21 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
         # material_key from scratch, so without this each /quality merge silently undoes.
         conn = db.init_db(db_path)
         try:
+            # Give each 'Other' row the type its same-name siblings agree on. This is the
+            # project's only cross-row classification, and until now it lived only in
+            # `reclassify` — a CLI a human had to remember to run. Every crawl undid it:
+            # replace_materials deletes a supplier's rows outright, so the recovered types
+            # went with them and the catalog quietly regressed overnight, every night.
+            #
+            # BEFORE apply_aliases, because the vote rewrites material_key (the key embeds
+            # the type). A merge whose alias_key is the post-vote key would never match a row
+            # still sitting under '<name>|other', so folding first would orphan it.
+            #
+            # Measured on the live catalog: a crawl pushes 'Other' 4,066 -> 4,603;
+            # apply_aliases recovers 243 of those on its own; the vote recovers the remaining
+            # 294 and returns both 'Other' and COUNT(DISTINCT material_key) to exactly their
+            # pre-crawl values. It costs 0.10s on 171k rows, so it is unconditional.
+            recovered = reclassify.recover_by_majority_vote(conn)
             folded = db.apply_aliases(conn)
             n_aliases = db.quality_stats(conn)["aliases"]
             # Re-apply confirmed storefront filters BEFORE mirror detection: a re-crawl
@@ -520,6 +535,8 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             # busy_timeout and then be swallowed. The run would be recorded as interrupted
             # rather than failed, losing the very error text the ledger exists to keep.
             conn.close()
+        if recovered:
+            say(f"\n  recovered {recovered} 'Other' row(s) from same-name siblings.")
         if folded:
             say(f"\n  re-applied {folded} row(s) from {n_aliases} confirmed merge(s).")
         if scoped:
