@@ -20,6 +20,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+# The only package import in this module's header, and safe by construction: output.py
+# deliberately imports nothing from the package (see its docstring), so the storage layer
+# can use it without any risk of a cycle.
+from .output import say
+
 # Writable DB location. Overridable via env so the packaged app can point at a
 # per-user data dir (the bundle itself is read-only).
 DEFAULT_DB = Path(os.environ.get("STONESCAN_DB") or (Path(__file__).resolve().parent.parent / "stonescan.db"))
@@ -344,7 +349,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
     fixed = fix_mm_thickness(conn)
     if fixed:
-        print(f"  thickness: repaired {fixed} millimetre-as-centimetre value(s).")
+        # say(), not print(). _migrate runs inside init_db, which run_all calls before it has
+        # a ledger row; a raise here is swallowed by _ledger and leaves run_id None, so the
+        # night ends with NO refresh_runs row while refresh-history.log says Done. Reproduced:
+        # identical DB, identical code, only stdout differs -> [] vs [(1,'done')].
+        say(f"  thickness: repaired {fixed} millimetre-as-centimetre value(s).")
 
 
 # A thickness written before normalize_thickness understood units: the old code appended

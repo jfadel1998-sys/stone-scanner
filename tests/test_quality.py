@@ -2613,6 +2613,160 @@ class OutputFailureTests(_SuppliersFileCase):
         self.assertIn("product rollup", buf.getvalue(), "say() stopped printing")
         self.assertNotIn("console output lost", self._history())
 
+    # --- AIL-31: the seven sites AIL-27 did not reach -----------------------
+
+    def test_a_print_inside_init_db_does_not_cost_the_night_its_ledger_row(self):
+        # THE reproduction. db.py's _migrate prints when fix_mm_thickness repairs something,
+        # and _migrate runs inside init_db, which run_all calls BEFORE it has a ledger row.
+        # A raise there is swallowed by _ledger, run_id stays None, _ledger_finish returns
+        # early — and the night ends with no refresh_runs row while refresh-history.log says
+        # Done. Identical DB, identical code, only stdout differs.
+        conn = db.connect(self.path)
+        conn.execute("INSERT INTO suppliers (id, host) VALUES (91,'mm.example.com')")
+        conn.execute("INSERT INTO materials (supplier_id, item_id, item_name, name_norm,"
+                     " uom, thickness) VALUES (91,'i','N','N','MM','12cm')")
+        conn.commit()
+        conn.close()
+        self._run_with_dead_stdout(OSError(22, "Invalid argument"))
+        conn = db.connect(self.path)
+        try:
+            rows = [(r["outcome"]) for r in conn.execute("SELECT outcome FROM refresh_runs")]
+        finally:
+            conn.close()
+        self.assertEqual(rows, ["done"], "the night lost its ledger row to a cosmetic print")
+        self.assertIn("Done", self._history())
+
+    def test_a_failure_before_the_run_starts_is_carried_across_not_erased(self):
+        # desktop.run_refresh prints two lines before run_all installs the notifier. reset()
+        # clearing the flag would erase the only evidence the night had: the run would go
+        # mute and record nothing about why.
+        from stonescan import output
+        output.reset(None)
+        self.addCleanup(output.reset, None)      # this module's state is process-global
+        self._fail_once()                        # a write fails while no notifier exists
+        self.assertTrue(output.failed())
+        notes = []
+        output.reset(notes.append)               # this is what run_all does
+        self.assertEqual(len(notes), 1, "the earlier failure was silently erased")
+        self.assertIn("already failing", notes[0])
+
+    def _fail_once(self):
+        from stonescan import output
+        real = sys.stdout
+        sys.stdout = _DeadStdout(OSError(22, "Invalid argument"))
+        try:
+            output.say("x")
+        finally:
+            sys.stdout = real
+
+    def test_a_deferred_flush_failure_is_caught_where_it_can_be(self):
+        # Buffering makes a write failure arrive LATE. If it lands during interpreter
+        # shutdown CPython flushes outside any try block and exits 120 — so a crawl already
+        # recorded 'done' gets reported as a failed run by refresh.ps1.
+        from stonescan import output
+
+        class LateFail:
+            def write(self, *a):
+                return 0                          # accepted, buffered, no error yet
+            def flush(self):
+                raise OSError(22, "Invalid argument")
+            def isatty(self):
+                return False
+
+        notes = []
+        output.reset(None)                        # clear anything a previous test left owed
+        output.reset(notes.append)
+        self.addCleanup(output.reset, None)
+        real = sys.stdout
+        sys.stdout = LateFail()
+        try:
+            output.say("buffered")                # succeeds
+            self.assertFalse(output.failed(), "the write should not have failed yet")
+            output.flush()                        # must NOT raise
+        finally:
+            sys.stdout = real
+        self.assertTrue(output.failed())
+        self.assertEqual(len(notes), 1)
+
+    def test_shutdown_flush_really_does_exit_120(self):
+        # The premise behind the test above, measured rather than assumed — if CPython ever
+        # stops doing this, the guard is solving a problem that no longer exists.
+        import subprocess
+        p = subprocess.run([sys.executable, "-c", "import os;os.close(1);print('x')"],
+                           capture_output=True)
+        self.assertEqual(p.returncode, 120)
+
+    def test_a_dead_stdout_does_not_abort_umis_branch_loop(self):
+        # umi.crawl's own `except Exception` wraps the whole body, so a raise from the print
+        # in the branch loop does not skip one branch — it fails the ENTIRE crawl and returns
+        # ok=False. Three consecutive nights of that reaches AUTO_REJECT_STREAK and
+        # discover.reject_by_streak writes "rejected" into suppliers.json, which nothing
+        # exempts a hand-seeded supplier from.
+        import asyncio
+        import json as _json
+
+        import httpx
+
+        from stonescan.providers import umi
+
+        seen = []
+
+        async def fake_get(client, path, params=None):
+            b = (params or {}).get("branch")
+            seen.append((path, b))
+            if path == "IMat.php" and b == "connecticut":
+                raise httpx.HTTPError("boom")     # the branch whose failure gets printed
+            if path == "IMat.php":
+                # A real item from every OTHER branch, so `ok` reflects the loop surviving
+                # rather than the fake simply returning nothing everywhere.
+                return [{"item": f"code-{b}", "MaterialName": f"Stone {b}",
+                         "GroupName": "GRANITE", "lots": 0}]
+            return []
+
+        from stonescan import output
+        orig_get = umi._get
+        umi._get = fake_get
+        self.addCleanup(setattr, umi, "_get", orig_get)
+        self.addCleanup(output.reset, None)       # process-global; do not leak to the next test
+        real = sys.stdout
+        sys.stdout = _DeadStdout(OSError(22, "Invalid argument"))
+        try:
+            out = asyncio.run(umi.crawl({"host": "umistone.com"}, delay=0))
+        finally:
+            sys.stdout = real
+        tried = [b for p, b in seen if p == "IMat.php"]
+        self.assertGreater(len(tried), 1,
+                           "the branch loop stopped at the first failure — the print raised "
+                           "out into crawl()'s own except and killed the whole supplier")
+        self.assertTrue(out.ok, "UMI was recorded as a failed crawl because of a print")
+
+    def test_no_crawl_executed_module_contains_a_bare_print(self):
+        # The durable half of this issue. AIL-27 converted 58 sites and left 7; nothing in the
+        # tree stopped the eighth. Providers are enumerated by GLOB, not by name — six of the
+        # seven adapters have no prints today and an eighth must be covered on arrival.
+        import ast
+        root = Path(__file__).resolve().parent.parent / "stonescan"
+        named = ["db.py", "desktop.py", "ingest.py", "crawler.py", "discover.py",
+                 "normalize.py", "robots.py", "denylist.py", "slabs.py", "spill.py"]
+        files = [root / n for n in named] + sorted(root.glob("providers/*.py"))
+        # CLI-only prints are legitimate (NG-1): a human is watching a terminal, and a write
+        # failure there is the report dying, not a crawl. Exempt by enclosing function.
+        cli_only = {"main", "report", "_report"}
+        offenders = []
+        for f in files:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if node.name in cli_only:
+                    continue
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id == "print"):
+                        offenders.append(f"{f.name}:{sub.lineno} in {node.name}()")
+        self.assertEqual(offenders, [], "use output.say() on any path a crawl executes: "
+                                        + "; ".join(offenders))
+
 
 class RefreshLedgerTests(_SuppliersFileCase):
     """AIL-20: refresh-history.log only gets a terminal line if the process reaches the end
