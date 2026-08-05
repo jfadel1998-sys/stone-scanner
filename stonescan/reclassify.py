@@ -11,8 +11,67 @@ so you don't have to re-crawl.
 from __future__ import annotations
 
 from . import db
-from .normalize import (canonical_type, clean_color, derive_color_from_name, derive_finish,
-                        material_key, normalize_thickness, remap_key)
+from .normalize import (DIMENSION_UNIT_HOSTS, THICKNESS_INCH_HOSTS, canonical_type,
+                        clean_color, derive_color_from_name, derive_finish,
+                        dimension_to_inches, material_key, normalize_thickness,
+                        remap_key, repair_inch_thickness)
+
+
+def repair_thickness_units(conn) -> int:
+    """Rewrite stored thicknesses that were inches read as centimetres. Returns rows changed.
+
+    Separate from the dimension repair because the two cannot share a guard: dimensions are
+    separable by magnitude, thicknesses are not (0.79cm and 0.8cm are both plausible stone),
+    so this one leans on the nominal-thickness set instead. See repair_inch_thickness.
+    """
+    updates = []
+    for host in sorted(THICKNESS_INCH_HOSTS):
+        for r in conn.execute(
+            "SELECT m.id id, m.thickness thickness FROM materials m"
+            " JOIN suppliers s ON s.id = m.supplier_id"
+            " WHERE LOWER(s.host) = ? AND COALESCE(m.thickness, '') <> ''", (host,)):
+            fixed = repair_inch_thickness(r["thickness"], host)
+            if fixed != r["thickness"]:
+                updates.append((fixed, r["id"]))
+    if updates:
+        conn.executemany("UPDATE materials SET thickness = ? WHERE id = ?", updates)
+        conn.commit()
+    return len(updates)
+
+
+def repair_dimensions(conn) -> int:
+    """Rewrite metre/centimetre slab dimensions as inches, in place. Returns values changed.
+
+    A crawl fixes these on the way in, but the stored catalog is ~88k rows collected before
+    the rule existed and a re-crawl of two UK suppliers takes as long as everything else does.
+    So the repair has to reach stored data, which is what this pass is for.
+
+    Idempotent, which is not optional: `reclassify` is run repeatedly and after every change
+    to the classifier, so a pass that divided again each time would walk the whole catalog
+    down to nothing. `dimension_to_inches` only reinterprets a value while it is still
+    implausible as inches, so the second pass over the same rows changes nothing.
+    """
+    changed = 0
+    for table, cols in (("materials", ("avg_length", "avg_width")),
+                        ("slabs", ("length", "width"))):
+        for host in sorted(DIMENSION_UNIT_HOSTS):
+            rows = conn.execute(
+                f"SELECT t.id id, {', '.join('t.' + c for c in cols)} FROM {table} t"
+                f" JOIN suppliers s ON s.id = t.supplier_id WHERE LOWER(s.host) = ?",
+                (host,)).fetchall()
+            updates = []
+            for r in rows:
+                new = tuple(dimension_to_inches(r[c], host) for c in cols)
+                if new != tuple(r[c] for c in cols):
+                    updates.append((*new, r["id"]))
+            if updates:
+                conn.executemany(
+                    f"UPDATE {table} SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                    updates)
+                changed += len(updates)
+    if changed:
+        conn.commit()
+    return changed
 
 
 def recover_by_majority_vote(conn) -> int:
@@ -72,6 +131,14 @@ def reclassify(db_path: str = str(db.DEFAULT_DB)) -> None:
     fixed = db.fix_mm_thickness(conn)
     if fixed:
         print(f"Repaired {fixed} millimetre-as-centimetre thickness value(s).")
+    # Same discipline for the two suppliers whose lengths and widths are not inches. Before
+    # the reclassify below, so anything downstream that reads a dimension reads the fixed one.
+    dims = repair_dimensions(conn)
+    if dims:
+        print(f"Rewrote {dims} row(s) whose dimensions were metres or centimetres, not inches.")
+    thk = repair_thickness_units(conn)
+    if thk:
+        print(f"Rewrote {thk} thickness value(s) that were inches read as centimetres.")
     rows = conn.execute(
         "SELECT id, item_name, category, subcategory, color, thickness, uom, finish "
         "FROM materials"

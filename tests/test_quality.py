@@ -2520,6 +2520,230 @@ class RefreshLedgerTests(_SuppliersFileCase):
         conn.close()
 
 
+class DimensionUnitTests(unittest.TestCase):
+    """AIL-23: avg_length/avg_width are stored unitless and read as inches by every consumer.
+    Two of 130 suppliers publish metres and centimetres, which made `carrara venatino jumbo`
+    roll up to 541,288 ft2 and inverted size filtering in both directions."""
+
+    METRES = "graniteslabsuk.stoneprofitsweb.com"
+    CM = "stoneyarduk.stoneprofitsweb.com"
+
+    def setUp(self):
+        import shutil
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        self.addCleanup(self.conn.close)
+
+    def _mat(self, host, length, width, *, uom="", name="Slab"):
+        sid = db.upsert_supplier(self.conn, host)
+        self.conn.execute(
+            "INSERT INTO materials (supplier_id, item_id, item_name, name_norm, avg_length,"
+            " avg_width, uom, crawled_at) VALUES (?,?,?,?,?,?,?,?)",
+            (sid, f"i{length}-{width}", name, name.upper(), length, width, uom,
+             "2026-08-01T00:00:00"))
+        self.conn.commit()
+        return sid
+
+    def _dims(self, table="materials", cols=("avg_length", "avg_width")):
+        return [tuple(r) for r in self.conn.execute(
+            f"SELECT {', '.join(cols)} FROM {table} ORDER BY id")]
+
+    # --- the rule -----------------------------------------------------------
+
+    def test_metres_and_centimetres_both_become_inches(self):
+        from stonescan.normalize import dimension_to_inches as f
+        self.assertAlmostEqual(f(3.13, self.METRES), 123.2, places=1)   # 3.13m
+        self.assertAlmostEqual(f(282.84, self.CM), 111.4, places=1)     # 282.84cm
+
+    def test_the_uom_label_is_not_consulted(self):
+        # The finding that shapes the whole rule. graniteslabsuk labels its METRES "MM", and
+        # 7 of stoneyarduk's centimetre rows say "MM" too. Trusting the label would divide
+        # 3.13 by 25.4 and store a 0.12-inch slab.
+        from stonescan.normalize import dimension_to_inches as f
+        self.assertAlmostEqual(f(3.13, self.METRES), 123.2, places=1)
+        self.assertAlmostEqual(f(274.97, self.CM), 108.3, places=1)   # a "MM"-labelled cm row
+
+    def test_the_decision_is_per_row_not_per_supplier(self):
+        # AC-2. One supplier, two scales, one pass: a per-supplier factor gets one wrong
+        # whichever it picks.
+        from stonescan.normalize import fix_dimension_rows
+        rows = [{"avg_length": 282.84, "avg_width": 160.5},    # centimetres
+                {"avg_length": 111.4, "avg_width": 63.2}]      # already inches
+        fix_dimension_rows(rows, self.CM)
+        self.assertAlmostEqual(rows[0]["avg_length"], 111.4, places=1)
+        self.assertEqual(rows[1]["avg_length"], 111.4)         # untouched
+
+    def test_other_suppliers_are_never_touched(self):
+        # NG-3, and it is not a formality. Magnitude alone is unsafe in general: 210
+        # stonetrash rows, 75 klz rows and 51 sii rows sit between 1 and 20 because they are
+        # TILES measured in inches, and a global rule would multiply them by 39.
+        from stonescan.normalize import dimension_to_inches as f
+        for host in ("stonetrash.com", "klz.stoneprofitsweb.com", "sii.stoneprofitsweb.com"):
+            self.assertEqual(f(12.0, host), 12.0)
+            self.assertEqual(f(145.0, host), 145.0)
+
+    def test_values_already_in_inches_are_left_alone(self):
+        # The band between the two guards. This is what makes the pass idempotent, so it is
+        # asserted directly rather than only through the second-run test.
+        from stonescan.normalize import dimension_to_inches as f
+        for v in (20.0, 63.0, 111.4, 123.2, 144.9):
+            self.assertEqual(f(v, self.CM), v)
+            self.assertEqual(f(v, self.METRES), v)
+
+    def test_zero_and_junk_survive_unchanged(self):
+        from stonescan.normalize import dimension_to_inches as f
+        for v in (0, 0.0, None, "", "n/a"):
+            self.assertEqual(f(v, self.METRES), v)
+
+    # --- the stored repair --------------------------------------------------
+
+    def test_reclassify_repairs_stored_rows_without_a_recrawl(self):
+        # NG-2: 88k rows were collected before the rule existed, and re-crawling two UK
+        # suppliers costs as much as everything else does.
+        from stonescan.reclassify import repair_dimensions
+        self._mat(self.METRES, 3.13, 1.74, uom="MM")
+        self._mat(self.CM, 282.84, 160.52, uom="CM")
+        self.assertEqual(repair_dimensions(self.conn), 2)
+        got = self._dims()
+        self.assertAlmostEqual(got[0][0], 123.2, places=1)
+        self.assertAlmostEqual(got[1][0], 111.4, places=1)
+
+    def test_running_the_repair_twice_changes_nothing(self):
+        # AC-5, and the one that would be catastrophic to get wrong: reclassify runs after
+        # every classifier change, so a pass that divided again each time would walk the
+        # catalog down to nothing over a few weeks.
+        from stonescan.reclassify import repair_dimensions
+        self._mat(self.METRES, 3.13, 1.74)
+        self._mat(self.CM, 282.84, 160.52)
+        repair_dimensions(self.conn)
+        after_one = self._dims()
+        self.assertEqual(repair_dimensions(self.conn), 0)
+        self.assertEqual(self._dims(), after_one)
+
+    def test_slab_rows_are_repaired_alongside_materials(self):
+        # AC-4. slabs.length/width feed the per-slab size shown on an item page, so leaving
+        # them behind would have the material page and the slab list disagree.
+        from stonescan.reclassify import repair_dimensions
+        sid = self._mat(self.CM, 282.84, 160.52)
+        self.conn.execute(
+            "INSERT INTO slabs (supplier_id, item_id, slab_no, length, width, crawled_at)"
+            " VALUES (?,?,?,?,?,?)", (sid, "i1", "1", 311.8, 168.38, "2026-08-01T00:00:00"))
+        self.conn.commit()
+        repair_dimensions(self.conn)
+        (ln, wd), = self._dims("slabs", ("length", "width"))
+        self.assertAlmostEqual(ln, 122.8, places=1)
+        self.assertAlmostEqual(wd, 66.3, places=1)
+
+    def test_the_square_footage_becomes_plausible(self):
+        # AC-6. _SQFT divides L x W by 144, so a centimetre pair inflates area by 6.45x per
+        # slab — which is how one key reached 541,288 ft2 and put 13 unit artifacts in the
+        # top 100 by total_sqft.
+        from stonescan.reclassify import repair_dimensions
+        self._mat(self.CM, 282.84, 160.52)
+        before = self._dims()[0]
+        repair_dimensions(self.conn)
+        after = self._dims()[0]
+        self.assertGreater(before[0] * before[1] / 144, 300)    # absurd for one slab
+        self.assertLess(after[0] * after[1] / 144, 60)          # ~49 sq ft: a real slab
+
+    def test_size_filtering_stops_being_inverted(self):
+        # Both directions of the reported bug in one assertion: none of graniteslabsuk's rows
+        # passed min_length >= 100 and almost all of stoneyarduk's falsely did.
+        from stonescan.reclassify import repair_dimensions
+        self._mat(self.METRES, 3.13, 1.74)     # a real 123in slab, failing the filter
+        self._mat(self.CM, 163.64, 100.0)      # a real 64in slab, passing it falsely
+        repair_dimensions(self.conn)
+        passing = [r["avg_length"] for r in self.conn.execute(
+            "SELECT avg_length FROM materials WHERE avg_length >= 100 ORDER BY id")]
+        self.assertEqual(len(passing), 1)
+        self.assertAlmostEqual(passing[0], 123.2, places=1)
+
+    # --- unbuilt's thickness ------------------------------------------------
+
+    def test_an_inch_thickness_is_read_as_inches_not_centimetres(self):
+        # AC-3. Unbuilt sends inch thicknesses beside uom="EA"; thickness_unit() rightly
+        # refuses to read a selling unit as a length, so all 1,320 Cosentino rows fell back
+        # to centimetres.
+        from stonescan.providers.base import material_row
+        r = material_row(name="Dekton Sirius", crawled_at="x", thickness="0.79",
+                         uom="EA", thickness_uom="in")
+        self.assertEqual(r["thickness"], "2cm")
+        self.assertEqual(r["uom"], "EA", "uom must not be rewritten - it gates tile_sf")
+
+    def test_every_dekton_thickness_lands_on_its_millimetre_spec(self):
+        # 0.16/0.31/0.47/0.79/1.18 in are 4/8/12/20/30 mm rounded to 2dp. Converting at 2dp
+        # gives 0.41/0.79/1.19/2.01/3cm, so the 476 rows that are plainly 2cm sit under
+        # "2.01cm" and miss the 2cm filter entirely.
+        from stonescan.normalize import normalize_thickness as nt
+        for inches, expect in (("0.16", "0.4cm"), ("0.31", "0.8cm"), ("0.47", "1.2cm"),
+                               ("0.79", "2cm"), ("1.18", "3cm")):
+            self.assertEqual(nt(inches, "Dekton", "in"), expect, f"{inches}in")
+
+    def test_metric_thicknesses_keep_their_second_decimal(self):
+        # The 1dp rounding is scoped to inch input on purpose — a millimetre or centimetre
+        # value is already exact and must not be blurred.
+        from stonescan.normalize import normalize_thickness as nt
+        self.assertEqual(nt("12.7", "X", "mm"), "1.27cm")
+        self.assertEqual(nt("1.27", "X", "cm"), "1.27cm")
+
+    def test_a_row_without_thickness_uom_behaves_exactly_as_before(self):
+        from stonescan.providers.base import material_row
+        a = material_row(name="Slab 3cm", crawled_at="x", thickness="30", uom="mm")
+        self.assertEqual(a["thickness"], "3cm")
+
+    def test_stored_inch_thicknesses_are_repaired_without_a_recrawl(self):
+        # NG-2 again: thickness_uom fixes the next crawl, but the 1,320 rows already stored
+        # would sit outside the 2cm filter until then.
+        from stonescan.reclassify import repair_thickness_units
+        sid = db.upsert_supplier(self.conn, "unbuilt.co")
+        for i, t in enumerate(("0.16cm", "0.31cm", "0.47cm", "0.63cm", "0.79cm", "1.18cm")):
+            self.conn.execute(
+                "INSERT INTO materials (supplier_id, item_id, item_name, name_norm, thickness,"
+                " uom) VALUES (?,?,?,?,?,'EA')", (sid, f"u{i}", "Dekton", "DEKTON", t))
+        self.conn.commit()
+        self.assertEqual(repair_thickness_units(self.conn), 6)
+        got = [r["thickness"] for r in self.conn.execute(
+            "SELECT thickness FROM materials ORDER BY id")]
+        self.assertEqual(got, ["0.4cm", "0.8cm", "1.2cm", "1.6cm", "2cm", "3cm"])
+        # And the point of it: those rows now answer the 2cm filter.
+        n = self.conn.execute(
+            "SELECT COUNT(*) c FROM materials WHERE thickness = '2cm'").fetchone()["c"]
+        self.assertEqual(n, 1)
+
+    def test_repairing_thickness_twice_changes_nothing(self):
+        # AC-5. Magnitude cannot guard this one — 0.79cm and 0.8cm are both plausible stone —
+        # so idempotency rests on every repaired value being nominal, and nominal values
+        # never firing the rule.
+        from stonescan.reclassify import repair_thickness_units
+        sid = db.upsert_supplier(self.conn, "unbuilt.co")
+        for i, t in enumerate(("0.79cm", "2cm", "3cm")):
+            self.conn.execute(
+                "INSERT INTO materials (supplier_id, item_id, item_name, name_norm, thickness)"
+                " VALUES (?,?,?,?,?)", (sid, f"u{i}", "D", "D", t))
+        self.conn.commit()
+        self.assertEqual(repair_thickness_units(self.conn), 1)
+        self.assertEqual(repair_thickness_units(self.conn), 0)
+        got = [r["thickness"] for r in self.conn.execute(
+            "SELECT thickness FROM materials ORDER BY id")]
+        self.assertEqual(got, ["2cm", "2cm", "3cm"])
+
+    def test_other_suppliers_odd_thicknesses_are_untouched(self):
+        # 539 rows in the catalog read 0.79cm and only 476 are unbuilt's; the rest are other
+        # suppliers' genuine 7.9mm product. Host scoping is what keeps them out of this.
+        from stonescan.normalize import repair_inch_thickness as f
+        for host in ("stonetrash.com", "klz.stoneprofitsweb.com"):
+            for t in ("0.79cm", "0.16cm", "1.27cm"):
+                self.assertEqual(f(t, host), t)
+
+    def test_a_value_that_is_nominal_neither_way_is_left_alone(self):
+        # 1.27cm (a real 12.7mm) reads as 3.2cm in inches, which is not a nominal thickness
+        # either — so the rule declines rather than guessing.
+        from stonescan.normalize import repair_inch_thickness as f
+        self.assertEqual(f("1.27cm", "unbuilt.co"), "1.27cm")
+
+
 class SpillMergeTests(unittest.TestCase):
     """AIL-29: this is the only thing besides a crawl that writes into the primary catalog,
     and unlike a crawl it writes data it did not collect. Every test here is about a way it

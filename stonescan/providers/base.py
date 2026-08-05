@@ -67,6 +67,15 @@ def material_row(
     avg_length: Any = None,
     avg_width: Any = None,
     uom: str = "",
+    # The unit `thickness` is expressed in, when it is NOT the unit `uom` names. Separate on
+    # purpose: `uom` is a SELLING unit as often as a measuring one (SF, EA), it gates the
+    # tile_sf column downstream, and rewriting it to "in" to fix a thickness would change
+    # what the search UI shows. Unbuilt is the case in hand — it sends inch thicknesses
+    # alongside uom="EA", which thickness_unit() correctly refuses to read as a length, so
+    # every Cosentino row fell back to centimetres and Dekton's 20mm slabs were stored as
+    # 0.79cm. A dedicated parameter says the one thing that is true without disturbing the
+    # thing that isn't.
+    thickness_uom: str = "",
     sku: str = "",
     idone: str = "",
     price_range: str = "",
@@ -78,7 +87,7 @@ def material_row(
     Stone Profits path does."""
     nm = clean_name(name)
     mtype = canonical_type(category, subcategory, nm)
-    thk = normalize_thickness(thickness, nm, uom)
+    thk = normalize_thickness(thickness, nm, thickness_uom or uom)
     return {
         "item_id": str(item_id or ""),
         "item_name": nm,
