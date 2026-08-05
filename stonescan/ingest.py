@@ -14,7 +14,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from . import db, denylist, discover, output
+from . import db, denylist, discover, output, spill
 from .crawler import EMPTY_CATALOG_ERROR, crawl_hosts, utc_now_iso
 from .normalize import normalize_item
 from .output import say
@@ -370,6 +370,23 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             _refresh_log(db_path, "nothing to back up yet (no existing DB)")
     except Exception as e:  # noqa: BLE001 - proceed without a backup, but say so
         _refresh_log(db_path, f"WARNING: backup failed, proceeding without one: {e}")
+
+    # If the last time this ran the project drive was missing, AIL-28 crawled into the local
+    # copy on C: instead. Fold that in BEFORE crawling, not after: tonight's crawl is about
+    # to overwrite these same suppliers with fresher data, and a merge that ran afterwards
+    # would put the older spill rows back over the top of it. merge_spill never raises and
+    # skips any supplier the primary already has fresher, so the usual case — no spill —
+    # costs one os.path.exists.
+    try:
+        result = spill.merge_spill(db_path, log=lambda m: _refresh_log(db_path, m))
+        if result.moved:
+            say(f"  spill: merged {len(result.moved)} supplier(s) crawled while the project "
+                f"drive was away ({', '.join(result.moved[:6])}"
+                f"{'…' if len(result.moved) > 6 else ''}).")
+        elif result.status in ("refused", "failed"):
+            say(f"  spill: NOT merged — {result.reason}")
+    except Exception as e:  # noqa: BLE001 - belt and braces; merge_spill already swallows
+        _refresh_log(db_path, f"WARNING: spill merge raised, continuing: {e}")
 
     try:
         # Last line of defence for a removal request: even a hand-re-added entry, or

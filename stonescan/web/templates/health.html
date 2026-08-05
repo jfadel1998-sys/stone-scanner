@@ -52,6 +52,17 @@
     {%- endif %}
   </p>
   {% endif %}
+  {% if spills %}
+  {# A spill crawl ran against a different database on a different drive, so it leaves no row
+     in the table below — the night reads as "nothing happened" unless the merge says
+     otherwise. Skipped counts are as interesting as moved ones: they mean a normal crawl had
+     already refreshed that supplier, and the merge correctly left it alone. #}
+  <p class="taskline"><b>Spill merges:</b>
+    {% for s in spills %}
+    {{ (s.merged_at or '')[:16].replace('T',' ') }} — {{ s.moved }} supplier{{ '' if s.moved == 1 else 's' }} moved from the local copy{% if s.skipped %}, {{ s.skipped }} left alone as already fresher here{% endif %}{% if s.detail %} <span class="muted" title="{{ s.detail }}">({{ s.detail[:60] }}{{ '…' if s.detail|length > 60 }})</span>{% endif %}{{ '; ' if not loop.last }}
+    {% endfor %}
+  </p>
+  {% endif %}
   <p class="hintline muted">Every refresh run, including the nightly one — which runs in its own process and was previously invisible here. A run records a heartbeat as each supplier finishes, so one that stopped moving without recording an outcome shows as <b>interrupted</b> rather than vanishing, while a legitimately slow run does not.</p>
   {% if runs %}
   <table class="materials pipelinetable">
