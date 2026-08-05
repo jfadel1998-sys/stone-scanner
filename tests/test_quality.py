@@ -2520,6 +2520,97 @@ class RefreshLedgerTests(_SuppliersFileCase):
         conn.close()
 
 
+class LostNightsTests(_SuppliersFileCase):
+    """AIL-30: two consecutive nights were lost (2026-08-04, 2026-08-05) and nobody noticed,
+    because both the ledger and the task state require someone to go and look at them."""
+
+    TODAY = "2026-08-05"
+
+    def _run(self, day, *, outcome=None, at="03:00:00"):
+        """One ledger row on `day`. outcome None = a run that never reported one."""
+        stamp = f"{day}T{at}+00:00"
+        conn = db.connect(self.path)
+        conn.execute("INSERT INTO refresh_runs (started_at, heartbeat_at, finished_at, outcome)"
+                     " VALUES (?,?,?,?)",
+                     (stamp, stamp, stamp if outcome else None, outcome))
+        conn.commit()
+        conn.close()
+
+    def _days(self):
+        conn = db.connect(self.path)
+        try:
+            return db.lost_refresh_days(conn, today=self.TODAY)
+        finally:
+            conn.close()
+
+    def test_two_bad_days_warn_and_one_does_not(self):
+        self._run("2026-08-03", outcome="done")
+        self._run("2026-08-04", outcome="failed")
+        self._run("2026-08-05", outcome="failed")
+        self.assertEqual(self._days(), 2)
+        self.assertGreaterEqual(2, db.LOST_REFRESH_WARN_DAYS)
+
+    def test_one_bad_day_is_below_the_threshold(self):
+        # NG-3: a single missed night is noise. A warning that fires on every hiccup is one
+        # nobody reads by the time it matters.
+        self._run("2026-08-04", outcome="done")
+        self._run("2026-08-05", outcome="failed")
+        self.assertLess(self._days(), db.LOST_REFRESH_WARN_DAYS)
+
+    def test_three_failures_in_one_night_is_one_day(self):
+        # AC-6. AIL-28 adds 03:00/05:00/07:00 triggers, so a bad night will soon produce three
+        # rows as a matter of course; counting rows would treble every failure overnight.
+        self._run("2026-08-04", outcome="done")
+        self._run("2026-08-05", outcome="failed", at="03:00:00")
+        self._run("2026-08-05", outcome="failed", at="05:00:00")
+        self._run("2026-08-05", outcome="failed", at="07:00:00")
+        self.assertEqual(self._days(), 1)
+
+    def test_a_success_after_failures_the_same_day_clears_it(self):
+        self._run("2026-08-02", outcome="done")
+        self._run("2026-08-03", outcome="failed")
+        self._run("2026-08-04", outcome="failed")
+        self._run("2026-08-05", outcome="failed", at="03:00:00")
+        self._run("2026-08-05", outcome="done", at="05:00:00")
+        self.assertEqual(self._days(), 0)
+
+    def test_an_empty_ledger_does_not_warn(self):
+        # AC-5: a fresh install is not a failure, and warning there teaches people to ignore
+        # the warning before it has ever meant anything.
+        self.assertEqual(self._days(), 0)
+
+    def test_a_gap_with_no_runs_at_all_still_counts(self):
+        # THE case this issue exists for. On 2026-08-04 the task never fired, so there is no
+        # row whose outcome could be inspected: a "was the last run OK?" query reads the
+        # healthy 08-03 row and reports nothing wrong. Only date arithmetic sees the hole.
+        self._run("2026-08-03", outcome="done")
+        self.assertEqual(self._days(), 2)
+
+    def test_never_a_single_success_counts_from_the_first_run(self):
+        # No success to subtract from, so the first run's own day is lost too — inclusive.
+        self._run("2026-08-04", outcome="failed")
+        self._run("2026-08-05", outcome="failed")
+        self.assertEqual(self._days(), 2)
+
+    def test_an_unfinished_run_is_not_a_success(self):
+        # Interrupted and still-running rows carry outcome NULL. Neither is evidence that the
+        # catalog got refreshed, and treating "a run exists" as "a run worked" is how the
+        # ledger would come to reassure us about the exact nights it was written to expose.
+        self._run("2026-08-02", outcome="done")
+        self._run("2026-08-03")
+        self._run("2026-08-04")
+        self.assertEqual(self._days(), 3)
+
+    def test_it_degrades_on_a_db_predating_the_table(self):
+        # This now renders in base.html, i.e. on EVERY page. A snapshot DB shipped before
+        # refresh_runs existed must not take the whole app down.
+        conn = db.connect(self.path)
+        conn.execute("DROP TABLE IF EXISTS refresh_runs")
+        conn.commit()
+        self.assertEqual(db.lost_refresh_days(conn), 0)
+        conn.close()
+
+
 class CatalogFreshnessTests(unittest.TestCase):
     """AIL-20 AC-4: 'crawled 2026-07-16 → 2026-07-31' reads as fresh while 114 of 140
     suppliers sit at the old end of that range. A range describes its ends, not its

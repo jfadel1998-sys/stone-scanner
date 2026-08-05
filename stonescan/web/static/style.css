@@ -623,6 +623,16 @@ footer {
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .fresh.partial { color: #cbb26a; }
 }
+/* "Nothing has refreshed in N days" — louder than the partial-freshness amber, because it
+   reports a stopped pipeline rather than an uneven one, and it is a link to the page that
+   explains why. Sits in the header on every page; `white-space: nowrap` so a narrow window
+   wraps it as a unit instead of stranding the day count on its own line. */
+.staleref { color: #a1341f; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.staleref:hover { text-decoration: underline; }
+:root[data-theme="dark"] .staleref { color: #e08b73; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .staleref { color: #e08b73; }
+}
 
 /* ---- Sourcing lists ----------------------------------------------------- */
 .newlist { display: flex; gap: 8px; margin: 14px 0 4px; }

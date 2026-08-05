@@ -21,6 +21,13 @@
 
 <div class="mirrorbox pipelinebox">
   <h2>Refresh pipeline</h2>
+  {# Echoed here as well as in the header: someone who arrived by clicking the header warning
+     should find the same statement at the top of what explains it, not have to infer it from
+     the table below. Same source, so the two can never disagree. #}
+  {% set rw = refresh_warning() %}
+  {% if rw.warn %}
+  <p class="taskline taskbad"><b>No successful refresh in {{ rw.days }} days.</b> The catalog is still being served from its last good crawl, but nothing is updating it. The task's own state and every recorded run are below.</p>
+  {% endif %}
   {# The scheduler's own view. A task that never fired leaves no run in the ledger below,
      so without this the most complete failure is the most invisible one. Read-only by
      design: registering a task needs elevation, and a page that spawns an elevated process
