@@ -77,6 +77,12 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.4,
                             subcategory=cat,
                             color=it.get("canonicalColor") or "",
                             thickness=str(dims.get("height_thickness") or ""),
+                            # Unbuilt's dimensions are inches; uom below is the SELLING unit
+                            # and says nothing about them. Without this, thickness_unit()
+                            # rightly refuses to read "EA" as a length and falls back to
+                            # centimetres, storing Dekton's 20mm slabs as "0.79cm" — outside
+                            # the 2cm filter they obviously belong in.
+                            thickness_uom="in",
                             product_form="SLAB",
                             available_slabs=it.get("quantity") or 1,
                             avg_length=dims.get("length_depth"),

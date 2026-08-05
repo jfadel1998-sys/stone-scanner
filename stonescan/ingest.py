@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import db, denylist, discover, output, spill
 from .crawler import EMPTY_CATALOG_ERROR, crawl_hosts, utc_now_iso
-from .normalize import normalize_item
+from .normalize import fix_dimension_rows, normalize_item
 from .output import say
 
 
@@ -119,11 +119,16 @@ def _store(conn, data, *, with_slabs: bool) -> tuple[int, int]:
     )
     for r in data.materials:
         r["supplier_id"] = supplier_id
+    # Reinterpret metre/centimetre dimensions as inches before they land. Store time, not
+    # read time: the size filters compare raw and _SQFT divides by 144, so a stored metre
+    # is wrong for every reader at once. A no-op for all but the two measured hosts.
+    fix_dimension_rows(data.materials, data.host)
     n = db.replace_materials(conn, supplier_id, data.materials)
     ns = 0
     if with_slabs and data.slabs:
         for s in data.slabs:
             s["supplier_id"] = supplier_id
+        fix_dimension_rows(data.slabs, data.host, keys=("length", "width"))
         ns = db.replace_slabs(conn, supplier_id, data.slabs, utc_now_iso())
         db.backfill_locations(conn, supplier_id)
     db.snapshot_history(conn, supplier_id, utc_now_iso()[:10])
@@ -593,6 +598,7 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                             rows.append(r)
                         except Exception as e:  # noqa: BLE001 - skip a single malformed item
                             say(f"         (skipped malformed item on {result.host}: {e})")
+                    fix_dimension_rows(rows, result.host)   # see the provider path above
                     n = db.replace_materials(conn, supplier_id, rows)
                     total_items += n
                     ok_suppliers += 1
@@ -600,6 +606,7 @@ async def run(hosts: list[str], *, concurrency: int, delay: float, headless: boo
                     slab_note = ""
                     if with_slabs:
                         slab_rows = _build_slab_rows(result, supplier_id, utc_now_iso())
+                        fix_dimension_rows(slab_rows, result.host, keys=("length", "width"))
                         ns = db.replace_slabs(conn, supplier_id, slab_rows, utc_now_iso())
                         db.backfill_locations(conn, supplier_id)
                         total_slabs += ns

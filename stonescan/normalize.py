@@ -13,7 +13,7 @@ SubCategoryName, Color, ProductThickness, Finish, ProductFormValue). This module
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import quote
 
 from .smartsearch import COLOR_WORDS
@@ -312,6 +312,133 @@ _THK_UNIT_CM = {"mm": 0.1, "cm": 1.0, "in": 2.54, "inch": 2.54, '"': 2.54}
 _THICKNESS_VAL_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(mm|cm|in|inch|\")?\s*$", re.IGNORECASE)
 
 
+# --- slab dimensions that are not in inches ---------------------------------------
+#
+# avg_length / avg_width / slabs.length / slabs.width are stored unitless and read as inches
+# everywhere: the size filters compare them raw and _SQFT divides L x W by 144. Two of 130
+# suppliers with dimension data publish something else, and both were measured rather than
+# guessed (means, over rows that have both dimensions):
+#
+#   graniteslabsuk.stoneprofitsweb.com   675 rows   3.13 x 1.74      -> METRES
+#   stoneyarduk.stoneprofitsweb.com      267 rows   282.63 x 159.89  -> CENTIMETRES
+#
+# Everyone else sits between 70.06 and 131.52, i.e. plainly inches. Left alone, one key rolls
+# up to 541,288 ft2 and 13 of the top 100 rows by total_sqft are unit artifacts, while size
+# filtering is inverted in both directions: none of graniteslabsuk's 680 rows pass
+# min_length>=100 and 265 of stoneyarduk's 270 falsely do.
+#
+# THE UOM COLUMN CANNOT DECIDE THIS, and that is the part worth remembering. graniteslabsuk
+# labels its metres "MM"; 7 of stoneyarduk's rows label centimetres "MM" too. Believing the
+# label would divide 3.13 by 25.4 and store a 0.12-inch slab. Magnitude is the only honest
+# signal, so magnitude is what decides — the label is not consulted at all.
+#
+# Scoped to the two measured hosts on purpose, because magnitude alone is NOT safe in
+# general: 210 stonetrash rows, 75 klz rows and 51 sii rows sit between 1 and 20 because they
+# are TILES measured in inches, and a global rule would multiply them by 39. Adding a host
+# here is a deliberate act that should follow the same measurement.
+DIMENSION_UNIT_HOSTS = frozenset({
+    "graniteslabsuk.stoneprofitsweb.com",
+    "stoneyarduk.stoneprofitsweb.com",
+})
+
+_IN_PER_M = 39.3701
+_IN_PER_CM = 1 / 2.54
+
+# The two bands, and the guards that make a second pass a no-op. A stored dimension is only
+# reinterpreted while it is still IMPLAUSIBLE as inches, so once converted it falls between
+# them and is never touched again — the same shape as fix_mm_thickness's plausibility guard.
+#   * Under 20: no slab is 20 inches long, but plenty are 3 metres. 3.13m -> 123.2in, which
+#     is above 20, so the second pass leaves it.
+#   * At or over 145: the largest genuine inch dimension in the whole catalog is 144.9
+#     (a jumbo slab is ~144in), while stoneyarduk's centimetre rows start at 163.64.
+#     282.84cm -> 111.4in, below 145, so the second pass leaves that too.
+_METRES_BELOW = 20.0
+_CENTIMETRES_AT_OR_ABOVE = 145.0
+
+
+def dimension_to_inches(value: Any, host: str) -> Any:
+    """Reinterpret one stored length/width as inches, or hand it back untouched.
+
+    Idempotent by construction (see the band comment above): feeding the result back in
+    returns it unchanged, which is what lets `reclassify` re-run this over the whole catalog
+    as often as it likes.
+    """
+    if (host or "").lower() not in DIMENSION_UNIT_HOSTS:
+        return value
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return value
+    if v <= 0:
+        return value
+    if v < _METRES_BELOW:
+        return round(v * _IN_PER_M, 1)
+    if v >= _CENTIMETRES_AT_OR_ABOVE:
+        return round(v * _IN_PER_CM, 1)
+    return value
+
+
+def fix_dimension_rows(rows: Iterable[dict[str, Any]], host: str,
+                       keys: tuple[str, ...] = ("avg_length", "avg_width")) -> int:
+    """Convert a crawl's dimension columns in place; return how many values moved.
+
+    Called at the store site rather than inside `material_row`/`normalize_item` because that
+    is the one place where the host is known for EVERY path — the Stone Profits crawler, all
+    six providers, and slabs as well as materials. A per-builder hook would have to be added
+    to each of them and would be silently missing from the next one.
+    """
+    if (host or "").lower() not in DIMENSION_UNIT_HOSTS:
+        return 0                      # the overwhelmingly common case, at no cost
+    changed = 0
+    for r in rows:
+        for k in keys:
+            before = r.get(k)
+            after = dimension_to_inches(before, host)
+            if after != before:
+                r[k] = after
+                changed += 1
+    return changed
+
+
+# --- thicknesses that were inches all along ---------------------------------------
+#
+# Unbuilt sends `dimensions.height_thickness` in inches beside uom="EA". thickness_unit()
+# rightly refuses to read a selling unit as a length, so all 1,320 Cosentino rows fell back
+# to centimetres: Dekton's 4/8/12/20/30 mm are stored as 0.16/0.31/0.47/0.79/1.18cm, and the
+# 476 slabs that are plainly 2 cm never appear in the 2cm filter that matches 47,476 rows.
+#
+# `thickness_uom` fixes that at crawl time. This repairs what is already stored, because
+# 88k rows were collected before the parameter existed.
+THICKNESS_INCH_HOSTS = frozenset({"unbuilt.co"})
+
+# Nominal stone thicknesses, in centimetres. Not a rounding target and not a whitelist — the
+# catalog holds plenty of legitimate odd values (0.84, 0.89, 0.95, 0.99, 1.27cm) from other
+# suppliers, which is why this is only ever consulted for the hosts above.
+#
+# It exists to make the repair PROVABLY IDEMPOTENT, which magnitude alone cannot do here: the
+# mis-stored values (0.16 … 1.18) and the correct ones (0.4 … 3.0) overlap, so no threshold
+# separates them. The rule instead fires only when a value is NOT nominal and reading it as
+# inches lands exactly on one that IS. Every value it produces is nominal by definition, so a
+# second pass cannot fire on its own output.
+_NOMINAL_CM = frozenset({0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 1.6, 2.0, 3.0, 4.0, 5.0, 6.0})
+
+
+def repair_inch_thickness(stored: str, host: str) -> str:
+    """Rewrite a stored '<n>cm' that was really inches. Returns `stored` unchanged otherwise."""
+    if (host or "").lower() not in THICKNESS_INCH_HOSTS:
+        return stored
+    m = re.match(r"^\s*(\d+(?:\.\d+)?)\s*cm\s*$", str(stored or ""), re.IGNORECASE)
+    if not m:
+        return stored
+    cm = float(m.group(1))
+    if cm in _NOMINAL_CM:
+        return stored                          # already right; nothing to reinterpret
+    as_inches = round(cm * 2.54, 1)
+    if as_inches in _NOMINAL_CM:
+        return f"{as_inches:g}cm"
+    return stored                              # neither reading is nominal — leave it be
+
+
 def thickness_unit(uom: str) -> str:
     """Read a length unit out of a UOM field, else '' (SF/EA aren't lengths)."""
     u = (uom or "").strip().lower().rstrip(".")
@@ -336,7 +463,15 @@ def normalize_thickness(raw_thickness: str | None, name: str, uom: str = "") -> 
             if unit == "inch":
                 unit = "in"
             cm = num * _THK_UNIT_CM.get(unit, 1.0)
-            return f"{round(cm, 2):g}cm"
+            # One decimal from inches, two from everything else. An inch-denominated
+            # thickness is a rounded imperial rendering of a metric spec, so its second
+            # decimal is conversion noise — and noise that costs the row its filter.
+            # Unbuilt publishes Dekton's five thicknesses as 0.16/0.31/0.47/0.79/1.18in,
+            # which are 4/8/12/20/30 mm rounded to 2dp; converting at 2dp yields
+            # 0.41/0.79/1.19/2.01/3.00cm, so the 476 slabs that are plainly 2 cm land under
+            # "2.01cm" and never appear in the 2cm filter that matches 47,241 rows. At 1dp
+            # all five land exactly on the millimetre spec they came from.
+            return f"{round(cm, 1 if unit == 'in' else 2):g}cm"
     m = _THICKNESS_RE.search(name or "")
     if m:
         return f"{float(m.group(1)):g}cm"

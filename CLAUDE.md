@@ -58,7 +58,7 @@ build/packaging details.
 | `stonescan/reference.py` | What a stone *is* — origin, quarries, market price — none of which exists in the catalog (see Gotchas). Cited facts in `stone_reference.json`; `lookup_live()` fills gaps from the Wikipedia API on demand. Unsourced facts are stripped on import, so the UI says "not established" rather than inventing one. |
 | `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) distributor **vanity / white-label** Stone Profits catalogs on the distributor's own domain (slabs.nsrstone.com, inventory.acegraniteusa.com, outlet.ckfco.com — drop-in on the default provider, any subdomain prefix, invisible to the subdomain sweep). `discover_sps_embeds()` finds them via urlscan (pages that load a Stone Profits resource → fingerprint-verify); `probe_sps_vanity()` fingerprints `<prefix>.<apex>` over a curated apex list. UMI/StoneTrash single sites stay hand-seeded |
 | `stonescan/geocode.py` | Offline location → lat/long for the pin map (+ `locations.json` overrides) |
-| `stonescan/reclassify.py` | Re-derive type/color/key in place without re-crawling (also re-applies merges) |
+| `stonescan/reclassify.py` | Re-derive type/color/key/thickness in place without re-crawling (also repairs non-inch dimensions, and re-applies merges) |
 | `stonescan/dedupe.py` | Data-quality curation: type-conflict + spelling merge candidates, `apply_aliases` fold |
 | `stonescan/desktop.py` + `main.py` | Frozen-app launcher (native window, `--refresh` mode) |
 | `stonescan/web/app.py` + `templates/` | FastAPI UI: search (table + showroom grid), **By Photo** (CLIP visual similarity), item detail, canonical material page, **Compare** (side-by-side canonical materials via a persistent 4-slot tray + print board), What's New, Locations, Sourcing lists, Watchlist, Health, Discovery (candidate triage), Quality (merge review + type audit) |
@@ -146,6 +146,15 @@ build/packaging details.
   per-path-prefix, and invalid without a written `reason` (`Override.from_entry`
   raises), so exceptions are auditable rather than silent. It can rescue a `BLOCKED`
   but never an `UNREACHABLE`: "we couldn't ask" is not something a human pre-approved.
+- **Dimensions are stored unitless and read as inches, and two suppliers don't oblige.**
+  `graniteslabsuk` publishes metres, `stoneyarduk` centimetres; everyone else's per-supplier
+  mean sits between 70 and 132. **The `uom` column cannot decide this** — graniteslabsuk
+  labels its metres `MM`, and 7 of stoneyarduk's centimetre rows say `MM` too, so believing
+  the label stores a 0.12-inch slab. Magnitude decides, scoped to the two measured hosts
+  (`normalize.DIMENSION_UNIT_HOSTS`), because magnitude alone is *not* safe globally: 210
+  stonetrash and 75 klz rows sit between 1 and 20 because they are **tiles in inches**.
+  Same story one level down: Unbuilt sends inch *thicknesses* beside `uom="EA"`, so pass
+  `thickness_uom=` to `material_row` rather than rewriting `uom` (which gates `tile_sf`).
 - **`materials.origin` is not geological origin, and `price_range` is not money.**
   Both look usable and neither is. `origin` has 44 distinct values of which exactly
   three are countries — the other 41 are US warehouse cities ("Anaheim, CA"), i.e. a
