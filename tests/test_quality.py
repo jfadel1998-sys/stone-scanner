@@ -1812,6 +1812,180 @@ class _DeadStdout:
         pass
 
 
+class TaskCheckTests(unittest.TestCase):
+    """AIL-21: the nightly task can exist, be misconfigured, and have failed, with nothing in
+    the app any the wiser — the live task drifted to Interactive/Limited/PT72H and sat that
+    way for weeks, because seeing it meant running PowerShell by hand."""
+
+    def test_both_sign_conventions_of_the_same_failure_decode_alike(self):
+        # schtasks /FO LIST /V prints -2147024629 where Get-ScheduledTaskInfo returns
+        # 2147942667. Same 0x8007010B; a table keyed on the signed form would miss one.
+        from stonescan import taskcheck as tc
+        self.assertEqual(tc.describe_result(2147942667), tc.describe_result(-2147024629))
+        self.assertIn("drive", tc.describe_result(2147942667))
+
+    def test_the_guards_own_exit_code_is_decoded(self):
+        # 200 is the sentinel install-refresh-task.ps1 uses for "the project drive never
+        # showed up" — the live task returned exactly this at 03:00 on 2026-08-05.
+        from stonescan import taskcheck as tc
+        self.assertIn("drive", tc.describe_result(200))
+        self.assertIn("success", tc.describe_result(0))
+        self.assertIn("0x", tc.describe_result(0x1234ABCD))   # unknown codes still readable
+
+    def test_non_windows_no_ops_cleanly(self):
+        from stonescan import taskcheck as tc
+        import sys as _sys
+        real = _sys.platform
+        try:
+            _sys.platform = "darwin"          # build_mac.sh exists
+            s = tc.check()
+        finally:
+            _sys.platform = real
+        self.assertFalse(s.supported)
+        self.assertFalse(s.installed)
+        self.assertTrue(s.reason)
+
+    def test_a_missing_task_is_a_normal_state_not_an_error(self):
+        from stonescan import taskcheck as tc
+        orig = tc._query_xml
+        tc._query_xml = lambda: ""
+        try:
+            s = tc.check()
+        finally:
+            tc._query_xml = orig
+        self.assertTrue(s.supported)
+        self.assertFalse(s.installed)
+        self.assertIn("no scheduled task", s.reason)
+        self.assertEqual(s.drift, [])
+
+    def test_drift_is_detected_per_setting_in_the_xmls_own_vocabulary(self):
+        # The cmdlet's `-RunLevel Highest` is written to XML as "HighestAvailable". Comparing
+        # the cmdlet spelling against the XML would report drift on a correct task.
+        from stonescan import taskcheck as tc
+        self.assertEqual(tc.EXPECTED["RunLevel"], "HighestAvailable")
+        xml = ("<Task><Principal><LogonType>InteractiveToken</LogonType>"
+               "<RunLevel>LeastPrivilege</RunLevel></Principal><Settings>"
+               "</Settings></Task>")
+        got = tc._parse_xml(xml)
+        self.assertEqual(got["LogonType"], "InteractiveToken")
+        self.assertEqual(got["RunLevel"], "LeastPrivilege")
+        # An absent ExecutionTimeLimit is itself the signal the task predates the installer.
+        self.assertEqual(got["ExecutionTimeLimit"], "(not set)")
+        drift = [f"{k} is {got[k]}, expected {v}" for k, v in tc.EXPECTED.items()
+                 if k in got and got[k] != v]
+        self.assertEqual(len(drift), 3, "each of the three settings drifts independently")
+
+    def test_a_correctly_registered_task_reports_no_drift(self):
+        from stonescan import taskcheck as tc
+        xml = ("<Task><Principal><LogonType>S4U</LogonType>"
+               "<RunLevel>HighestAvailable</RunLevel></Principal>"
+               "<Settings><ExecutionTimeLimit>PT6H</ExecutionTimeLimit></Settings></Task>")
+        got = tc._parse_xml(xml)
+        self.assertEqual([f"{k}" for k, v in tc.EXPECTED.items()
+                          if k in got and got[k] != v], [])
+
+    def test_utf16_xml_is_decoded(self):
+        # schtasks /XML writes UTF-16; decoding it as UTF-8 yields mojibake no parser accepts.
+        from stonescan import taskcheck as tc
+        payload = "<Task><Principal><LogonType>S4U</LogonType></Principal></Task>"
+        orig = tc._run
+        tc._run = lambda args: (0, payload.encode("utf-16"))
+        try:
+            self.assertIn("<LogonType>S4U</LogonType>", tc._query_xml())
+        finally:
+            tc._run = orig
+
+    def test_an_omitted_element_is_drift_not_silence(self):
+        # Windows OMITS <RunLevel> when it is LeastPrivilege, and omits <ExecutionTimeLimit>
+        # on a task predating the current installer — which is exactly the state this issue
+        # documents. A drift check that skips absent keys cannot see the drift it exists for.
+        from stonescan import taskcheck as tc
+        xml = ("<Task><Principal><LogonType>InteractiveToken</LogonType></Principal>"
+               "<Settings></Settings></Task>")
+        got = tc._parse_xml(xml)
+        self.assertEqual(got["RunLevel"], "LeastPrivilege")
+        self.assertEqual(got["ExecutionTimeLimit"], "(not set)")
+        drift = [k for k, v in tc.EXPECTED.items() if k in got and got[k] != v]
+        self.assertEqual(sorted(drift),
+                         ["ExecutionTimeLimit", "LogonType", "RunLevel"])
+
+    def test_an_unread_field_is_never_reported_as_never_ran(self):
+        # A task that has genuinely never run reports Windows' 11/30/1999 sentinel, so a
+        # blank field can only mean the read failed. Saying "never" there is a false claim
+        # from the very page built to stop the app overstating its own state.
+        from stonescan import taskcheck as tc
+        orig = tc._query_list
+        tc._query_list = lambda: {}
+        try:
+            s = tc.check()
+        finally:
+            tc._query_list = orig
+        if s.supported and s.installed:          # only meaningful where a task exists
+            self.assertTrue(s.degraded)
+            self.assertIn("could not be read", s.reason)
+            self.assertEqual(s.last_run, "")
+
+    def test_benign_scheduler_states_are_not_flagged_as_failures(self):
+        from stonescan import taskcheck as tc
+        for benign in (0, 0x41300, 0x41301, 0x41303, 0x41325):
+            self.assertFalse(tc.TaskState(installed=True, last_result=benign).failing,
+                             hex(benign))
+        for bad in (200, 2147942667, -2147024629, 1):
+            self.assertTrue(tc.TaskState(installed=True, last_result=bad).failing, bad)
+        # An uninstalled task is not a failure either — it is a normal state.
+        self.assertFalse(tc.TaskState(installed=False).failing)
+
+    def test_the_drive_absent_messages_name_the_drive(self):
+        from stonescan import taskcheck as tc
+        for code in (200, 2147942667):
+            msg = tc.describe_result(code)
+            self.assertNotIn("{drive}", msg, "the placeholder was left unformatted")
+            self.assertTrue(any(c.endswith(":") for c in msg.split()) or "drive" in msg, msg)
+
+    def test_a_stray_byte_cannot_make_a_live_task_vanish(self):
+        # schtasks emits console-codepage bytes despite declaring UTF-16, so one accented
+        # character in the project path breaks every strict decode. Returning "" there would
+        # report a registered task as "not installed" — the worst lie this block can tell.
+        from stonescan import taskcheck as tc
+        payload = b'<?xml version="1.0"?><Task><Principal><LogonType>S4U</LogonType>' \
+                  b'</Principal></Task>\xe9'
+        orig = tc._run
+        tc._run = lambda args: (0, payload)
+        try:
+            xml = tc._query_xml()
+        finally:
+            tc._run = orig
+        self.assertIn("<LogonType>S4U</LogonType>", xml)
+
+    def test_the_reinstall_command_is_pasteable_and_says_elevated(self):
+        from stonescan import taskcheck as tc
+        cmd = tc.reinstall_command()
+        self.assertNotIn("<project>", cmd, "a placeholder is not a command")
+        self.assertIn("ELEVATED", cmd)
+        self.assertIn("install-refresh-task.ps1", cmd)
+
+    def test_it_never_writes_to_the_scheduler(self):
+        # NG-1/NG-3: the page must not be able to register, change, run or delete the task.
+        from pathlib import Path
+        src = Path("stonescan/taskcheck.py").read_text(encoding="utf-8")
+        for verb in ("/create", "/change", "/run", "/delete", "/end", "Register-ScheduledTask"):
+            self.assertNotIn(verb, src, f"taskcheck must not be able to {verb}")
+
+    def test_a_broken_schtasks_cannot_break_the_page(self):
+        from stonescan import taskcheck as tc
+        orig = tc._run
+
+        def boom(args):
+            raise OSError("schtasks is not on PATH")
+
+        tc._run = boom
+        try:
+            s = tc.check()          # must NOT raise
+        finally:
+            tc._run = orig
+        self.assertFalse(s.installed)
+
+
 class FinishDerivationTests(unittest.TestCase):
     """AIL-22: finish is empty on 96.3% of rows while 35% of item names state one. Derived on
     reclassify so it reaches the stored catalog without a re-crawl."""
