@@ -35,7 +35,35 @@ foreach ($f in @("refresh.ps1", "install-refresh-task.ps1")) {
     Write-Output "   + $f"
 }
 
+# Mirror the built app to the local fallback copy on C:.
+#
+# The nightly runs from this project on D:, a removable drive that was absent at 03:00 on two
+# consecutive nights (2026-08-04, 2026-08-05), losing the whole night both times because
+# there was nothing on the machine to start. install-refresh-task.ps1's last trigger now
+# falls back to this copy; keeping it in step with the source is what makes that fallback
+# worth having. A fallback quietly rotting a few releases behind the source is worse than
+# none — it would crawl with old parsing rules into an old schema and report success.
+#
+# /XD data is the important flag. The local copy owns its own data\ folder: desktop.setup_env
+# seeds stonescan.db, suppliers.json, denylist.json and locations.json there on first launch,
+# and a spill crawl's results and its refresh_runs ledger live in it. /MIR would delete the
+# lot on the next build. Excluded directories are not purged.
+$local = Join-Path $env:ProgramData "StoneScanner"
+Write-Output "== Syncing to the local fallback copy: $local =="
+robocopy $dist $local /MIR /XD data /NFL /NDL /NJH /NJS /NP | Out-Null
+# robocopy's exit code is a BITMASK, not a status: 1 = files copied, 2 = extra files present,
+# 4 = mismatches, and only >= 8 is a real failure. `if ($LASTEXITCODE)` would treat every
+# build that actually copied something as broken.
+if ($LASTEXITCODE -ge 8) {
+    Write-Warning "Local copy NOT updated (robocopy $LASTEXITCODE) - it is now STALE."
+    Write-Warning "  Usually this means the copy is running: close Stone Scanner and re-run"
+    Write-Warning "  .\build_exe.ps1 -SkipBuild. Until then a lost drive is still a lost night."
+} else {
+    Write-Output "   + local copy updated"
+}
+
 $size = "{0:N0} MB" -f ((Get-ChildItem $dist -Recurse | Measure-Object Length -Sum).Sum / 1MB)
 Write-Output ""
 Write-Output "Done. App folder: $dist  ($size)"
 Write-Output "Run it:  $dist\StoneScanner.exe"
+Write-Output "Nightly fallback copy: $local"

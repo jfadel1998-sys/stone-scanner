@@ -2520,6 +2520,271 @@ class RefreshLedgerTests(_SuppliersFileCase):
         conn.close()
 
 
+_GUARD_BLOCK_RE = __import__("re").compile(r"^\$guard = @\(.*?^\) -join '; '$",
+                                           __import__("re").S | __import__("re").M)
+
+
+class RefreshGuardDecisionTests(unittest.TestCase):
+    """AIL-28: the night has now been lost twice (2026-08-04, 2026-08-05) because everything
+    runnable lives on a removable drive that was absent at 03:00. The guard's three-way
+    decision — run D:, wait for a later trigger, or spill to the local copy — is what stops
+    that, and it is a string built inside a PowerShell installer, i.e. exactly the kind of
+    code that normally goes untested until the night it matters.
+
+    So these run the REAL guard text, lifted out of install-refresh-task.ps1 and executed.
+    Only the five values the installer interpolates are substituted; every branch, comparison
+    and log line is the one that ships. A copy of the logic here would pass forever while the
+    installer drifted out from under it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if sys.platform != "win32":
+            raise unittest.SkipTest("the scheduled-task guard is Windows-only")
+
+    def _guard_block(self) -> str:
+        src = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
+        m = _GUARD_BLOCK_RE.search(src)
+        self.assertIsNotNone(
+            m, "could not find the `$guard = @(...) -join '; '` block in the installer — if "
+               "it was restructured, fix this extraction rather than pasting a copy here")
+        return m.group(0)
+
+    def _stub_ps1(self, path: Path, marker: Path, code: int = 0) -> None:
+        """A stand-in for refresh.ps1: records that it ran, and where from."""
+        path.write_text(
+            f"Set-Content -LiteralPath '{marker.as_posix()}' -Value $PWD.Path\n"
+            f"exit {code}\n", encoding="utf-8-sig")
+
+    def _stub_cmd(self, path: Path, marker: Path, code: int = 0) -> None:
+        """A stand-in for StoneScanner.exe --refresh. .cmd rather than .ps1 because the guard
+        invokes the spill as a native executable and must keep doing so."""
+        path.write_text(f"@echo off\r\n>\"{marker}\" echo %CD% %*\r\nexit /b {code}\r\n",
+                        encoding="ascii")
+
+    def _run_guard(self, *, project_script: Path, spill_exe: Path, last_at: str,
+                   wait_minutes: int = -1):
+        """Compose and execute the shipped guard. Returns (exit_code, task_log_text).
+
+        wait_minutes defaults to -1 so the deadline is already past when the loop first
+        checks it: the give-up path is reached immediately instead of after 20 real minutes.
+        """
+        import shutil
+        import subprocess
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        harness = tmp / "harness.ps1"
+        harness.write_text("\n".join([
+            f"$script = '{project_script}'",
+            f"$spillExe = '{spill_exe}'",
+            f"$lastAt = '{last_at}'",
+            f"$WaitMinutes = {wait_minutes}",
+            "$notReachable = 200",
+            self._guard_block(),
+            # Redirect the task log into the sandbox. The guard resolves it at RUN time from
+            # %ProgramData%, which is the whole point of that design — it must never depend
+            # on the project drive being there.
+            f"$env:ProgramData = '{tmp}'",
+            "Invoke-Expression $guard",
+        ]) + "\n", encoding="utf-8-sig")   # BOM: 5.1 reads a BOM-less file as cp1252
+        p = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
+                            "-ExecutionPolicy", "Bypass", "-File", str(harness)],
+                           capture_output=True, timeout=120)
+        log = tmp / "StoneScanner" / "refresh-task.log"
+        return p.returncode, (log.read_text(encoding="utf-8") if log.exists() else "")
+
+    # --- the decision table -------------------------------------------------
+
+    def test_drive_present_runs_the_project_script(self):
+        # AC-3: the normal path. Nothing about the spill may change what happens when the
+        # drive is simply there.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        ran, spilled = tmp / "ran.txt", tmp / "spilled.txt"
+        script, exe = tmp / "refresh.ps1", tmp / "StoneScanner.cmd"
+        self._stub_ps1(script, ran, code=0)
+        self._stub_cmd(exe, spilled, code=0)
+        # last_at 00:00 => the clock is always past it, so ONLY the drive check can be
+        # keeping us off the spill path. AC-7.
+        code, log = self._run_guard(project_script=script, spill_exe=exe, last_at="00:00")
+        self.assertEqual(code, 0)
+        self.assertTrue(ran.exists(), "the project script did not run")
+        self.assertFalse(spilled.exists(), "spilled while the drive was present")
+        self.assertNotIn("SPILL", log)
+        self.assertIn("refresh.ps1 exited 0", log)
+
+    def test_drive_present_propagates_the_crawls_exit_code(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        script, exe = tmp / "refresh.ps1", tmp / "StoneScanner.cmd"
+        self._stub_ps1(script, tmp / "ran.txt", code=7)
+        self._stub_cmd(exe, tmp / "spilled.txt")
+        code, log = self._run_guard(project_script=script, spill_exe=exe, last_at="00:00")
+        self.assertEqual(code, 7)
+        self.assertIn("refresh.ps1 exited 7", log)
+
+    def test_drive_absent_before_the_last_trigger_defers(self):
+        # AC-4. This is the case that must NOT spill: D: is often back by mid-morning, and a
+        # 03:20 spill would crawl into the wrong database while the right one was on its way.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        spilled = tmp / "spilled.txt"
+        exe = tmp / "StoneScanner.cmd"
+        self._stub_cmd(exe, spilled)
+        code, log = self._run_guard(project_script=tmp / "gone" / "refresh.ps1",
+                                    spill_exe=exe, last_at="23:59")
+        self.assertEqual(code, 200)
+        self.assertFalse(spilled.exists(), "spilled before the last trigger")
+        self.assertIn("GAVE UP", log)
+        self.assertIn("later trigger", log, "the log must say another attempt is coming")
+
+    def test_drive_absent_at_the_last_trigger_spills(self):
+        # AC-4 + AC-5: the point of the whole issue.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        spilled = tmp / "spilled.txt"
+        exe = tmp / "StoneScanner.cmd"
+        self._stub_cmd(exe, spilled, code=0)
+        code, log = self._run_guard(project_script=tmp / "gone" / "refresh.ps1",
+                                    spill_exe=exe, last_at="00:00")
+        self.assertEqual(code, 0)
+        self.assertTrue(spilled.exists(), "did not spill at the last trigger")
+        self.assertIn("--refresh", spilled.read_text(encoding="utf-8", errors="replace"))
+        self.assertIn("SPILL", log)
+        self.assertNotIn("GAVE UP", log)
+
+    def test_a_spill_runs_from_the_local_copys_own_folder(self):
+        # AC-6, positively stated: the spill's working directory is the local copy, so the
+        # exe's app_dir() resolves to it and desktop.setup_env writes ITS data\ folder —
+        # its database, its log, its refresh_runs ledger.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        local = tmp / "local"
+        local.mkdir()
+        spilled = tmp / "spilled.txt"
+        exe = local / "StoneScanner.cmd"
+        self._stub_cmd(exe, spilled)
+        self._run_guard(project_script=tmp / "gone" / "refresh.ps1", spill_exe=exe,
+                        last_at="00:00")
+        self.assertIn(str(local).lower(),
+                      spilled.read_text(encoding="utf-8", errors="replace").lower())
+
+    def test_a_spill_writes_nothing_to_the_project_drive(self):
+        # AC-6. The give-up path is where a well-meaning "log what happened" line would land
+        # on the very drive that isn't there — which is the bug the %ProgramData% log exists
+        # to prevent, and it would come straight back if someone added one here.
+        import shutil
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        project = tmp / "project"
+        project.mkdir()
+        for name in ("stonescan.db", "refresh.log", "suppliers.json"):
+            (project / name).write_text("before", encoding="utf-8")
+        before = {p.name: (p.stat().st_mtime_ns, p.stat().st_size)
+                  for p in project.iterdir()}
+        exe = tmp / "StoneScanner.cmd"
+        self._stub_cmd(exe, tmp / "spilled.txt")
+        # refresh.ps1 is missing from a directory that exists — the drive is "there" as far
+        # as the filesystem is concerned, but the guard's own check still fails, so we reach
+        # the spill with a writable project directory sitting right next to it.
+        self._run_guard(project_script=project / "refresh.ps1", spill_exe=exe,
+                        last_at="00:00")
+        after = {p.name: (p.stat().st_mtime_ns, p.stat().st_size)
+                 for p in project.iterdir()}
+        self.assertEqual(before, after, "a spill modified the project directory")
+
+    def test_no_local_copy_yet_is_a_clean_give_up(self):
+        # A checkout that has never run build_exe.ps1 has nothing to spill into. It must say
+        # so and exit 200, not fail in some way that reads as a crawl error.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        code, log = self._run_guard(project_script=tmp / "gone" / "refresh.ps1",
+                                    spill_exe=tmp / "nothing-here" / "StoneScanner.exe",
+                                    last_at="00:00")
+        self.assertEqual(code, 200)
+        self.assertIn("no local copy", log)
+
+    # --- what the installer registers ---------------------------------------
+
+    def test_the_installer_registers_a_trigger_per_time_not_a_restart_policy(self):
+        # AC-2. -RestartCount 4 was believed to cover a missing drive and does not: on
+        # 2026-08-05 the run exited 200 at 03:23:48 and no restart ever fired.
+        src = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
+        self.assertIn('$At = @("03:00", "05:00", "07:00")', src)
+        self.assertIn("$trigger = @(foreach ($t in $At) {", src)
+        self.assertIn("New-ScheduledTaskTrigger -Daily -At $when", src)
+        self.assertIn("-MultipleInstances IgnoreNew", src)
+
+    def test_the_spill_deadline_is_the_last_trigger_itself(self):
+        # The two must not be able to drift: a 07:00 spill rule beside a 05:00 last trigger
+        # would mean the last run of the night defers to a trigger that never comes.
+        src = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
+        self.assertIn("$lastAt = $At[-1]", src)
+        self.assertIn("[timespan]`$lastAt", self._guard_block())
+
+    def test_the_at_times_are_validated_before_the_task_is_unregistered(self):
+        # The installer unregisters and then re-registers, so anything that throws in between
+        # leaves NO task at all. A [timespan] the guard cannot parse must be caught here.
+        src = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
+        validate = src.index("[void][timespan]$t")
+        unregister = src.index("Unregister-ScheduledTask")
+        self.assertLess(validate, unregister,
+                        "-At validation must run BEFORE the task is unregistered")
+
+    def test_registering_the_task_does_not_start_a_crawl(self):
+        # `-At "03:00"` dates the trigger to TODAY at 03:00, already past by the time anyone
+        # installs, and -StartWhenAvailable exists to run missed triggers — so it fires one
+        # immediately. With one trigger that was surprising; with three it means installing
+        # after 07:00 launches an unrequested three-hour crawl of ~135 live supplier sites.
+        # Run the real trigger-building block and check every boundary is still ahead of us.
+        import re
+        import shutil
+        import subprocess
+        src = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
+        m = re.search(r"^\$trigger = @\(foreach.*?^\}\)$", src, re.S | re.M)
+        self.assertIsNotNone(m, "could not find the trigger-building block")
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        harness = tmp / "triggers.ps1"
+        harness.write_text("\n".join([
+            '$At = @("03:00", "05:00", "07:00")',
+            "$now = Get-Date",
+            m.group(0),
+            "$trigger | ForEach-Object { Write-Output $_.StartBoundary }",
+        ]) + "\n", encoding="utf-8-sig")
+        p = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
+                            "-ExecutionPolicy", "Bypass", "-File", str(harness)],
+                           capture_output=True, timeout=120, text=True)
+        from datetime import datetime
+        stamps = [s.strip() for s in p.stdout.splitlines() if s.strip()]
+        self.assertEqual(len(stamps), 3, f"expected 3 triggers, got {p.stdout!r} {p.stderr!r}")
+        now = datetime.now()
+        for s in stamps:
+            # StartBoundary is local time with no offset when built this way.
+            when = datetime.fromisoformat(s.split("+")[0].split("Z")[0])
+            self.assertGreater(when, now, f"trigger {s} is in the past and would fire at once")
+
+    def test_the_build_and_the_installer_name_the_same_local_copy(self):
+        # AC-1. Two files agreeing by coincidence is a drift waiting to happen: the build
+        # would faithfully sync a folder the task never looks at.
+        build = Path("build_exe.ps1").read_text(encoding="utf-8")
+        install = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
+        where = 'Join-Path $env:ProgramData "StoneScanner"'
+        self.assertIn(where, build)
+        self.assertIn(where, install)
+
+    def test_the_sync_cannot_delete_the_local_copys_data(self):
+        # AC-1's sharpest edge. /MIR without /XD data would delete the local database on the
+        # next build — including, after AIL-29 exists, a spill crawl that had not been merged
+        # back yet. Losing a night to a missing drive is bad; deleting the night's work
+        # because someone rebuilt the exe is worse.
+        build = Path("build_exe.ps1").read_text(encoding="utf-8")
+        self.assertIn("/MIR", build)
+        self.assertIn("/XD data", build)
+        self.assertIn("$LASTEXITCODE -ge 8", build,
+                      "robocopy's exit code is a bitmask; 1-7 are success")
+
+
 class LostNightsTests(_SuppliersFileCase):
     """AIL-30: two consecutive nights were lost (2026-08-04, 2026-08-05) and nobody noticed,
     because both the ledger and the task state require someone to go and look at them."""

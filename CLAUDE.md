@@ -66,7 +66,7 @@ build/packaging details.
 | `stone_reference.json` | Researched stone facts with per-fact source URLs + confidence. Bundled and merged on launch like the denylist; curated entries beat live-looked-up ones on a collision |
 | `locations.json` | Editable map pins for locations the geocoder can't resolve |
 | `stonescan.spec` / `build_exe.ps1` / `build_mac.sh` | PyInstaller packaging. Spec is platform-aware (WebView2/.NET deps gated to Windows, Cocoa/PyObjC to macOS); `build_exe.ps1` (Windows) and `build_mac.sh` (macOS) each build onedir + copy that OS's Chromium. **No cross-compile** — build each OS on that OS. |
-| `refresh.ps1` + `install-refresh-task.ps1` | Nightly refresh crawl, and the idempotent elevated installer that registers it as the `StoneScannerRefresh` Windows task. **Not auto-installed** — run `install-refresh-task.ps1` once; without it nothing refreshes and data goes stale |
+| `refresh.ps1` + `install-refresh-task.ps1` | Nightly refresh crawl, and the idempotent elevated installer that registers it as the `StoneScannerRefresh` Windows task. **Not auto-installed** — run `install-refresh-task.ps1` once; without it nothing refreshes and data goes stale. Triggers at 03:00/05:00/07:00: each waits `-WaitMinutes` for the project drive, and only the **last** one falls back to crawling into the local copy at `%ProgramData%\StoneScanner` (kept in step by `build_exe.ps1`) — earlier ones defer, because D: is usually back by mid-morning |
 
 ## Gotchas (learned the hard way — see user memory for depth)
 
