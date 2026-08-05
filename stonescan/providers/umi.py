@@ -29,6 +29,7 @@ import ssl
 
 import httpx
 
+from ..output import say
 from ..robots import client_for
 from .base import SupplierData, material_row, slab_row
 
@@ -108,7 +109,14 @@ async def crawl(entry: dict, *, with_slabs: bool = False, delay: float = 0.25,
                 try:
                     mats = await _get(client, "IMat.php", {"branch": b})
                 except (httpx.HTTPError, json.JSONDecodeError) as e:
-                    print(f"         (umi: branch {b} failed: {e})")
+                    # say(), not print(). This except exists so ONE bad branch doesn't cost
+                    # the others — but a print here can raise, and `crawl`'s own except at the
+                    # bottom of this function then swallows the whole crawl and returns
+                    # ok=False. Three consecutive nights of that reaches AUTO_REJECT_STREAK
+                    # and discover.reject_by_streak writes "rejected" into suppliers.json,
+                    # which nothing exempts a hand-seeded supplier from. A cosmetic line about
+                    # one failed branch would have deleted the supplier from the crawl list.
+                    say(f"         (umi: branch {b} failed: {e})")
                     continue
                 for m in mats:
                     code = (m.get("item") or "").strip()

@@ -18,6 +18,9 @@ import traceback
 import webbrowser
 from pathlib import Path
 
+from . import output
+from .output import say
+
 _LOG: Path | None = None
 
 
@@ -30,7 +33,9 @@ def _log(msg: str) -> None:
                 f.write(line)
     except Exception:
         pass
-    print(msg)
+    # The file write above is the record and already happens first; the console echo must not
+    # be able to raise out of here, because main()'s except calls this to report a fatal error.
+    say(msg)
 
 
 def _frozen() -> bool:
@@ -226,12 +231,16 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
     from stonescan import discover as disc
     from stonescan.ingest import run_all
 
+    # say(), not print(), and these two are the earliest sites of all: they run BEFORE
+    # run_all installs the notifier, so a raise here costs the whole night without leaving a
+    # ledger row or a history line. output.reset() carries a failure that happened here
+    # forward rather than clearing it, so the run still reports what went wrong.
     if do_discover:
-        print("Discovering public catalogs...")
+        say("Discovering public catalogs...")
         disc.merge_discovered(disc.discover_hosts())
     entries = disc.load_suppliers()
-    print(f"Refreshing {len(entries)} catalog(s)"
-          f"{' with slab galleries' if with_slabs else ''}...")
+    say(f"Refreshing {len(entries)} catalog(s)"
+        f"{' with slab galleries' if with_slabs else ''}...")
     # run_all, not run: the list holds non-StoneProfits suppliers too, and each
     # must reach its own provider rather than the Playwright crawler.
     asyncio.run(run_all(
@@ -240,19 +249,25 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
         retry_errored=True,  # give same-run transient failures a second chance
     ))
 
-    # Best-effort: embed any newly-crawled images so search-by-photo covers them too.
-    # Only when the CLIP model is present (git-ignored, not bundled) — never fatal.
+    # Best-effort: embed any newly-crawled images so search-by-photo covers them too. Only
+    # when the CLIP model is present — it is git-ignored (.gitignore) but IS bundled
+    # (stonescan.spec), so in the packaged app this branch genuinely runs and these two lines
+    # are not dead code. Never fatal.
+    #
+    # say(), not print(): both of these run AFTER the ledger has already recorded the run as
+    # 'done', and the second sits alone in an except body — so a failed write here turned a
+    # completely successful crawl into a non-zero exit that refresh.ps1 logged as a failure.
     try:
         from stonescan import db, imagesearch
         if imagesearch.available():
             conn = db.connect(os.environ["STONESCAN_DB"])
             try:
                 n = imagesearch.index_missing(conn)
-                print(f"Indexed {n} new image(s) for search-by-photo.")
+                say(f"Indexed {n} new image(s) for search-by-photo.")
             finally:
                 conn.close()
     except Exception as e:  # noqa: BLE001 - indexing is optional; a crawl still succeeded
-        print(f"(image indexing skipped: {e})")
+        say(f"(image indexing skipped: {e})")
 
 
 def _ensure_std_streams() -> None:
@@ -280,6 +295,12 @@ def main() -> None:
     except Exception:
         _log("FATAL:\n" + traceback.format_exc())
         raise
+    finally:
+        # Drain the buffer while someone can still catch it. A piped stdout is block-buffered,
+        # so a write that say() accepted can fail minutes later — and if it fails during
+        # interpreter shutdown, CPython flushes outside any try block and exits 120. A crawl
+        # already recorded 'done' would then be reported as a failed run by refresh.ps1.
+        output.flush()
 
 
 if __name__ == "__main__":
