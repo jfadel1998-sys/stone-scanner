@@ -1904,9 +1904,14 @@ def health(request: Request):
     # record; it returns [] rather than raising on a snapshot DB predating the table.
     runs = db.recent_refresh_runs(conn)
     conn.close()
+    # What the SCHEDULER thinks, which is a different question from what the runs recorded:
+    # a task that never fired leaves no run at all, so the ledger above cannot report it.
+    # Read-only and never raises — see taskcheck's module docstring.
+    from .. import taskcheck
+    task = taskcheck.check()
     return templates.TemplateResponse(request, "health.html", {
         "rows": rows, "counts": counts, "stats": stats, "total": len(rows),
-        "mirrors": mirrors, "proposals": proposals, "runs": runs,
+        "mirrors": mirrors, "proposals": proposals, "runs": runs, "task": task,
     })
 
 

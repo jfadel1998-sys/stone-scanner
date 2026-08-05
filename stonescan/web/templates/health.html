@@ -21,6 +21,30 @@
 
 <div class="mirrorbox pipelinebox">
   <h2>Refresh pipeline</h2>
+  {# The scheduler's own view. A task that never fired leaves no run in the ledger below,
+     so without this the most complete failure is the most invisible one. Read-only by
+     design: registering a task needs elevation, and a page that spawns an elevated process
+     would be a worse problem than the one it reports. #}
+  {% if task and task.supported %}
+  <p class="taskline{% if task.failing or task.drift %} taskbad{% endif %}">
+    <b>Nightly task:</b>
+    {%- if not task.installed %}
+      not installed — {{ task.reason }}. This is normal on a fresh checkout; register it with:
+      <code>{{ task.command }}</code>
+    {%- elif task.degraded %}
+      registered, but {{ task.reason }}.
+    {%- else %}
+      {# "unknown", never "never": a task that has genuinely never run reports Windows'
+         11/30/1999 sentinel, so a blank field can only mean the read failed. #}
+      last ran {{ task.last_run or 'unknown' }} and {{ task.last_result_text }}.
+      Next run {{ task.next_run or 'unknown' }}.
+    {%- endif %}
+    {%- if task.drift %}
+    <br><b>Settings differ from the installer:</b> {{ task.drift|join('; ') }}.
+    <br>{{ task.command }}
+    {%- endif %}
+  </p>
+  {% endif %}
   <p class="hintline muted">Every refresh run, including the nightly one — which runs in its own process and was previously invisible here. A run records a heartbeat as each supplier finishes, so one that stopped moving without recording an outcome shows as <b>interrupted</b> rather than vanishing, while a legitimately slow run does not.</p>
   {% if runs %}
   <table class="materials pipelinetable">
