@@ -1032,6 +1032,63 @@ def recent_refresh_runs(conn: sqlite3.Connection, limit: int = 8) -> list[dict[s
     return out
 
 
+# Consecutive days without a successful refresh before the app says so unprompted. Two, not
+# one: a single missed night is noise, and a warning that cries every hiccup is a warning
+# nobody reads. Named once here so it can be tuned without hunting through the query.
+LOST_REFRESH_WARN_DAYS = 2
+
+
+def lost_refresh_days(conn: sqlite3.Connection, *, today: str | None = None) -> int:
+    """How many consecutive days have passed with no successful refresh. 0 = fine.
+
+    Counted by DATE ARITHMETIC from the last success, never by inspecting runs, and that is
+    the whole point. On 2026-08-04 the scheduled task never fired at all, so there is no run
+    whose outcome could be examined — any "look at the last run and see if it failed" query
+    reads a healthy row from two days earlier and reports nothing wrong. Subtracting dates
+    sees the hole because the hole is what it measures.
+
+    Days, not runs (AC-6): three failed attempts in one night is one bad day.
+
+    A ledger with no rows at all returns 0. That is a fresh install, not a failure, and
+    warning there would teach people to ignore the warning. Degrades to 0 rather than raising
+    for the same reason `recent_refresh_runs` does — a snapshot DB predating the table must
+    not 500 every page in the app now that this renders in the header.
+    """
+    from datetime import date, datetime, timezone
+
+    try:
+        row = conn.execute(
+            """SELECT (SELECT COALESCE(finished_at, started_at) FROM refresh_runs
+                        WHERE outcome = 'done'
+                        ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1) last_ok,
+                      (SELECT started_at FROM refresh_runs
+                        ORDER BY started_at ASC LIMIT 1) first_run"""
+        ).fetchone()
+    except sqlite3.Error:
+        return 0
+    if row is None or not row["first_run"]:
+        return 0            # never refreshed: a new install, not a broken one
+
+    def _day(stamp: str) -> date | None:
+        try:
+            return date.fromisoformat(stamp[:10])
+        except (TypeError, ValueError):
+            return None
+
+    now = (date.fromisoformat(today) if today
+           else datetime.now(timezone.utc).date())
+    ok = _day(row["last_ok"] or "")
+    if ok is not None:
+        # Days AFTER the last good one. A success today, however many failures preceded it
+        # the same day, is 0.
+        return max(0, (now - ok).days)
+    first = _day(row["first_run"] or "")
+    if first is None:
+        return 0
+    # Never once succeeded, so the first run's own day counts too — inclusive, hence the +1.
+    return max(0, (now - first).days + 1)
+
+
 # How much older than its own last attempt a supplier's newest data must be before we call
 # it residue. A crawl that stores items sets both stamps within the same run, so any real gap
 # means the newest attempt did not store anything.

@@ -1,0 +1,14 @@
+{#- "The refresh has stopped running", said in the header so nobody has to go and ask.
+
+    Deliberately NOT part of _freshness.html even though it renders beside it: freshness
+    describes the DATA (how much of the catalog is current), this describes the PIPELINE
+    (whether anything is still updating it). A catalog can be entirely current while the
+    nightly has been dead for a week — that is exactly the state this was written for, and
+    folding the two into one sentence would let either hide the other.
+
+    Rendered from base.html so it appears on every page, not only the four that show a
+    freshness line. Silent when there is nothing to say. -#}
+{%- set rw = refresh_warning() -%}
+{%- if rw.warn -%}
+<a class="staleref" href="/health" title="No refresh run has completed successfully in {{ rw.days }} days. The catalog is still being served from its last good crawl, but nothing is updating it. /health shows the scheduled task's own state and every recorded run.">⚠ no refresh in {{ rw.days }} days</a>
+{%- endif -%}

@@ -30,6 +30,7 @@
     <a href="/quality" class="{{ 'active' if p.startswith('/quality') }}">🧹 Quality</a>
   </nav>
   <div class="header-aside">
+    {% include "_refresh_warning.html" %}
     {% block headeraside %}{% endblock %}
     <button id="themeToggle" class="iconbtn" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">🌗</button>
   </div>

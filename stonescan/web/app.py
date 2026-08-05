@@ -131,6 +131,34 @@ def _alert_state() -> dict:
 templates.env.globals["alert_state"] = _alert_state
 
 
+def _refresh_warning() -> dict:
+    """Whether the nightly refresh has quietly stopped running, for base.html's header.
+
+    A template global (like compare_state and alert_state) because the point is to be seen
+    without going looking: /health already knows this, and knowing it there is what failed —
+    two consecutive nights were lost in August 2026 and nobody noticed until someone opened
+    the page on purpose.
+
+    This answers a different question from the freshness line it sits beside. Freshness says
+    how much of the catalog is current; this says whether the thing that keeps it current is
+    running at all. Both can be bad at once and each is worth its own words.
+
+    Never raises, for the usual reason: it now runs on every page in the app.
+    """
+    try:
+        conn = db.connect()
+        try:
+            days = db.lost_refresh_days(conn)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        days = 0
+    return {"days": days, "warn": days >= db.LOST_REFRESH_WARN_DAYS}
+
+
+templates.env.globals["refresh_warning"] = _refresh_warning
+
+
 def _distinct(conn, column: str) -> list[str]:
     # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
     # is stone/tile only (it remains queryable on the Quality audit page).
