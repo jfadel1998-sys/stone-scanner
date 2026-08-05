@@ -1241,8 +1241,202 @@ class AlertTests(unittest.TestCase):
         app._alert_cache.clear()
         d = app._alert_digest(self.conn)
         self.assertFalse(d["has_baseline"])
-        self.assertEqual([len(d[k]) for k in ("restock", "listed", "dropped", "soldout")], [0, 0, 0, 0])
+        self.assertEqual([len(d[k]) for k in app._ALERT_KINDS], [0] * len(app._ALERT_KINDS))
         self.assertEqual(app._alert_unread_count(self.conn), 0)
+
+    # --- AIL-24: delisted -----------------------------------------------
+
+    def _seed_bulk(self, sid, date, n, *, prefix="filler"):
+        """Enough listings that one disappearance is not a catalog collapse."""
+        for i in range(n):
+            self._hist(sid, date, f"{prefix} {i}", "3cm", 5)
+
+    def test_a_listing_absent_from_the_latest_snapshot_is_delisted(self):
+        # The event the digest was structurally blind to: _ALERT_ROWS_SQL starts
+        # FROM agg a JOIN latest, so a row with no latest snapshot never reached
+        # _classify_alert. Grepping the project for "delist" returned nothing.
+        self._seed_bulk(1, self.PREV, 10)
+        self._seed_bulk(1, self.LATEST, 10)
+        self._hist(1, self.PREV, "gone for good", "3cm", 12)     # and nothing at LATEST
+        d = self._digest()
+        self.assertIn("GONE FOR GOOD", self._names(d["delisted"]))
+        item = next(it for it in d["delisted"] if it["name_norm"] == "GONE FOR GOOD")
+        self.assertEqual(item["prev_slabs"], 12)
+        self.assertEqual(item["kind"], "delisted")
+
+    def test_a_sold_out_listing_is_not_delisted(self):
+        # The distinction the kind rests on. History stores zero-stock rows (22,881 of them
+        # in the live table), so a row at 0 is still listed — absence means removed.
+        self._seed_bulk(1, self.PREV, 10)
+        self._seed_bulk(1, self.LATEST, 10)
+        self._hist(1, self.PREV, "sold out", "3cm", 8)
+        self._hist(1, self.LATEST, "sold out", "3cm", 0)
+        d = self._digest()
+        self.assertIn("SOLD OUT", self._names(d["soldout"]))
+        self.assertNotIn("SOLD OUT", self._names(d["delisted"]))
+
+    def test_a_listing_that_returns_under_another_thickness_is_not_delisted(self):
+        # AC-6. It was re-listed, not removed, and calling that a delisting is a lie about
+        # the catalog. 38 of 459 measured rows are exactly this.
+        self._seed_bulk(1, self.PREV, 10)
+        self._seed_bulk(1, self.LATEST, 10)
+        self._hist(1, self.PREV, "rethick", "2cm", 6)
+        self._hist(1, self.LATEST, "rethick", "3cm", 6)
+        d = self._digest()
+        self.assertNotIn("RETHICK", self._names(d["delisted"]))
+
+    def test_a_listing_with_zero_stock_at_the_previous_snapshot_is_not_delisted(self):
+        # It was already unavailable; its removal is bookkeeping, not news.
+        self._seed_bulk(1, self.PREV, 10)
+        self._seed_bulk(1, self.LATEST, 10)
+        self._hist(1, self.PREV, "was empty", "3cm", 0)
+        d = self._digest()
+        self.assertNotIn("WAS EMPTY", self._names(d["delisted"]))
+
+    def test_delisted_rows_carry_a_material_key_and_no_item_id(self):
+        # AC-5. The (SELECT MIN(mm.id) FROM materials …) the other kinds use is NULL by
+        # construction once the material is gone, so the row links to /material instead.
+        self._seed_bulk(1, self.PREV, 10)
+        self._seed_bulk(1, self.LATEST, 10)
+        self._hist(1, self.PREV, "gone for good", "3cm", 12)
+        item = next(it for it in self._digest()["delisted"]
+                    if it["name_norm"] == "GONE FOR GOOD")
+        self.assertIsNone(item["id"])
+        self.assertEqual(item["material_key"], "gone for good|granite")
+
+    def test_delistings_are_per_supplier_not_across_global_dates(self):
+        # AC-4. The 9 global dates in the live table cover 65/83/6/18/3/85/17/115/19
+        # suppliers, so a listing that is simply on a different crawl cycle must not read as
+        # removed. Supplier 2 here has one older snapshot and has not been crawled since.
+        self._seed_bulk(1, self.PREV, 10)
+        self._seed_bulk(1, self.LATEST, 10)
+        self._hist(2, self.PREV, "other supplier stock", "3cm", 9)
+        d = self._digest()
+        self.assertNotIn("OTHER SUPPLIER STOCK", self._names(d["delisted"]))
+
+    def test_a_collapsed_catalog_is_suppressed_and_named(self):
+        # Measured: 133 of 134 suppliers lose under 2.5% of their listings between their two
+        # most recent snapshots. The one exception is americanquartz at 81.2% (848 -> 159),
+        # which is a curator-confirmed storefront filter re-scoping a mirror to Quartz only —
+        # 566 of 957 apparent delistings from one deliberate act. Unguarded it would fill the
+        # 300-row cap and crowd out every real one.
+        self._seed_bulk(3, self.PREV, 20)
+        self._hist(3, self.LATEST, "filler 0", "3cm", 5)      # 20 -> 1
+        d = self._digest()
+        self.assertEqual(d["delisted"], [])
+        self.assertEqual([s["supplier_name"] for s in d["delist_skipped"]],
+                         ["s3.example.com"])
+        self.assertEqual((d["delist_skipped"][0]["prev_names"],
+                          d["delist_skipped"][0]["now_names"]), (20, 1))
+
+    def test_an_ordinary_amount_of_churn_is_still_reported(self):
+        # The other side of the threshold: 0.5 has to be loose enough that a real supplier
+        # clearing out a few lines still reports. 2 of 20 gone = 10%.
+        self._seed_bulk(1, self.PREV, 20)
+        for i in range(2, 20):
+            self._hist(1, self.LATEST, f"filler {i}", "3cm", 5)
+        d = self._digest()
+        self.assertEqual(self._names(d["delisted"]), {"FILLER 0", "FILLER 1"})
+        self.assertEqual(d["delist_skipped"], [])
+
+    def test_delisted_changes_take_part_in_unread_tracking(self):
+        from stonescan.web import app
+        self._seed_bulk(1, self.PREV, 10)
+        self._seed_bulk(1, self.LATEST, 10)
+        self._hist(1, self.PREV, "gone for good", "3cm", 12)
+        d = self._digest()
+        item = next(it for it in d["delisted"] if it["name_norm"] == "GONE FOR GOOD")
+        self.assertEqual(item["sig"], f"delisted|1|GONE FOR GOOD|3cm|{self.LATEST}")
+        db.mark_alerts_seen(self.conn, [it["sig"] for k in app._ALERT_KINDS for it in d[k]])
+        app._alert_cache.clear()
+        self.assertEqual(app._alert_unread_count(self.conn), 0)
+
+
+class HistoryRetentionTests(unittest.TestCase):
+    """AIL-24 AC-3/AC-7: history grows unbounded with rows no reader can reach — 83,171 of
+    211,238 (39.4%) sit past every reader's horizon."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.path)
+        _seed_suppliers(self.conn, upto=3)
+
+    def tearDown(self):
+        from stonescan.web import app
+        app._alert_cache.clear()
+        app._stock_cache.clear()
+        self.conn.close()
+
+    def _hist(self, sid, date, name, slabs=5):
+        self.conn.execute(
+            """INSERT INTO history (snapshot_date, supplier_id, material_key, name_norm,
+                 thickness, material_type, color, slabs, image_url)
+               VALUES (?,?,?,?,'3cm','Granite','',?,'')""",
+            (date, sid, f"{name}|granite", name.upper(), slabs))
+        self.conn.commit()
+
+    def _dates(self, sid):
+        return [r["snapshot_date"] for r in self.conn.execute(
+            "SELECT DISTINCT snapshot_date FROM history WHERE supplier_id = ?"
+            " ORDER BY snapshot_date", (sid,))]
+
+    def test_it_keeps_each_suppliers_own_newest_snapshots(self):
+        for i in range(1, 7):
+            self._hist(1, f"2026-07-0{i}", "a")
+        self.assertEqual(db.prune_history(self.conn, keep=3), 3)
+        self.assertEqual(self._dates(1), ["2026-07-04", "2026-07-05", "2026-07-06"])
+
+    def test_pruning_is_per_supplier_never_per_global_date(self):
+        # THE failure mode. The 9 global dates in the live table cover 65/83/6/18/3/85/17/
+        # 115/19 suppliers, so "keep the 3 newest dates" would wipe the entire history of a
+        # supplier last crawled on an older one — leaving its next digest with no baseline.
+        for i in range(1, 7):
+            self._hist(1, f"2026-07-0{i}", "a")       # crawled often, recently
+        self._hist(2, "2026-07-01", "b")              # crawled twice, long ago
+        self._hist(2, "2026-07-02", "b")
+        db.prune_history(self.conn, keep=3)
+        self.assertEqual(self._dates(2), ["2026-07-01", "2026-07-02"],
+                         "an infrequently-crawled supplier lost its only baseline")
+
+    def test_it_never_prunes_below_the_working_set(self):
+        # Both readers need latest AND its own previous. keep=1 would leave a supplier with
+        # nothing to compare against and silently empty the digest.
+        for i in range(1, 6):
+            self._hist(1, f"2026-07-0{i}", "a")
+        db.prune_history(self.conn, keep=1)
+        self.assertEqual(len(self._dates(1)), 2)
+
+    def test_pruning_leaves_both_readers_outputs_unchanged(self):
+        # AC-7, asserted on the actual readers rather than on row counts.
+        from stonescan.web import app
+        for i in range(1, 6):
+            for n in ("alpha", "beta"):
+                self._hist(1, f"2026-07-0{i}", n, slabs=10 if i < 5 else 2)
+        self._hist(1, "2026-07-05", "gamma", slabs=9)      # a new listing at the latest
+        app._alert_cache.clear(); app._stock_cache.clear()
+        before_digest = {k: len(app._alert_digest(self.conn)[k]) for k in app._ALERT_KINDS}
+        app._stock_cache.clear()
+        before_stock = [len(x) for x in app._stock_changes(self.conn)[:2]]
+        pruned = db.prune_history(self.conn, keep=3)
+        self.assertGreater(pruned, 0, "nothing was pruned, so this proves nothing")
+        app._alert_cache.clear(); app._stock_cache.clear()
+        after_digest = {k: len(app._alert_digest(self.conn)[k]) for k in app._ALERT_KINDS}
+        app._stock_cache.clear()
+        after_stock = [len(x) for x in app._stock_changes(self.conn)[:2]]
+        self.assertEqual(before_digest, after_digest)
+        self.assertEqual(before_stock, after_stock)
+
+    def test_the_per_supplier_index_exists_and_is_used(self):
+        # AC-2. None of the three pre-existing indexes leads with supplier_id alone, yet
+        # every reader works per supplier, so both queries scanned all 211,238 rows.
+        names = {r["name"] for r in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='history'")}
+        self.assertIn("idx_hist_sup_date", names)
+        plan = " ".join(str(r[3]) for r in self.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT supplier_id, MAX(snapshot_date) FROM history"
+            " GROUP BY supplier_id"))
+        self.assertIn("idx_hist_sup_date", plan)
 
 
 class ThicknessRepairTests(unittest.TestCase):
