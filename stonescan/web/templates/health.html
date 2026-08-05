@@ -40,9 +40,16 @@
       <code>{{ task.command }}</code>
     {%- elif task.degraded %}
       registered, but {{ task.reason }}.
+    {%- elif task.never_run %}
+      {# A task that has never run reports Windows' 11/30/1999 sentinel as its last run time,
+         so printing the field here gave "last ran 11/30/1999 12:00:00 AM and has not run
+         yet". Skip the run time rather than translate the sentinel — there is no run to
+         describe. Note this branch keys off the RESULT, so an unreadable field still falls
+         through to "unknown" below instead of being asserted as "never". #}
+      registered and {{ task.last_result_text }}. Next run {{ task.next_run or 'unknown' }}.
     {%- else %}
-      {# "unknown", never "never": a task that has genuinely never run reports Windows'
-         11/30/1999 sentinel, so a blank field can only mean the read failed. #}
+      {# "unknown", never "never": with the never-run case handled above, a blank field here
+         can only mean the read failed. #}
       last ran {{ task.last_run or 'unknown' }} and {{ task.last_result_text }}.
       Next run {{ task.next_run or 'unknown' }}.
     {%- endif %}

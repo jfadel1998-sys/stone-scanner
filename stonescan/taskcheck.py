@@ -52,6 +52,15 @@ def reinstall_command() -> str:
 # problems trains people to ignore the colour.
 BENIGN_RESULTS = {0x00000000, 0x00041300, 0x00041301, 0x00041303, 0x00041325}
 
+# The two results that mean "registered, has never run". A task in this state reports its
+# last run time as Windows' 11/30/1999 sentinel, so a page that prints the field verbatim
+# reads "last ran 11/30/1999 12:00:00 AM and has not run yet" — true, and nonsense.
+#
+# Keyed on the RESULT CODE, not on the date. `schtasks /FO LIST /V` is localized and its date
+# format follows the machine's locale, so pattern-matching the sentinel would work here and
+# fail somewhere else; the code is the same integer everywhere.
+NEVER_RUN_RESULTS = {0x00041300, 0x00041303}
+
 # Task Scheduler reports the same failure under two sign conventions: `schtasks /FO LIST /V`
 # prints -2147024629 where Get-ScheduledTaskInfo returns 2147942667, and both are 0x8007010B.
 # Normalising to unsigned first means the table needs one entry per condition, not two.
@@ -109,6 +118,18 @@ class TaskState:
     drift: list[str] = field(default_factory=list)   # human phrases, e.g. "RunLevel is Limited, expected Highest"
     command: str = ""
     degraded: bool = False           # installed, but the run fields could not be read
+
+    @property
+    def never_run(self) -> bool:
+        """Registered but not yet fired — so the page should skip the run time entirely.
+
+        False when `last_result` is None, which is the important half: an unreadable field
+        must keep reading as "unknown" rather than becoming a confident "has not run yet".
+        Saying "never" when we mean "we could not tell" is the exact overstatement this
+        module was written to stop.
+        """
+        return (self.installed and self.last_result is not None
+                and _unsigned(self.last_result) in NEVER_RUN_RESULTS)
 
     @property
     def failing(self) -> bool:

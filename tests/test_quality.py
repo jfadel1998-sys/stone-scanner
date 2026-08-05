@@ -2165,6 +2165,56 @@ class TaskCheckTests(unittest.TestCase):
         for verb in ("/create", "/change", "/run", "/delete", "/end", "Register-ScheduledTask"):
             self.assertNotIn(verb, src, f"taskcheck must not be able to {verb}")
 
+    def test_a_never_run_task_does_not_report_the_1999_sentinel(self):
+        # A registered task that has not fired reports 11/30/1999 as its last run time, so
+        # printing the field verbatim gave "last ran 11/30/1999 12:00:00 AM and has not run
+        # yet" — true, and nonsense. Seen live after registering the 03/05/07 triggers.
+        from stonescan import taskcheck as tc
+        s = tc.TaskState(installed=True, last_result=0x00041303,
+                         last_run="11/30/1999 12:00:00 AM", next_run="8/6/2026 3:00:00 AM")
+        self.assertTrue(s.never_run)
+        self.assertFalse(s.failing, "not-yet-run is a benign state, not a failure")
+
+    def test_a_task_that_has_run_still_reports_its_run_time(self):
+        from stonescan import taskcheck as tc
+        for code in (0, 200, 0x8007010B):
+            self.assertFalse(tc.TaskState(installed=True, last_result=code).never_run,
+                             f"0x{code & 0xFFFFFFFF:08X} has run")
+
+    def test_an_unreadable_result_is_not_claimed_to_be_never_run(self):
+        # The half that matters. "We could not tell" must not become a confident "has not run
+        # yet" — asserting more than we know is the exact thing this module exists to stop.
+        from stonescan import taskcheck as tc
+        self.assertFalse(tc.TaskState(installed=True, last_result=None).never_run)
+        self.assertFalse(tc.TaskState(installed=False, last_result=0x00041303).never_run)
+
+    def test_the_health_page_omits_the_sentinel_and_keeps_unknown(self):
+        # End to end through the real template, both branches.
+        from fastapi.testclient import TestClient
+        from stonescan import taskcheck as tc
+        from stonescan.web import app as webapp
+
+        def render(state):
+            orig = tc.check
+            tc.check = lambda: state
+            try:
+                return TestClient(webapp.app).get("/health").text
+            finally:
+                tc.check = orig
+
+        never = render(tc.TaskState(installed=True, last_result=0x00041303,
+                                    last_result_text="has not run yet",
+                                    last_run="11/30/1999 12:00:00 AM",
+                                    next_run="8/6/2026 3:00:00 AM"))
+        self.assertNotIn("1999", never)
+        self.assertIn("has not run yet", never)
+        self.assertIn("8/6/2026", never)
+        # A task whose run fields could not be read must still say so, not borrow the
+        # never-run wording.
+        unread = render(tc.TaskState(installed=True, last_result=None,
+                                     last_result_text="unknown", last_run="", next_run=""))
+        self.assertIn("unknown", unread)
+
     def test_a_broken_schtasks_cannot_break_the_page(self):
         from stonescan import taskcheck as tc
         orig = tc._run
