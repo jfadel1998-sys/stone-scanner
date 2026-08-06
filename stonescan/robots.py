@@ -47,7 +47,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .challenge import CHALLENGE_MARKER, Challenged, detect as detect_challenge
+from .challenge import CHALLENGE_MARKER, CHALLENGE_STATUSES, Challenged
+from .challenge import detect as detect_challenge
 from .challenge import is_challenge_error
 
 # The product token suppliers would write in their robots.txt to address us, and
@@ -371,14 +372,56 @@ def looks_like_html(text: str) -> bool:
     return head.startswith(("<!doctype", "<html", "<?xml")) or "<head>" in head
 
 
-def _policy_from_response(status: int, text: str, agent: str) -> RobotsPolicy:
+# The directives a real robots.txt is made of. An empty file IS a valid robots.txt meaning
+# "no rules", so emptiness passes; a non-empty body with none of these is something else
+# wearing text/plain.
+_ROBOTS_DIRECTIVE = re.compile(
+    r"(?im)^\s*(user-agent|allow|disallow|sitemap|crawl-delay|host)\s*:")
+
+
+def looks_like_robots(text: str) -> bool:
+    """Does this 200 body actually look like a rules file?
+
+    `looks_like_html` catches the SPA case; this catches everything else that answers
+    /robots.txt with something that is not one — a health-check string, a JSON error, an API
+    banner. Without it, `parse()` reads zero rules and reports "allowed", which is the right
+    answer for the wrong reason and starts inventing rules the day such a body contains a
+    line with a colon in it.
+    """
+    body = (text or "").strip()
+    if not body:
+        return True                      # an empty robots.txt is a real, valid robots.txt
+    if body.lstrip().startswith(("{", "[")):
+        return False                     # JSON, not a rules file
+    return bool(_ROBOTS_DIRECTIVE.search(body))
+
+
+def _policy_from_response(status: int, text: str, agent: str,
+                          headers: dict | None = None) -> RobotsPolicy:
     if 200 <= status < 300:
         if looks_like_html(text):
             return RobotsPolicy.none_published(f"HTTP {status} but HTML, not robots.txt")
+        if not looks_like_robots(text):
+            # A 200 that is neither HTML nor a rules file. Measured:
+            # api.vavastone.com/robots.txt answers 200 text/plain with the body
+            # "Connected to backend!". looks_like_html misses it, so parse() saw zero
+            # colon-bearing lines and returned an empty ruleset — "published a file with no
+            # rules" rather than "published no file". Same right-answer-wrong-reason trap
+            # the SPA case above already guards, and one bad marketing line away from
+            # inventing a rule.
+            return RobotsPolicy.none_published(f"HTTP {status} but not a robots.txt")
         return RobotsPolicy.parse(text, agent)
+    # A CHALLENGE is not an absent file. RFC 9309 2.3.1.3 says an "unavailable" robots.txt
+    # means no restrictions, and this used to apply that to any 4xx — the old comment named
+    # a Cloudflare 403 challenge explicitly as a case it covered. That was defensible only
+    # while we could not tell the two apart. We can now, and they are opposite statements:
+    # a 404 is "there is no file here", a challenge is "you specifically are not welcome".
+    # Reading the second as permission inverts the supplier's answer on the very fetch whose
+    # job is to ask their permission.
+    if detect_challenge(status, headers or {}, text):
+        return RobotsPolicy.unreachable(f"HTTP {status} bot-protection challenge")
     if 400 <= status < 500:
-        # RFC 9309 2.3.1.3: "unavailable" means no restrictions. This covers a
-        # plain 404 and equally a Cloudflare 403 challenge on the robots file.
+        # A genuine "unavailable" — the RFC reading, for the case it actually describes.
         return RobotsPolicy.none_published(f"HTTP {status}")
     return RobotsPolicy.unreachable(f"HTTP {status}")
 
@@ -415,7 +458,8 @@ class RobotsCache:
         try:
             r = await client.get(f"{origin}/robots.txt", timeout=FETCH_TIMEOUT,
                                  extensions={_ROBOTS_FETCH: True})
-            return _policy_from_response(r.status_code, r.text, self.agent)
+            return _policy_from_response(r.status_code, r.text, self.agent,
+                                        dict(r.headers))
         except Exception as e:  # noqa: BLE001 - any failure to ask means we don't crawl
             return RobotsPolicy.unreachable(type(e).__name__)
         finally:
@@ -560,7 +604,21 @@ class PoliteClient:
         """
         if response.request.extensions.get(_ROBOTS_FETCH):
             return
-        reason = detect_challenge(response.status_code, response.headers)
+        # Headers first, and for almost every response that is the whole check — the hook
+        # fires on an UNREAD response and forcing a read would break client.stream().
+        #
+        # The body is read for refusal statuses only (403/503). That exception is what makes
+        # the body rule reachable at all: it was written in AIL-33 and then dead, because the
+        # hook never passed a body, so only Cloudflare's own `cf-mitigated` header stopped
+        # anything. Reading here is safe precisely because nothing legitimate streams from a
+        # refusal — there is no download to disturb, and the body is an error page.
+        body = ""
+        if response.status_code in CHALLENGE_STATUSES:
+            try:
+                body = (await response.aread()).decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 - unreadable body just means header-only
+                body = ""
+        reason = detect_challenge(response.status_code, response.headers, body)
         if reason:
             url = str(response.request.url)
             self.challenged.append((url, reason))

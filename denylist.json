@@ -1,10 +1,15 @@
 {
-  "_comment": "Hosts that must never be crawled or re-added by discovery. This is how a supplier's removal request is honored durably — deleting an entry from suppliers.json alone does not work, because the next discovery run re-adds it. Matching includes subdomains: 'example.com' also denies 'inventory.example.com'. Use: python -m stonescan.denylist add <host> --reason \"...\"",
+  "_comment": "Hosts that must never be crawled or re-added by discovery. This is how a supplier's removal request is honored durably \u2014 deleting an entry from suppliers.json alone does not work, because the next discovery run re-adds it. Matching includes subdomains: 'example.com' also denies 'inventory.example.com'. Use: python -m stonescan.denylist add <host> --reason \"...\"",
   "denied": [
     {
       "host": "ariastonegallery.com",
       "reason": "robots.txt disallows all non-search crawlers on both the storefront and the catalog host; excluded by policy, not by oversight",
       "added": "2026-07-20"
+    },
+    {
+      "host": "stonecontact.com",
+      "reason": "Serves a Cloudflare managed challenge (403 + cf-mitigated: challenge + 'Just a moment...') on its entire catalog surface, including all seven sitemaps, to a plain Chrome UA as well as ours. That is the operator declining automated access. Recorded here rather than left to runtime detection because the WAF fronts only www: the apex and ~470 vendor vanity subdomains answer 200 from the origin, so a future discovery sweep would surface them as a large international catalog and read as a find rather than a decision already made. Same application, same operator, same answer. Assessed 2026-08-06.",
+      "added": "2026-08-06"
     }
   ]
 }

@@ -157,6 +157,15 @@ build/packaging details.
   re-asking 192 challenged hosts every night is the traffic that protection exists to stop.
   Note `is_block_error`/`is_challenge_error` match **anywhere** in the string: providers
   store `f"{type(e).__name__}: {e}"`, so a prefix test never matched a real block.
+- **A challenge is not only Cloudflare's, and a challenged robots.txt is not permission.**
+  `challenge.detect()` matches interstitial fingerprints on a refusal status (403/503) from
+  ANY vendor — Hostinger `hcdn`, Sucuri, Imperva, DataDome — because requiring
+  `server: cloudflare` made it blind outside the US. Markers are deliberately specific (never
+  bare "denied"/"forbidden"): a false positive silently stops crawling a working supplier,
+  a false negative only costs the old behaviour. The client hook reads a body **only** for
+  403/503, where nothing legitimate is streaming. And a challenge on `/robots.txt` itself is
+  **UNREACHABLE**, not `none_published` — RFC 9309 §2.3.1.3's "unavailable" means the file is
+  absent, which is the opposite statement from "you specifically are not welcome".
 - **Dimensions are stored unitless and read as inches, and two suppliers don't oblige.**
   `graniteslabsuk` publishes metres, `stoneyarduk` centimetres; everyone else's per-supplier
   mean sits between 70 and 132. **The `uom` column cannot decide this** — graniteslabsuk
