@@ -11,6 +11,12 @@
   <p class="hintline muted">How each catalog fared on its last crawl. “Stale” means the last refresh failed but older data is still being served — worth investigating before it goes truly dark.</p>
 </div>
 
+{# Two populations, two questions. "Is the crawler working?" is answered by the fleet we
+   actually ask; "how much have we stopped maintaining?" by the remainder. Merging them is
+   what let `broken` read 252 while the number of catalogs failing was zero. #}
+<p class="hintline muted"><b>{{ counts.crawled }}</b> supplier{{ '' if counts.crawled == 1 else 's' }} are crawled each night.
+  {% if counts.not_crawled %}The other <b>{{ counts.not_crawled }}</b> are not asked at all — their status below is frozen at the day we stopped.{% endif %}</p>
+
 <div class="healthbar">
   <span class="hstat ok"><b>{{ counts.ok }}</b> healthy</span>
   <span class="hstat stale"><b>{{ counts.stale }}</b> stale (errored, old data)</span>
@@ -19,6 +25,10 @@
   {% if counts.blocked %}<span class="hstat blocked"><b>{{ counts.blocked }}</b> blocked (robots.txt)</span>{% endif %}
   {% if counts.challenged %}<span class="hstat challenged" title="These suppliers answered with a bot-protection challenge (Cloudflare). That is their decision about automated access, not a fault on our side and not something to fix — we record it and leave them alone, re-probing at most weekly.">
     <b>{{ counts.challenged }}</b> declined (bot check)</span>{% endif %}
+  {% if counts.paused %}<span class="hstat paused" title="Auto-rejected after repeated empty crawls, so the nightly no longer asks them. Their error and 'last attempt' are frozen at the day we stopped. Each resumes on its own at its lapse date.">
+    <b>{{ counts.paused }}</b> paused (not asked)</span>{% endif %}
+  {% if counts.delisted %}<span class="hstat delisted" title="These have a row in the database but no entry in suppliers.json, so nothing can crawl them. Only re-adding the host changes that.">
+    <b>{{ counts.delisted }}</b> delisted (not listed)</span>{% endif %}
 </div>
 
 <div class="mirrorbox pipelinebox">
@@ -148,13 +158,22 @@
 
 <table class="materials healthtable">
   <thead>
-    <tr><th>Status</th><th>Supplier</th><th>Platform</th><th class="num">Materials</th><th class="num">Slabs</th><th title="When the shown data was collected (a failed crawl leaves it unchanged)">Data as of</th><th title="Last crawl ATTEMPT — advances even when the crawl fails">Last attempt</th><th>Last error</th></tr>
+    <tr><th>Status</th><th>Supplier</th><th>Platform</th><th class="num">Materials</th><th class="num">Slabs</th><th title="When the shown data was collected (a failed crawl leaves it unchanged)">Data as of</th><th title="Last crawl ATTEMPT. It advances even when a crawl fails — but for a PAUSED or DELISTED host nothing is attempted at all, so the value is frozen at the day we stopped asking.">Last attempt</th><th>Last error</th></tr>
   </thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><span class="statuspill {{ r.status }}">{{ {'ok':'OK','stale':'STALE','broken':'BROKEN','empty':'EMPTY','blocked':'BLOCKED','challenged':'DECLINED'}[r.status] }}</span></td>
-      <td class="name">{{ r.name }}<div class="muted hhost">{{ r.host }}</div></td>
+      <td><span class="statuspill {{ r.status }}">{{ {'ok':'OK','stale':'STALE','broken':'BROKEN','empty':'EMPTY','blocked':'BLOCKED','challenged':'DECLINED','paused':'PAUSED','delisted':'DELISTED'}[r.status] }}</span></td>
+      <td class="name">{{ r.name }}<div class="muted hhost">{{ r.host }}</div>
+        {# A paused row must say all four things, or it is no better than BROKEN was: that we
+           stopped, when, why, and when it resumes on its own. #}
+        {% if r.status == 'paused' and r.rejected %}
+        <div class="muted pausednote">Not asked since {{ r.rejected.at }} — {{ r.rejected.reason[:70] }}{% if r.rejected.reason|length > 70 %}…{% endif %}
+          {% if r.rejected.lapses_in is not none %}<br>Resumes on its own in {{ r.rejected.lapses_in }}d.{% endif %}</div>
+        {% elif r.status == 'delisted' %}
+        <div class="muted pausednote">Not in suppliers.json, so nothing can crawl it — only re-adding the host changes that.{% if r.item_count %} Its {{ r.item_count }} stored row(s) are orphaned and still in search.{% endif %}</div>
+        {% endif %}
+      </td>
       <td class="muted">{{ r.provider }}</td>
       <td class="num">{{ r.item_count or '—' }}</td>
       <td class="num">{{ r.slab_count or '—' }}</td>
@@ -168,6 +187,7 @@
         {% if r.age_hours is none %}never{% elif r.age_hours < 1 %}just now
         {% elif r.age_hours < 48 %}{{ r.age_hours|round|int }}h ago
         {% else %}{{ (r.age_hours / 24)|round|int }}d ago{% endif %}
+        {%- if not r.crawled_fleet %} <span class="muted frozen" title="Frozen: nothing has been attempted since.">(stopped)</span>{% endif %}
       </td>
       <td class="muted herr">{{ (r.last_error or '')[:80] }}</td>
     </tr>
@@ -176,4 +196,4 @@
 </table>
 {% endblock %}
 
-{% block footer %}“Stale” catalogs still show their previous data — a failed refresh doesn't erase what was already indexed. Re-run a crawl (or the Refresh button) to retry them.{% endblock %}
+{% block footer %}“Stale” catalogs still show their previous data — a failed refresh doesn't erase what was already indexed. Re-run a crawl (or the Refresh button) to retry them. <b>PAUSED and DELISTED hosts are the exception</b>: a crawl and the Refresh button both skip them, so neither will retry one — only <code>--only &lt;host&gt;</code> reaches a paused host, and a delisted one has to be re-added to suppliers.json first.{% endblock %}

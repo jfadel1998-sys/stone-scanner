@@ -3858,6 +3858,123 @@ class RefreshGuardDecisionTests(unittest.TestCase):
                       "robocopy's bitmask must not become the script's own exit code")
 
 
+class HealthStoppedAskingTests(_SuppliersFileCase):
+    """AIL-34: /health reported 252 hosts as BROKEN when 0 of them would be crawled again.
+    It derived status from the `suppliers` table alone, so it could not tell "still failing"
+    from "no longer asked" — and `broken` sorts first, which buried the six suppliers that
+    genuinely needed attention at row 253."""
+
+    def _entry(self, host, **kw):
+        e = {"host": host, "provider": "slabware"}
+        e.update(kw)
+        return e
+
+    def _rej(self, reason="3 consecutive zero-item crawls", at="2026-08-03"):
+        return {"reason": reason, "at": at}
+
+    # --- the shared predicate ----------------------------------------------
+
+    def test_the_predicate_matches_what_the_crawler_would_actually_ask(self):
+        # THE guarantee. If these two ever disagree, the page is describing a different fleet
+        # from the one that runs — which is exactly the bug.
+        from datetime import date
+        entries = [self._entry("live.example.com"),
+                   self._entry("paused.example.com", rejected=self._rej()),
+                   self._entry("lapsed.example.com", rejected=self._rej(at="2020-01-01"))]
+        today = date(2026, 8, 6)
+        reach = discover.crawl_reach(entries, today=today)
+        would_crawl, _ = discover.filter_rejected(entries, today=today)
+        self.assertEqual({h for h, v in reach.items() if v == "crawl"},
+                         {e["host"] for e in would_crawl})
+
+    def test_a_host_missing_from_suppliers_json_is_absent_from_the_map(self):
+        reach = discover.crawl_reach([self._entry("listed.example.com")])
+        self.assertIn("listed.example.com", reach)
+        self.assertIsNone(reach.get("orphan.example.com"),
+                          "nothing can crawl a host that is not on the list")
+
+    def test_a_malformed_rejection_reads_as_paused_not_a_crash(self):
+        # filter_rejected raises on a malformed block, which is right for the crawler and
+        # wrong for a page whose job is telling you something is wrong.
+        reach = discover.crawl_reach([self._entry("bad.example.com", rejected={"at": "x"})])
+        self.assertEqual(reach["bad.example.com"], "paused")
+
+    # --- what the page renders ---------------------------------------------
+
+    def _health(self, entries, db_rows):
+        from stonescan.web import app as webapp
+        for host, err, items in db_rows:
+            self.conn.execute(
+                "INSERT INTO suppliers (host, item_count, last_error, last_crawled)"
+                " VALUES (?,?,?,'2026-08-03T03:00:00+00:00')", (host, items, err))
+        self.conn.commit()
+        self._write_suppliers(entries)
+        # db.connect's default is bound at import, so reassigning db.DEFAULT_DB does nothing
+        # and the route would read the LIVE catalog. Patch the function.
+        orig = db.connect
+        db.connect = lambda *a, **k: orig(self.path)
+        self.addCleanup(setattr, db, "connect", orig)
+        try:
+            from fastapi.testclient import TestClient
+            webapp._alert_cache.clear()
+            webapp._stock_cache.clear()
+            db._stats_cache.clear()
+            return TestClient(webapp.app).get("/health").text
+        finally:
+            db.connect = orig
+
+    def test_a_paused_host_is_not_called_broken(self):
+        html = self._health(
+            [self._entry("paused.example.com", rejected=self._rej())],
+            [("paused.example.com", "HTTPStatusError: 403", 0)])
+        self.assertIn("PAUSED", html)
+        self.assertNotIn(">BROKEN<", html)
+        self.assertIn("Not asked since 2026-08-03", html)
+
+    def test_a_delisted_host_says_nothing_can_crawl_it(self):
+        html = self._health([], [("orphan.example.com", "ConnectError", 0)])
+        self.assertIn("DELISTED", html)
+        self.assertIn("Not in suppliers.json", html)
+
+    def test_a_genuinely_failing_crawled_host_is_still_broken(self):
+        # The control. Without it, "no BROKEN badge" passes on a page that lost the status.
+        html = self._health([self._entry("live.example.com")],
+                            [("live.example.com", "ConnectError: boom", 0)])
+        self.assertIn("BROKEN", html)
+
+    def test_the_suppliers_answer_outranks_our_own_pause(self):
+        # AC-3 precedence. A host that declined AND was later rejected shows what THEY said.
+        html = self._health(
+            [self._entry("dec.example.com", rejected=self._rej())],
+            [("dec.example.com",
+              "Challenged: challenge-blocked: bot-protection challenge: https://x", 0)])
+        self.assertIn("DECLINED", html)
+        # Scoped to the BADGE. A bare "PAUSED" also appears in the footer and the column
+        # tooltip, both of which are explaining the new statuses and are meant to be there.
+        self.assertNotIn("statuspill paused", html)
+
+    def test_the_page_never_writes_suppliers_json(self):
+        # Rendering must not un-reject anything.
+        entries = [self._entry("p.example.com", rejected=self._rej())]
+        self._write_suppliers(entries)
+        before = Path(self.suppliers).read_text(encoding="utf-8")   # AFTER the fixture write
+        self._health(entries, [("p.example.com", "HTTPStatusError: 403", 0)])
+        self.assertEqual(Path(self.suppliers).read_text(encoding="utf-8"), before)
+
+    def test_a_paused_host_that_still_serves_data_keeps_its_detail(self):
+        # The six that matter: paused, but still 722 materials live in search.
+        html = self._health(
+            [self._entry("withdata.example.com", rejected=self._rej())],
+            [("withdata.example.com", "HTTPStatusError: 403", 273)])
+        self.assertIn("273", html, "a paused host with data must keep its item count")
+        self.assertIn("PAUSED", html)
+
+    def test_the_footer_no_longer_promises_a_crawl_will_retry_them(self):
+        html = self._health([self._entry("p.example.com", rejected=self._rej())],
+                            [("p.example.com", "HTTPStatusError: 403", 0)])
+        self.assertIn("PAUSED and DELISTED hosts are the exception", html)
+
+
 class ChallengeIsADecisionTests(_SuppliersFileCase):
     """AIL-33: a Cloudflare managed challenge is the supplier declining automated access.
     Scored as an ordinary failure it bumped empty_streak, and reject_by_streak auto-rejected

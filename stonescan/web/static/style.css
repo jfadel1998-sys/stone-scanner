@@ -1002,3 +1002,12 @@ footer {
 .alert-change { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .alert-drop .alert-change, .alert-out .alert-change { color: var(--brick-ink); font-weight: 600; }
 .alert-up .alert-change { color: var(--accent-soft-ink); font-weight: 600; }
+
+/* PAUSED / DELISTED — hosts nothing asks any more. Deliberately the quietest badges on the
+   page: they outnumber every other status put together, and colouring them as alarms is what
+   buried the six suppliers that genuinely need looking at 253 rows down. */
+.statuspill.paused   { background: #8a8f98; color: #fff; }
+.statuspill.delisted { background: #6b7280; color: #fff; opacity: .85; }
+.hstat.paused, .hstat.delisted { border-color: #d7dae0; background: #f4f5f7; color: var(--muted); }
+.pausednote { font-size: 11px; line-height: 1.35; margin-top: 3px; max-width: 46ch; }
+.frozen { font-style: italic; }

@@ -2008,22 +2008,65 @@ def gcode_path():
     return OVERRIDES_PATH
 
 
+def _rejection_note(entries: list[dict], host: str) -> dict | None:
+    """The stored rejection for `host`, as plain strings the template can print.
+
+    A paused row has to say four things or it is no better than BROKEN was: that we stopped
+    asking, when, why, and when we will ask again. Read-only — rendering a page must never
+    write suppliers.json.
+    """
+    from datetime import date as _date
+    from .. import discover
+    e = next((x for x in entries if (x.get("host") or "").lower() == (host or "").lower()),
+             None)
+    if not e:
+        return None
+    try:
+        rej = discover.Rejection.from_entry(e)
+    except ValueError as err:
+        return {"reason": f"malformed rejection block: {err}", "at": "", "lapses_in": None}
+    if not rej:
+        return None
+    return {"reason": rej.reason, "at": rej.at.isoformat(),
+            "lapses_in": rej.days_until_lapse(_date.today())}
+
+
 @app.get("/health", response_class=HTMLResponse)
 def health(request: Request):
     """Per-supplier crawl health: what's fresh, stale, broken, or empty."""
     from .. import discover
     conn = db.connect()
     rows = db.supplier_health(conn)
-    provider_of = {s["host"]: (s.get("provider") or "stoneprofits")
-                   for s in discover.load_suppliers()}
+    entries = discover.load_suppliers()
+    provider_of = {s["host"]: (s.get("provider") or "stoneprofits") for s in entries}
+    # The same predicate the crawler uses, so the page cannot describe a different fleet.
+    reach = discover.crawl_reach(entries)
     for r in rows:
         r["provider"] = provider_of.get(r["host"], "stoneprofits")
-    # `challenged` sorts with `blocked`: both are the supplier's answer, so neither is work
-    # anybody can do, and neither belongs above a host that is genuinely failing.
-    order = {"broken": 0, "stale": 1, "empty": 2, "blocked": 3, "challenged": 4, "ok": 5}
-    rows.sort(key=lambda r: (order[r["status"]], -(r["item_count"] or 0)))
+        r["rejected"] = _rejection_note(entries, r["host"])
+        # PRECEDENCE, and it is deliberate. `delisted` first: a host with no suppliers.json
+        # entry cannot be reached by anything, so nothing else about it is actionable.
+        # `blocked`/`challenged` next: the SUPPLIER's answer outranks ours, because a human
+        # triaging the list wants to see who declined even when we also stopped asking.
+        # `paused` last, over any DB-derived status: "we stopped asking" is the true headline
+        # for a host whose stored error is frozen at the day we gave up.
+        where = reach.get((r["host"] or "").lower())
+        if where is None:
+            r["status"] = "delisted"
+        elif r["status"] not in ("blocked", "challenged") and where == "paused":
+            r["status"] = "paused"
+        r["crawled_fleet"] = where == "crawl"
+    # The crawled fleet first — those are the only rows anyone can act on. Everything we have
+    # stopped asking sorts after it, however loud its frozen error looks.
+    order = {"broken": 0, "stale": 1, "empty": 2, "blocked": 3, "challenged": 4, "ok": 5,
+             "paused": 6, "delisted": 7}
+    rows.sort(key=lambda r: (not r["crawled_fleet"], order[r["status"]],
+                             -(r["item_count"] or 0)))
     counts = {k: sum(1 for r in rows if r["status"] == k)
-              for k in ("ok", "stale", "broken", "empty", "blocked", "challenged")}
+              for k in ("ok", "stale", "broken", "empty", "blocked", "challenged",
+                        "paused", "delisted")}
+    counts["crawled"] = sum(1 for r in rows if r["crawled_fleet"])
+    counts["not_crawled"] = len(rows) - counts["crawled"]
     mirrors = db.mirror_report(conn)
     proposals = db.supplier_filter_proposals(conn)
     stats = db.stats(conn)
