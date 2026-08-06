@@ -582,6 +582,74 @@ def merge_slabcloud(tenants: list[dict]) -> int:
     return added
 
 
+# --- iBlocky ---------------------------------------------------------------------
+# Un-sweepable for the same reason SlabCloud is, only more completely: every iBlocky
+# tenant is a PATH on one host (app.iblocky.it/public-blocks/<slug>), so the wildcard
+# subdomain sweep above finds only the platform's own infrastructure and reads as
+# "this platform has no tenants". That is what got iBlocky written off once. The
+# platform publishes its own directory instead, and states each tenant's consent in it.
+IBLOCKY_TENANTS = "https://api.iblocky.it/api/v1/public/tenants"
+
+
+def discover_iblocky(verbose: bool = True) -> list[dict]:
+    """Resolve every PUBLIC iBlocky tenant to a supplier entry (host/slug/name).
+
+    `isPublic` is the tenant's own switch for whether their stock is browsable without
+    a login, so it is treated as consent and never overridden: a tenant who turns it off
+    stops being discovered, exactly like a host that starts publishing a Disallow.
+    """
+    out: list[dict] = []
+    may_fetch = _gate()
+    if not may_fetch(IBLOCKY_TENANTS):
+        if verbose:
+            say("  iblocky tenant directory disallowed by robots.txt")
+        return out
+    with httpx.Client(follow_redirects=True, headers=_UA, timeout=45) as client:
+        try:
+            data = client.get(IBLOCKY_TENANTS).json()
+        except Exception as e:  # noqa: BLE001
+            if verbose:
+                say(f"  iblocky tenants fetch failed: {e}")
+            return out
+    for t in data.get("tenants") or []:
+        slug = str(t.get("slug") or "").strip()
+        if not slug or not t.get("isPublic"):
+            continue
+        name = str(t.get("name") or slug.replace("-", " ").title()).strip()
+        out.append({"host": f"{slug}.iblocky.it", "slug": slug,
+                    "name": name, "provider": "iblocky"})
+        if verbose:
+            say(f"  + {name:34} slug={slug:28} {t.get('city') or ''}")
+    return out
+
+
+def merge_iblocky(tenants: list[dict]) -> int:
+    """Add iBlocky tenants to suppliers.json, deduped by host AND slug."""
+    from .denylist import denied_hosts, is_denied
+
+    data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
+    sups = data.get("suppliers", [])
+    hosts = {s["host"].lower() for s in sups}
+    slugs = {(s.get("slug") or "").lower() for s in sups if s.get("provider") == "iblocky"}
+    denied = denied_hosts()
+    added = 0
+    for t in tenants:
+        if t["host"].lower() in hosts or t["slug"].lower() in slugs:
+            continue
+        # Both the per-tenant identity host AND the platform: a removal request naming
+        # iblocky.it must stop the whole platform, not just one yard.
+        if is_denied(t["host"], denied) or is_denied("iblocky.it", denied):
+            continue
+        sups.append({"host": t["host"], "slug": t["slug"], "name": t["name"],
+                     "provider": "iblocky"})
+        hosts.add(t["host"].lower())
+        slugs.add(t["slug"].lower())
+        added += 1
+    if added:
+        SUPPLIERS_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return added
+
+
 # --- Stone Profits on distributor vanity domains --------------------------------
 # The crawler reads SPSWebToken out of the loaded page's JS, so a Stone Profits
 # catalog served at inventory.<distributor>.com is drop-in on the DEFAULT provider —
@@ -695,6 +763,8 @@ if __name__ == "__main__":
     say("\nResolving SlabCloud tenants from the clients directory...")
     sc = discover_slabcloud()
     added += merge_slabcloud(sc)
+    say("\nResolving iBlocky tenants from the public directory...")
+    added += merge_iblocky(discover_iblocky())
     say("\nFinding white-label Stone Profits catalogs via urlscan (any domain)...")
     vanity = discover_sps_embeds()
     say("Fingerprinting distributor vanity domains for Stone Profits catalogs...")

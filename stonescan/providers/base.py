@@ -148,8 +148,22 @@ def slab_row(
 
 
 M_PER_INCH = 0.0254
+CM_PER_INCH = 2.54
 
 
 def metres_to_inches(v: Any) -> float | None:
     n = _num(v)
     return round(n / M_PER_INCH, 1) if n else None
+
+
+def centimetres_to_inches(v: Any) -> float | None:
+    """Convert a length the source states in centimetres.
+
+    Deliberately separate from `normalize.dimension_to_inches`, which guesses the unit
+    from magnitude for two Stone Profits hosts that store dimensions unitless. Here the
+    publisher tells us the unit, so there is nothing to infer — and inference would be
+    actively wrong for blocks, whose 50-150cm heights fall inside that helper's
+    "must be metres" band.
+    """
+    n = _num(v)
+    return round(n / CM_PER_INCH, 1) if n else None

@@ -32,6 +32,7 @@ REGISTRY: dict[str, Callable[[], Callable[..., Awaitable[SupplierData]]]] = {
     "slabcloud": lambda: _load("slabcloud"),
     "unbuilt": lambda: _load("unbuilt"),
     "genericfeed": lambda: _load("genericfeed"),
+    "iblocky": lambda: _load("iblocky"),
 }
 
 
