@@ -297,6 +297,37 @@ def filter_rejected(entries: list[dict], *, today: date | None = None):
     return keep, skipped
 
 
+def crawl_reach(entries: list[dict] | None = None, *, today: date | None = None) -> dict:
+    """host (lowercased) -> why the next full crawl will or will not ask it.
+
+    Values: "crawl" (it is on the list and not suppressed) or "paused" (listed, but an ACTIVE
+    rejection suppresses it). A host absent from the returned mapping entirely is one nothing
+    can reach — it is not in suppliers.json at all, so no crawl can ever pick it up.
+
+    ONE predicate, built from exactly the inputs `run_all` uses, so `/health` and `/discovery`
+    describe the same fleet the crawler actually walks. Deriving the page's answer separately
+    is how `/health` came to report 252 hosts as BROKEN when every one of them had already
+    been dropped from the crawl list days earlier — the page could not tell "still failing"
+    from "no longer asked", because it only ever read the `suppliers` table.
+    """
+    today = today or date.today()
+    out: dict[str, str] = {}
+    for e in (entries if entries is not None else load_suppliers()):
+        host = (e.get("host") or "").lower()
+        if not host:
+            continue
+        try:
+            rej = Rejection.from_entry(e)
+        except ValueError:
+            # A malformed block is loud in the crawler (filter_rejected raises) but must not
+            # break a page whose whole job is telling you something is wrong. Treat it as
+            # suppressed: that is the conservative reading, and the crawl agrees.
+            out[host] = "paused"
+            continue
+        out[host] = "paused" if (rej and rej.is_active(today)) else "crawl"
+    return out
+
+
 def _empty_streaks(db_path=None) -> dict[str, tuple[int, str]]:
     """host -> (empty_streak, last_error), lowercased, straight from the DB."""
     from . import db as _db
