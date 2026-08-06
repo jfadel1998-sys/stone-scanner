@@ -5453,6 +5453,78 @@ class OpsMenuTests(unittest.TestCase):
         self.assertRegex(html, r'<details class="opsmenu[^"]*" id="opsMenu">')
 
 
+class LightboxTests(unittest.TestCase):
+    """AIL-38 — one lightbox, every catalog photo."""
+
+    def test_full_res_upgrades_a_stone_profits_width(self):
+        """ingest.py bakes ?width=1400 into every SPS URL; the lightbox wants bigger."""
+        from stonescan.web.app import full_res
+        url = "https://x.s3.amazonaws.com/prod-sps-files/Item_Img_1.jpeg?width=1400"
+        self.assertEqual(full_res(url), url.replace("width=1400", "width=2400"))
+
+    def test_full_res_swaps_slabclouds_thumb_for_its_sibling(self):
+        from stonescan.web.app import full_res
+        self.assertEqual(
+            full_res("https://slabcloud.com/slabs/acme/abc123_thumb.jpg"),
+            "https://slabcloud.com/slabs/acme/abc123.jpg")
+
+    def test_full_res_leaves_an_unknown_url_alone(self):
+        """It may only apply conventions we actually crawl. Inventing a path shape would
+        produce a 404 on every photo from every other provider."""
+        from stonescan.web.app import full_res
+        for url in ("https://selectstone.slabware.com/fotos/860/x.jpg",
+                    "https://cdn.iblocky.it/black-eagle/260801/bundle_1.webp",
+                    "https://example.com/a_thumb.jpg"):   # _thumb but not slabcloud
+            self.assertEqual(full_res(url), url)
+
+    def test_full_res_tolerates_nothing(self):
+        from stonescan.web.app import full_res
+        self.assertEqual(full_res(""), "")
+        self.assertEqual(full_res(None), "")
+
+    def test_lb_attrs_escapes_a_name_that_would_break_out(self):
+        """A stone name carrying a quote must not end the attribute — that is how a
+        caption turns into mangled markup."""
+        from stonescan.web.app import lb_attrs
+        out = str(lb_attrs('Bianco "Extra"', "Acme & Co", "/item?id=1"))
+        self.assertIn("&#34;", out)
+        self.assertIn("&amp;", out)
+        self.assertNotIn('data-lb-title="Bianco "Extra""', out)
+
+    def test_lb_attrs_omits_empty_fields(self):
+        """An absent supplier must render no attribute, so the caption hides that row
+        rather than showing a blank one."""
+        from stonescan.web.app import lb_attrs
+        out = str(lb_attrs("Calacatta", "", ""))
+        self.assertIn("data-lb-title", out)
+        self.assertNotIn("data-lb-sub", out)
+        self.assertNotIn("data-lb-href", out)
+
+    def test_every_catalog_surface_emits_the_hook(self):
+        """The whole point is that it is not just the item page any more."""
+        root = Path(__file__).resolve().parent.parent / "stonescan" / "web" / "templates"
+        for name in ("index.html", "material.html", "compare.html", "photo.html",
+                     "item.html"):
+            self.assertIn("data-lb", (root / name).read_text(encoding="utf-8"),
+                          f"{name} has no lightbox-enabled photo")
+
+    def test_the_lightbox_lives_in_base_not_per_page(self):
+        """One implementation, or the keyboard behaviour drifts between pages."""
+        root = Path(__file__).resolve().parent.parent / "stonescan" / "web" / "templates"
+        base = (root / "base.html").read_text(encoding="utf-8")
+        self.assertIn('id="lightbox"', base)
+        self.assertIn("lbPos", base)      # the n / total indicator
+        item = (root / "item.html").read_text(encoding="utf-8")
+        self.assertNotIn('id="lightbox"', item,
+                         "item.html must not keep a second lightbox to drift from base's")
+
+    def test_the_item_gallery_no_longer_binds_its_own_click(self):
+        """Two handlers on one image would open the box twice and fight over the index."""
+        item = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "item.html").read_text(encoding="utf-8")
+        self.assertNotIn("lb.classList.add('show')", item)
+
+
 class IBlockyProviderTests(unittest.TestCase):
     """AIL-36 — iBlocky, the first deliberately-sought international source.
 

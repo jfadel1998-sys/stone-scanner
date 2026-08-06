@@ -30,11 +30,11 @@
 
 {% if photos %}
 <div class="herostrip">
-  {% for p in photos %}<img loading="lazy" src="{{ p }}" alt="" onerror="this.remove()">{% endfor %}
+  {% for p in photos %}<img loading="lazy" data-lb data-full="{{ p|full_res }}" {{ lb_attrs(name, [material_type, color]|select|join(' · ')) }} src="{{ p }}" alt="" onerror="this.remove()">{% endfor %}
 </div>
 {% elif rep_photo %}
 <div class="herostrip">
-  <img loading="lazy" src="{{ rep_photo }}" alt="" onerror="this.closest('.herostrip').remove()">
+  <img loading="lazy" data-lb data-full="{{ rep_photo|full_res }}" {{ lb_attrs(name, 'representative photo — the actual slab varies') }} src="{{ rep_photo }}" alt="" onerror="this.closest('.herostrip').remove()">
 </div>
 <p class="repnote">≈ Representative photo — of the same-named stone from another listing. This exact material published no photo of its own, and natural stone varies, so the actual slab will differ.</p>
 {% endif %}
@@ -183,7 +183,7 @@
       <tr>
         <td class="thumbcell">
           <a href="/item?id={{ s.id }}">
-          {% if s.image_url %}<img class="thumb" loading="lazy" src="{{ s.image_url }}" alt="" onerror="this.classList.add('broken')">
+          {% if s.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ s.image_url|full_res }}" {{ lb_attrs(name, s.supplier_name, '/item?id=' ~ s.id) }} src="{{ s.image_url }}" alt="" onerror="this.classList.add('broken')">
           {% else %}<span class="thumb noimg"></span>{% endif %}</a>
         </td>
         <td class="name">{{ s.supplier_name }}</td>
@@ -231,7 +231,7 @@
   <div class="simgrid">
     {% for x in similar %}
     <a class="simcard" href="/material?key={{ x.material_key | urlencode }}">
-      {% if x.image_url %}<img loading="lazy" src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
+      {% if x.image_url %}<img loading="lazy" data-lb data-full="{{ x.image_url|full_res }}" {{ lb_attrs(x.item_name, (x.suppliers ~ ' supplier' ~ ('' if x.suppliers == 1 else 's')), '/material?key=' ~ (x.material_key|urlencode)) }} src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
       {% else %}<span class="simph">🪨</span>{% endif %}
       <span class="simmeta">
         <b>{{ x.item_name }}</b>
