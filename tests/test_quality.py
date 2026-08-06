@@ -3529,22 +3529,25 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         path.write_text(f"@echo off\r\n>\"{marker}\" echo %CD% %*\r\nexit /b {code}\r\n",
                         encoding="ascii")
 
-    def _run_guard(self, *, project_script: Path, spill_exe: Path, last_at: str,
+    def _run_guard(self, *, project_script: Path, spill_exe: Path, sandbox: Path | None = None,
                    wait_minutes: int = -1):
         """Compose and execute the shipped guard. Returns (exit_code, task_log_text).
 
         wait_minutes defaults to -1 so the deadline is already past when the loop first
         checks it: the give-up path is reached immediately instead of after 20 real minutes.
+
+        `sandbox` reuses a previous call's %ProgramData%, which is how the once-a-day test
+        gives a second run sight of the first run's stamp file.
         """
         import shutil
         import subprocess
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
+        tmp = Path(sandbox) if sandbox else Path(tempfile.mkdtemp())
+        if sandbox is None:
+            self.addCleanup(shutil.rmtree, tmp, True)
         harness = tmp / "harness.ps1"
         harness.write_text("\n".join([
             f"$script = '{project_script}'",
             f"$spillExe = '{spill_exe}'",
-            f"$lastAt = '{last_at}'",
             f"$WaitMinutes = {wait_minutes}",
             "$notReachable = 200",
             self._guard_block(),
@@ -3571,9 +3574,9 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         script, exe = tmp / "refresh.ps1", tmp / "StoneScanner.cmd"
         self._stub_ps1(script, ran, code=0)
         self._stub_cmd(exe, spilled, code=0)
-        # last_at 00:00 => the clock is always past it, so ONLY the drive check can be
-        # keeping us off the spill path. AC-7.
-        code, log = self._run_guard(project_script=script, spill_exe=exe, last_at="00:00")
+        # The spill is now unconditional once the wait expires, so ONLY the drive check can
+        # be keeping us off it. AC-7.
+        code, log = self._run_guard(project_script=script, spill_exe=exe)
         self.assertEqual(code, 0)
         self.assertTrue(ran.exists(), "the project script did not run")
         self.assertFalse(spilled.exists(), "spilled while the drive was present")
@@ -3586,39 +3589,72 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         script, exe = tmp / "refresh.ps1", tmp / "StoneScanner.cmd"
         self._stub_ps1(script, tmp / "ran.txt", code=7)
         self._stub_cmd(exe, tmp / "spilled.txt")
-        code, log = self._run_guard(project_script=script, spill_exe=exe, last_at="00:00")
+        code, log = self._run_guard(project_script=script, spill_exe=exe)
         self.assertEqual(code, 7)
         self.assertIn("refresh.ps1 exited 7", log)
 
-    def test_drive_absent_before_the_last_trigger_defers(self):
-        # AC-4. This is the case that must NOT spill: D: is often back by mid-morning, and a
-        # 03:20 spill would crawl into the wrong database while the right one was on its way.
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(__import__("shutil").rmtree, tmp, True)
-        spilled = tmp / "spilled.txt"
-        exe = tmp / "StoneScanner.cmd"
-        self._stub_cmd(exe, spilled)
-        code, log = self._run_guard(project_script=tmp / "gone" / "refresh.ps1",
-                                    spill_exe=exe, last_at="23:59")
-        self.assertEqual(code, 200)
-        self.assertFalse(spilled.exists(), "spilled before the last trigger")
-        self.assertIn("GAVE UP", log)
-        self.assertIn("later trigger", log, "the log must say another attempt is coming")
-
-    def test_drive_absent_at_the_last_trigger_spills(self):
-        # AC-4 + AC-5: the point of the whole issue.
+    def test_drive_absent_spills_on_the_very_first_trigger(self):
+        # The rule REVERSED on 2026-08-05. It used to defer to the last trigger of the day on
+        # the theory that D: often reappears by mid-morning — but that trades a whole
+        # known-lost night for a crawl that might not come. A spill that later proves
+        # unnecessary costs nothing: AIL-29 takes a supplier from the spill only when it is
+        # strictly newer, so a real D: crawl afterwards simply supersedes it.
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, tmp, True)
         spilled = tmp / "spilled.txt"
         exe = tmp / "StoneScanner.cmd"
         self._stub_cmd(exe, spilled, code=0)
         code, log = self._run_guard(project_script=tmp / "gone" / "refresh.ps1",
-                                    spill_exe=exe, last_at="00:00")
+                                    spill_exe=exe)
         self.assertEqual(code, 0)
-        self.assertTrue(spilled.exists(), "did not spill at the last trigger")
+        self.assertTrue(spilled.exists(), "did not spill on the first trigger")
         self.assertIn("--refresh", spilled.read_text(encoding="utf-8", errors="replace"))
         self.assertIn("SPILL", log)
         self.assertNotIn("GAVE UP", log)
+
+    def test_it_spills_at_most_once_a_day(self):
+        # What makes spilling early safe. A crawl takes ~3h, so a 03:20 spill finishes about
+        # 06:20 and leaves the 07:00 trigger free to start a SECOND full crawl of ~135 live
+        # supplier sites the same night. MultipleInstances=IgnoreNew cannot help — by then
+        # the first one has finished. Both runs share one %ProgramData%, as three triggers on
+        # one machine do.
+        import shutil
+        sandbox = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, sandbox, True)
+        spilled = sandbox / "spilled.txt"
+        exe = sandbox / "StoneScanner.cmd"
+        self._stub_cmd(exe, spilled, code=0)
+        gone = sandbox / "gone" / "refresh.ps1"
+
+        first_code, first_log = self._run_guard(project_script=gone, spill_exe=exe,
+                                                sandbox=sandbox)
+        self.assertEqual(first_code, 0)
+        self.assertIn("SPILL", first_log)
+        spilled.unlink()                      # so a second spill is unmistakable
+
+        second_code, second_log = self._run_guard(project_script=gone, spill_exe=exe,
+                                                  sandbox=sandbox)
+        self.assertEqual(second_code, 200)
+        self.assertFalse(spilled.exists(), "crawled ~135 supplier sites twice in one night")
+        self.assertIn("already spilled today", second_log)
+
+    def test_the_stamp_is_written_before_the_crawl_not_after(self):
+        # One attempt per day, and it must stay predictable when the spill dies. If the stamp
+        # were written on completion, a spill that failed two hours in would start again from
+        # the top at the next trigger. The stub exits non-zero to stand in for that.
+        import shutil
+        sandbox = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, sandbox, True)
+        exe = sandbox / "StoneScanner.cmd"
+        self._stub_cmd(exe, sandbox / "spilled.txt", code=9)
+        gone = sandbox / "gone" / "refresh.ps1"
+        code, _ = self._run_guard(project_script=gone, spill_exe=exe, sandbox=sandbox)
+        self.assertEqual(code, 9, "the spill's own exit code must propagate")
+        stamp = sandbox / "StoneScanner" / "last-spill.txt"
+        self.assertTrue(stamp.exists(), "a failed spill left no stamp — it will retry today")
+        code2, log2 = self._run_guard(project_script=gone, spill_exe=exe, sandbox=sandbox)
+        self.assertEqual(code2, 200)
+        self.assertIn("already spilled today", log2)
 
     def test_a_spill_runs_from_the_local_copys_own_folder(self):
         # AC-6, positively stated: the spill's working directory is the local copy, so the
@@ -3631,8 +3667,7 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         spilled = tmp / "spilled.txt"
         exe = local / "StoneScanner.cmd"
         self._stub_cmd(exe, spilled)
-        self._run_guard(project_script=tmp / "gone" / "refresh.ps1", spill_exe=exe,
-                        last_at="00:00")
+        self._run_guard(project_script=tmp / "gone" / "refresh.ps1", spill_exe=exe)
         self.assertIn(str(local).lower(),
                       spilled.read_text(encoding="utf-8", errors="replace").lower())
 
@@ -3654,8 +3689,7 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         # refresh.ps1 is missing from a directory that exists — the drive is "there" as far
         # as the filesystem is concerned, but the guard's own check still fails, so we reach
         # the spill with a writable project directory sitting right next to it.
-        self._run_guard(project_script=project / "refresh.ps1", spill_exe=exe,
-                        last_at="00:00")
+        self._run_guard(project_script=project / "refresh.ps1", spill_exe=exe)
         after = {p.name: (p.stat().st_mtime_ns, p.stat().st_size)
                  for p in project.iterdir()}
         self.assertEqual(before, after, "a spill modified the project directory")
@@ -3666,8 +3700,7 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, tmp, True)
         code, log = self._run_guard(project_script=tmp / "gone" / "refresh.ps1",
-                                    spill_exe=tmp / "nothing-here" / "StoneScanner.exe",
-                                    last_at="00:00")
+                                    spill_exe=tmp / "nothing-here" / "StoneScanner.exe")
         self.assertEqual(code, 200)
         self.assertIn("no local copy", log)
 
@@ -3682,12 +3715,16 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         self.assertIn("New-ScheduledTaskTrigger -Daily -At $when", src)
         self.assertIn("-MultipleInstances IgnoreNew", src)
 
-    def test_the_spill_deadline_is_the_last_trigger_itself(self):
-        # The two must not be able to drift: a 07:00 spill rule beside a 05:00 last trigger
-        # would mean the last run of the night defers to a trigger that never comes.
+    def test_the_spill_has_no_clock_condition_left(self):
+        # The old rule compared the clock against $At[-1]. Nothing may reintroduce a
+        # time-of-day gate: the spill fires whenever the wait expires, and the ONLY thing
+        # bounding it is the once-a-day stamp.
+        guard = self._guard_block()
+        self.assertNotIn("lastAt", guard, "a time-of-day gate came back")
+        self.assertIn("last-spill.txt", guard)
+        self.assertIn("already spilled today", guard)
         src = Path("install-refresh-task.ps1").read_text(encoding="utf-8")
-        self.assertIn("$lastAt = $At[-1]", src)
-        self.assertIn("[timespan]`$lastAt", self._guard_block())
+        self.assertNotIn("$lastAt", src)
 
     def test_the_at_times_are_validated_before_the_task_is_unregistered(self):
         # The installer unregisters and then re-registers, so anything that throws in between
