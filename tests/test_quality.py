@@ -3715,6 +3715,67 @@ class RefreshGuardDecisionTests(unittest.TestCase):
         self.assertIn("New-ScheduledTaskTrigger -Daily -At $when", src)
         self.assertIn("-MultipleInstances IgnoreNew", src)
 
+    def test_the_spill_waits_for_a_gui_subsystem_process(self):
+        # The 2026-08-06 defect, and the reason the tests above could not catch it: they stub
+        # the spill with a .cmd, which is CONSOLE-subsystem, and `&` does wait for those. The
+        # real StoneScanner.exe is built console=False, and `&` returns immediately from a
+        # GUI-subsystem process — measured at 0.33s against the real exe while the crawl ran
+        # on for two hours, with $LASTEXITCODE empty.
+        #
+        # pythonw.exe is GUI-subsystem too, so a copy of it is a faithful stand-in. It also
+        # takes a script argument, which lets the child prove it was waited for: the guard
+        # only sees the marker if it blocked until the child wrote it.
+        import shutil
+        import subprocess
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        if not pyw.exists():
+            self.skipTest("pythonw.exe not present in this interpreter's directory")
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        marker = tmp / "child-finished.txt"
+        work = tmp / "work.py"
+        work.write_text(
+            "import os, time\n"
+            "time.sleep(2)\n"
+            f"open(r'{marker}', 'w').write('done')\n"
+            "os._exit(7)\n", encoding="utf-8")
+
+        # Drive the two forms directly rather than through the guard, because the guard
+        # hard-codes '--refresh' and Python rejects that as an unknown option before it can
+        # run anything. What is under test is the LAUNCH FORM, which is what the guard picks.
+        def run(form: str):
+            if form == "call-operator":
+                cmd = f'& "{pyw}" "{work}"; Write-Output ("code=[" + $LASTEXITCODE + "]")'
+            else:
+                cmd = (f'$p = Start-Process -FilePath "{pyw}" -ArgumentList "{work}" '
+                       f'-PassThru -Wait; Write-Output ("code=[" + $p.ExitCode + "]")')
+            if marker.exists():
+                marker.unlink()
+            p = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
+                                "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                               capture_output=True, text=True, timeout=120)
+            return p.stdout.strip(), marker.exists()
+
+        code, finished = run("start-process")
+        self.assertEqual(code, "code=[7]",
+                         "Start-Process -PassThru -Wait must return the child's real code")
+        self.assertTrue(finished, "Start-Process -Wait did not wait for the child")
+
+        # And the shipped guard must use that form. Asserting the launch line directly,
+        # because the behavioural half above cannot run through the guard's fixed argument.
+        guard = self._guard_block()
+        spill_branch = next(ln for ln in guard.splitlines() if "function GiveUp" in ln)
+        self.assertIn("Start-Process -FilePath `$spill", spill_branch)
+        self.assertIn("-PassThru -Wait", spill_branch)
+        self.assertNotIn("& `$spill", spill_branch,
+                         "the call operator does not wait for a console=False exe")
+        self.assertNotIn("`$LASTEXITCODE", spill_branch,
+                         "$LASTEXITCODE is empty for a GUI-subsystem process")
+        # The D: path is a different case and must keep using $LASTEXITCODE: refresh.ps1 is
+        # a SCRIPT run in-process, where it is set correctly. Scoping this assertion to the
+        # spill branch is the point, not an oversight.
+        self.assertIn("`$c = `$LASTEXITCODE", guard)
+
     def test_the_spill_has_no_clock_condition_left(self):
         # The old rule compared the clock against $At[-1]. Nothing may reintroduce a
         # time-of-day gate: the spill fires whenever the wait expires, and the ONLY thing
