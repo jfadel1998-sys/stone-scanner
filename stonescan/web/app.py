@@ -2018,10 +2018,12 @@ def health(request: Request):
                    for s in discover.load_suppliers()}
     for r in rows:
         r["provider"] = provider_of.get(r["host"], "stoneprofits")
-    order = {"broken": 0, "stale": 1, "empty": 2, "blocked": 3, "ok": 4}
+    # `challenged` sorts with `blocked`: both are the supplier's answer, so neither is work
+    # anybody can do, and neither belongs above a host that is genuinely failing.
+    order = {"broken": 0, "stale": 1, "empty": 2, "blocked": 3, "challenged": 4, "ok": 5}
     rows.sort(key=lambda r: (order[r["status"]], -(r["item_count"] or 0)))
     counts = {k: sum(1 for r in rows if r["status"] == k)
-              for k in ("ok", "stale", "broken", "empty", "blocked")}
+              for k in ("ok", "stale", "broken", "empty", "blocked", "challenged")}
     mirrors = db.mirror_report(conn)
     proposals = db.supplier_filter_proposals(conn)
     stats = db.stats(conn)
@@ -2204,9 +2206,12 @@ def discovery_status(*, probed: bool, items: int, error: str) -> str:
 
     A pure function so the ordering is testable; the route only maps the result to a list.
     """
-    from ..robots import is_block_error
+    from ..robots import is_block_error, is_challenge_error
     if not probed:
         return "unprobed"
+    if is_challenge_error(error):
+        # A bot check is the same kind of answer as a robots block, stated out of band.
+        return "challenged"
     if is_block_error(error):
         # Declined, not broken. Filing a supplier who told us not to crawl them under
         # "errored" invites someone to go fix it.

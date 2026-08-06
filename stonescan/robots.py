@@ -47,6 +47,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .challenge import CHALLENGE_MARKER, Challenged, detect as detect_challenge
+from .challenge import is_challenge_error
+
 # The product token suppliers would write in their robots.txt to address us, and
 # the full UA we send. Keep these two in step — crawler.py sends its own Playwright
 # UA string built from the same token.
@@ -81,7 +84,22 @@ def block_error(detail: str) -> str:
 
 
 def is_block_error(msg: str | None) -> bool:
-    return bool(msg) and str(msg).startswith(BLOCK_MARKER)
+    # SUBSTRING, not startswith. Providers store the FORMATTED exception —
+    # `out.error = f"{type(e).__name__}: {e}"` — so a real block is stored as
+    # "Disallowed: robots-blocked: …" and a prefix test never matched it. Every protection
+    # this marker exists for (out of the retry pass, out of the empty-crawl streak, BLOCKED
+    # rather than BROKEN on /health) was therefore dead on the provider path. It went
+    # unnoticed because no host has yet published a Disallow we honour: 0 of 393 rows are
+    # blocked today, so the bug had nothing to be wrong about.
+    return CHALLENGE_MARKER not in str(msg or "") and BLOCK_MARKER in str(msg or "")
+
+
+def is_declined(msg: str | None) -> bool:
+    """Whether the supplier ANSWERED us and the answer was no — by robots.txt or by a
+    bot-protection challenge. Both are decisions, not failures, and the difference between
+    them matters only to what we show a human; every mechanism that must not hammer a host
+    who already said no cares about the union."""
+    return is_block_error(msg) or is_challenge_error(msg)
 
 
 @dataclass(frozen=True)
@@ -503,6 +521,11 @@ class PoliteClient:
         for key, fns in (event_hooks or {}).items():
             hooks.setdefault(key, []).extend(fns)
         hooks["request"].insert(0, self._guard_request)
+        # The challenge check is a RESPONSE hook, in the same shared layer and for the same
+        # reason: it belongs wherever the fetch actually happens, so every provider inherits
+        # it and none has to remember. Header-only — the response is unread at this point and
+        # reading it here would break client.stream() everywhere.
+        hooks["response"].insert(0, self._guard_response)
         self._client = httpx.AsyncClient(headers=headers, event_hooks=hooks, **kwargs)
         # robots.txt is fetched with the same client so a provider's TLS quirks
         # (UMI's legacy-cipher context, say) apply to the check as well — otherwise
@@ -510,6 +533,7 @@ class PoliteClient:
         self.robots = robots or RobotsCache(
             agent, client=self._client, overrides=[override] if override else None)
         self.blocked: list[tuple[str, Decision]] = []
+        self.challenged: list[tuple[str, str]] = []
 
     async def _guard_request(self, request: httpx.Request) -> None:
         # The robots.txt fetch itself is exempt. Without this, a robots.txt that
@@ -522,6 +546,25 @@ class PoliteClient:
         if not decision.allowed:
             self.blocked.append((url, decision))
             raise Disallowed(url, decision)
+
+    async def _guard_response(self, response: httpx.Response) -> None:
+        """Turn a bot-protection challenge into a decision we record, not a page we parse.
+
+        Deliberately does NOT read `response`: httpx fires this hook before the body is
+        loaded, so touching `.text` here would force a read and break streaming for every
+        caller. Headers carry the decisive evidence anyway (`cf-mitigated: challenge`).
+
+        robots.txt fetches are exempt, exactly as in the request hook — a challenge on the
+        policy file itself is the RobotsCache's business (it reads as UNREACHABLE, which is
+        retryable) and must not be reclassified here.
+        """
+        if response.request.extensions.get(_ROBOTS_FETCH):
+            return
+        reason = detect_challenge(response.status_code, response.headers)
+        if reason:
+            url = str(response.request.url)
+            self.challenged.append((url, reason))
+            raise Challenged(url, reason)
 
     async def __aenter__(self) -> PoliteClient:
         await self._client.__aenter__()

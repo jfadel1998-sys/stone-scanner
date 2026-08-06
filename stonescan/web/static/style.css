@@ -575,6 +575,11 @@ footer {
 .statuspill.empty { background: var(--chip); color: var(--muted); }
 .statuspill.blocked { background: #4b5563; color: #fff; }
 .hstat.blocked { border-color: #c3c9d2; background: #eef0f3; }
+/* DECLINED reads like BLOCKED on purpose — both are the supplier's answer, and neither is
+   work anybody can pick up. Slate rather than red: colouring a decision as an alarm is what
+   put 192 of these under "broken" in the first place. */
+.statuspill.challenged { background: #5b6472; color: #fff; }
+.hstat.challenged { border-color: #c3c9d2; background: #eef0f3; }
 
 /* mirror-storefronts panel on /health */
 .mirrorbox { margin: 6px var(--pad-x) 22px; padding: 14px 16px; border: 1px solid var(--line);

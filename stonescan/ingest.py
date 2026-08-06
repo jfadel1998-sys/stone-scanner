@@ -159,9 +159,13 @@ def _breaker_outcome(ok: bool, error: str | None) -> str:
     row abandon Stone Profits, the largest source, and empty catalogs return fastest, so
     under `as_completed` they arrive bunched together at the front.
     """
-    from .robots import is_block_error
+    from .robots import is_declined
     error = error or ""
-    if is_block_error(error):
+    # A bot-protection challenge counts exactly as a robots block: the supplier answered, so
+    # it neither advances the consecutive-error count nor resets it. Without this, 192
+    # challenged slabware tenants would trip the breaker every night and abandon the handful
+    # of that provider's hosts that do still serve.
+    if is_declined(error):
         return "block"
     if error == EMPTY_CATALOG_ERROR:
         return "ok"
@@ -286,22 +290,49 @@ async def run_providers(entries: list[dict], *, delay: float, db_path: str,
     return ok, items, slabs
 
 
+def _defer_challenged(entries: list[dict], db_path: str) -> tuple[list[dict], list[tuple]]:
+    """Drop entries whose last answer was a bot check, until the re-probe window elapses.
+
+    Returns (entries to crawl, [(host, days since the challenge) …]). Never raises: a
+    bookkeeping read must not be able to shrink the crawl list to nothing, so any failure
+    here leaves every entry in place.
+    """
+    try:
+        conn = db.connect(db_path)
+        try:
+            recent = db.recently_challenged(conn)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - fall open, never closed
+        return entries, []
+    keep, deferred = [], []
+    for e in entries:
+        days = recent.get((e.get("host") or "").lower())
+        if days is None:
+            keep.append(e)
+        else:
+            deferred.append((e.get("host") or "", days))
+    return keep, deferred
+
+
 def _errored_hosts(db_path: str, hosts: list[str]) -> set[str]:
     """Which of `hosts` failed in a way worth retrying.
 
-    A robots.txt block is excluded: it is the supplier's answer, not a blip, and
-    an immediate retry would just ask again after being told no.
+    A supplier who ANSWERED is excluded — robots.txt block or bot-protection challenge. It
+    is their answer, not a blip, and an immediate retry just asks again after being told no.
     """
-    from .robots import BLOCK_MARKER
+    from .robots import is_declined
 
     conn = db.init_db(db_path)
     ph = ",".join("?" for _ in hosts)
+    # Filtered in Python rather than SQL: the stored text is a formatted exception, so the
+    # marker sits mid-string and the old `LIKE 'robots-blocked:%'` never matched it.
     rows = conn.execute(
-        f"SELECT host FROM suppliers WHERE last_error IS NOT NULL AND last_error <> '' "
-        f"AND last_error NOT LIKE ? AND host IN ({ph})", [f"{BLOCK_MARKER}%", *hosts],
+        f"SELECT host, last_error FROM suppliers WHERE last_error IS NOT NULL "
+        f"AND last_error <> '' AND host IN ({ph})", [*hosts],
     ).fetchall() if hosts else []
     conn.close()
-    return {r["host"] for r in rows}
+    return {r["host"] for r in rows if not is_declined(r["last_error"])}
 
 
 async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
@@ -425,6 +456,21 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             for e, rej in rej_skipped:
                 say(f"  [rejected] {e.get('name') or e['host']:<32} {rej.reason[:46]} "
                       f"(lapses in {rej.days_until_lapse(_today)}d)")
+
+        # Back off from hosts that answered with a bot-protection challenge.
+        #
+        # NOT the nightly re-check robots.txt gets, and the difference is the point.
+        # Re-fetching robots.txt retrieves a small published policy file that the standard
+        # exists to serve and that a supplier edits to signal a change of mind. A managed
+        # challenge is active bot mitigation somebody deliberately switched on, and asking
+        # ~192 of them every night forever is precisely the traffic it exists to stop — from
+        # a crawler whose own README calls it rate-limited and identifiable. Once a week
+        # still notices a supplier turning it off, at about a seventh of the requests.
+        if honor_rejections:
+            entries, challenged_skipped = _defer_challenged(entries, db_path)
+            for host, days in challenged_skipped:
+                say(f"  [challenged] {host:<32} answered with a bot check {days}d ago; "
+                      f"next probe in {db.CHALLENGE_RECHECK_DAYS - days}d")
 
         from . import providers
         abandoned = await _crawl_entries(
