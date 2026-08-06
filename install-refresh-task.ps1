@@ -90,10 +90,27 @@ if (-not (Test-Path $script)) { throw "refresh.ps1 not found next to this script
 # is written BEFORE the crawl rather than after: one attempt per day, predictable, and a
 # spill that dies two hours in does not get to start again from the top at 07:00.
 #
-# THE SPILL WRITES NOTHING TO D:. It cd's to the local copy and runs that copy's exe, which
-# puts its database, its log and its refresh_runs ledger under the local copy's own data\
-# folder (desktop.setup_env). D: is absent in this branch by construction, but the branch
-# must stay correct for the case where it comes back mid-crawl.
+# START-PROCESS -Wait, NOT `& $spill`. StoneScanner.exe is built console=False, and the call
+# operator does not wait for a GUI-subsystem process: measured against the real exe, `&`
+# returned in 0.33s with the crawl still running and left $LASTEXITCODE EMPTY, while
+# Start-Process -PassThru -Wait blocked for the full run and returned a real code. That is
+# not cosmetic — it is what happened on the night of 2026-08-06, where the log read
+#
+#     03:20:01  SPILL - project drive absent; crawling into the local copy instead
+#     03:20:01  SPILL finished, exit            <- one second later, no exit code
+#
+# while the crawl actually ran until 05:24. Three things follow from the task instance
+# exiting while its crawl continues: LastTaskResult can never report the spill's outcome (a
+# spill that CRASHED would log the identical line), ExecutionTimeLimit cannot bound a process
+# the task is not tracking, and — the dangerous one — MultipleInstances=IgnoreNew stops
+# protecting anything, because by the next trigger the scheduler sees nothing running. On
+# 08-06 only the once-a-day stamp stood between that and three concurrent crawls of ~135
+# live supplier sites.
+#
+# THE SPILL WRITES NOTHING TO D:. -WorkingDirectory is the local copy, so the exe's app_dir()
+# resolves there and desktop.setup_env writes ITS database, log and refresh_runs ledger.
+# D: is absent in this branch by construction, but the branch must stay correct for the case
+# where it comes back mid-crawl.
 # -WindowStyle Hidden so the nightly run doesn't flash a console; the log is the record.
 $notReachable = 200
 $guard = @(
@@ -104,7 +121,7 @@ $guard = @(
     "`$d = Split-Path -LiteralPath `$log"
     "if (-not (Test-Path -LiteralPath `$d)) { New-Item -ItemType Directory -Path `$d -Force | Out-Null }"
     "function Note([string]`$m) { Add-Content -LiteralPath `$log -Encoding utf8 -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + `$m) }"
-    "function GiveUp { if (-not (Test-Path -LiteralPath `$spill)) { Note ('GAVE UP after $WaitMinutes min - project not reachable and no local copy at ' + `$spill); exit $notReachable }; `$today = (Get-Date).ToString('yyyy-MM-dd'); if ((Test-Path -LiteralPath `$stamp) -and ((Get-Content -LiteralPath `$stamp -Raw -ErrorAction SilentlyContinue) -replace '\s','') -eq `$today) { Note ('GAVE UP after $WaitMinutes min - project not reachable; already spilled today, not crawling again'); exit $notReachable }; Set-Content -LiteralPath `$stamp -Value `$today -Encoding utf8; Note ('SPILL - project drive absent; crawling into the local copy instead: ' + `$spill); Set-Location -LiteralPath (Split-Path -LiteralPath `$spill); & `$spill --refresh; `$sc = `$LASTEXITCODE; Note ('SPILL finished, exit ' + `$sc); exit `$sc }"
+    "function GiveUp { if (-not (Test-Path -LiteralPath `$spill)) { Note ('GAVE UP after $WaitMinutes min - project not reachable and no local copy at ' + `$spill); exit $notReachable }; `$today = (Get-Date).ToString('yyyy-MM-dd'); if ((Test-Path -LiteralPath `$stamp) -and ((Get-Content -LiteralPath `$stamp -Raw -ErrorAction SilentlyContinue) -replace '\s','') -eq `$today) { Note ('GAVE UP after $WaitMinutes min - project not reachable; already spilled today, not crawling again'); exit $notReachable }; Set-Content -LiteralPath `$stamp -Value `$today -Encoding utf8; Note ('SPILL - project drive absent; crawling into the local copy instead: ' + `$spill); `$proc = Start-Process -FilePath `$spill -ArgumentList '--refresh' -WorkingDirectory (Split-Path -LiteralPath `$spill) -PassThru -Wait; `$sc = if (`$null -ne `$proc) { `$proc.ExitCode } else { 1 }; Note ('SPILL finished, exit ' + `$sc); exit `$sc }"
     "`$deadline = (Get-Date).AddMinutes($WaitMinutes)"
     "while (-not (Test-Path -LiteralPath `$s)) { if ((Get-Date) -ge `$deadline) { GiveUp }; Start-Sleep -Seconds 30 }"
     "Note ('starting ' + `$s)"
