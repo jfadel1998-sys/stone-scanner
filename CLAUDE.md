@@ -47,7 +47,7 @@ build/packaging details.
 | `stonescan/crawler.py` | Playwright crawler — per supplier: creds/contacts, getItemGallery, slab pre-fetch |
 | `stonescan/robots.py` | robots.txt enforcement (RFC 9309). `PoliteClient` is an `httpx.AsyncClient` that refuses disallowed URLs; `client_for(entry)` is what providers use. Gate lives at the HTTP layer, not per-supplier, because the entry `host` often isn't the origin fetched |
 | `stonescan/denylist.py` | Durable removal requests (`denylist.json` + CLI). Checked by discovery, by ingest, and by the fingerprint probes |
-| `stonescan/providers/` | Non-StoneProfits adapters (`umi`, `slabware`, `stonetrash`, `slabcloud`, `unbuilt`, `genericfeed`); all plain HTTP. `base.material_row()` is mandatory — it's what keeps `material_key` identical across platforms |
+| `stonescan/providers/` | Non-StoneProfits adapters (`umi`, `slabware`, `stonetrash`, `slabcloud`, `unbuilt`, `genericfeed`, `iblocky`); all plain HTTP. `base.material_row()` is mandatory — it's what keeps `material_key` identical across platforms |
 | `stonescan/normalize.py` | Category classifier, cross-supplier `material_key`, color/thickness cleanup |
 | `stonescan/smartsearch.py` | Natural-language query parser ("blue marble slabs" → filters) |
 | `stonescan/db.py` | SQLite schema + all query/storage helpers (materials, slabs, history, watchlist) |
@@ -56,7 +56,7 @@ build/packaging details.
 | `stonescan/slabs.py` | On-demand per-slab gallery (live browser fetch, cached 10min). Item pages paint the nightly cache instantly, then background-refresh to a **live** read via `/api/slabs?live=1` and stamp "live as of …", so the qty you see on open is current even between crawls. The nightly only pre-caches each supplier's top-`--slab-cap` items (default 40) — enough to seed the map's yard locations; everything else is fetched live on open |
 | `stonescan/imagesearch.py` | Search-by-photo: CLIP ViT-B/32 vision encoder (ONNX, CPU, no torch). Embeds catalog images into `image_vectors` (keyed by image_url); `search()` cosine-ranks against an uploaded photo and carries per-material agreement counts; `identify()` turns those into a named verdict + confidence. Model at `stonescan/models/clip/clip_vision.onnx` (git-ignored, `--download-model`). |
 | `stonescan/reference.py` | What a stone *is* — origin, quarries, market price — none of which exists in the catalog (see Gotchas). Cited facts in `stone_reference.json`; `lookup_live()` fills gaps from the Wikipedia API on demand. Unsourced facts are stripped on import, so the UI says "not established" rather than inventing one. |
-| `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) distributor **vanity / white-label** Stone Profits catalogs on the distributor's own domain (slabs.nsrstone.com, inventory.acegraniteusa.com, outlet.ckfco.com — drop-in on the default provider, any subdomain prefix, invisible to the subdomain sweep). `discover_sps_embeds()` finds them via urlscan (pages that load a Stone Profits resource → fingerprint-verify); `probe_sps_vanity()` fingerprints `<prefix>.<apex>` over a curated apex list. UMI/StoneTrash single sites stay hand-seeded |
+| `stonescan/discover.py` | Discovery of public catalogs → suppliers.json. (1) passive-DNS/CT sweep of Stone Profits **and** SlabWare wildcard subdomains; (2) `discover_slabcloud()` resolves SlabCloud tenants from `slabcloud.com/clients` (reads each tenant's verbatim API slug from `company:"…"`, incl. the `_h_` prefix); (3) distributor **vanity / white-label** Stone Profits catalogs on the distributor's own domain (slabs.nsrstone.com, inventory.acegraniteusa.com, outlet.ckfco.com — drop-in on the default provider, any subdomain prefix, invisible to the subdomain sweep). `discover_sps_embeds()` finds them via urlscan (pages that load a Stone Profits resource → fingerprint-verify); `probe_sps_vanity()` fingerprints `<prefix>.<apex>` over a curated apex list; (4) `discover_iblocky()` reads iBlocky's own published tenant directory, keeping only tenants whose `isPublic` flag is set (their consent switch — never overridden) — needed because iBlocky is path-based multi-tenant and so is *invisible* to the subdomain sweep in (1). UMI/StoneTrash single sites stay hand-seeded |
 | `stonescan/geocode.py` | Offline location → lat/long for the pin map (+ `locations.json` overrides) |
 | `stonescan/reclassify.py` | Re-derive type/color/key/thickness in place without re-crawling (also repairs non-inch dimensions, and re-applies merges) |
 | `stonescan/dedupe.py` | Data-quality curation: type-conflict + spelling merge candidates, `apply_aliases` fold |
@@ -116,7 +116,22 @@ build/packaging details.
   `/api/listings/` is the one robots-allowed `/api/` path. **genericfeed**: the long-tail
   provider — robots.txt → sitemap(s) → product pages → schema.org Product JSON-LD, one
   page fetch per product (bounded by `max_products`), every URL checked against robots
-  `Disallow` before fetch. Product-level only (no live slab qty).
+  `Disallow` before fetch. Product-level only (no live slab qty). **iBlocky**: the
+  international source (21 tenants — 19 Italian, 1 Belgian, 1 Singaporean — ~8.8k slab
+  + ~0.9k block products). Four traps, all structural: tenancy is **path-based on one
+  host** (`app.iblocky.it/public-blocks/<slug>`) so the wildcard-subdomain sweep finds
+  nothing and reads as "no catalog" — the directory is `api/v1/public/tenants`; the
+  inventory call is **POST-only** (`GET` on the same URL is a literal `404 Route not
+  found`, and every other provider here is GET); `petroDesc` is half Italian and
+  `petroDescTranslations.en` **echoes the raw value verbatim** rather than translating
+  it, so an unmapped `Marmo` classifies as `Other` and can never group with the same
+  stone from a US supplier; and `origin`, though genuinely geological here (unlike
+  everywhere else — see below), also carries supplier brand codes (`ELITEST`, `INNOVA`,
+  637 rows), so it is folded through a country **allow-list**, not a junk blacklist.
+  Dimensions/thickness are **centimetres** — converted in the provider via
+  `base.centimetres_to_inches`, NOT by adding hosts to `DIMENSION_UNIT_HOSTS`, whose
+  magnitude bands would read a block's 135cm height as metres. Product-level only: the
+  platform publishes a slab count, never the slabs.
 - **robots.txt must be asked through the same door the data comes through.** An
   outside `httpx` GET of `<tenant>.stoneprofitsweb.com/robots.txt` gets a Cloudflare
   **403**, which RFC 9309 reads as "no restrictions" — so a naive check would have
@@ -185,7 +200,12 @@ build/packaging details.
   and `$570` (a whole-slab total — Unbuilt, Marble Systems). `_observed_prices()`
   keeps them apart and drops everything else. **This is why the photo-ID reference
   data has to come from outside the catalog** — don't "just join" origin or average
-  price_range.
+  price_range. **One exception, and it is per-provider, not global:** iBlocky's
+  `origin` really is geological (Italy / Brazil / India / Angola…, ~79% of its stored
+  rows), because that platform has a distinct field for it. So `origin` is now
+  trustworthy for `provider: iblocky` rows and still meaningless for the rest — any
+  query that reads it must say which supplier it came from rather than treating the
+  column as uniform.
 - **The photo-ID consensus must be measured before the dedupe.** `search()` returns
   one row per `material_key` by construction, so counting how many top results share
   a name always yields 1 — the first cut of `identify()` reported "uncertain" for a

@@ -2014,6 +2014,132 @@
     {
       "host": "stonemasters.stoneprofitsweb.com",
       "name": ""
+    },
+    {
+      "host": "biancomarmo.iblocky.it",
+      "slug": "biancomarmo",
+      "name": "BIANCOMARMO",
+      "provider": "iblocky"
+    },
+    {
+      "host": "bassi-bellotti-spa.iblocky.it",
+      "slug": "bassi-bellotti-spa",
+      "name": "Bassi & Bellotti S.p.A.",
+      "provider": "iblocky"
+    },
+    {
+      "host": "black-eagle.iblocky.it",
+      "slug": "black-eagle",
+      "name": "Black Eagle",
+      "provider": "iblocky"
+    },
+    {
+      "host": "cev-srl.iblocky.it",
+      "slug": "cev-srl",
+      "name": "CEV srl",
+      "provider": "iblocky"
+    },
+    {
+      "host": "cmc-commercio-marmi-carrara.iblocky.it",
+      "slug": "cmc-commercio-marmi-carrara",
+      "name": "CMC Commercio Marmi Carrara",
+      "provider": "iblocky"
+    },
+    {
+      "host": "dilamar.iblocky.it",
+      "slug": "dilamar",
+      "name": "Dilamar",
+      "provider": "iblocky"
+    },
+    {
+      "host": "elite-stone.iblocky.it",
+      "slug": "elite-stone",
+      "name": "Elite Stone",
+      "provider": "iblocky"
+    },
+    {
+      "host": "elite-stone-marmo.iblocky.it",
+      "slug": "elite-stone-marmo",
+      "name": "Elite Stone - Marmo",
+      "provider": "iblocky"
+    },
+    {
+      "host": "epastone.iblocky.it",
+      "slug": "epastone",
+      "name": "EpaStone",
+      "provider": "iblocky"
+    },
+    {
+      "host": "gima-stone-srl.iblocky.it",
+      "slug": "gima-stone-srl",
+      "name": "Gi-Ma Stone SRL",
+      "provider": "iblocky"
+    },
+    {
+      "host": "italian-stone-source.iblocky.it",
+      "slug": "italian-stone-source",
+      "name": "Italian Stone Source",
+      "provider": "iblocky"
+    },
+    {
+      "host": "kstone.iblocky.it",
+      "slug": "kstone",
+      "name": "Kstone",
+      "provider": "iblocky"
+    },
+    {
+      "host": "le-pietre-di-flo-srl.iblocky.it",
+      "slug": "le-pietre-di-flo-srl",
+      "name": "Le Pietre di Flo",
+      "provider": "iblocky"
+    },
+    {
+      "host": "marmi-rosa-srl.iblocky.it",
+      "slug": "marmi-rosa-srl",
+      "name": "Marmi Rosa SRL",
+      "provider": "iblocky"
+    },
+    {
+      "host": "marmo-elite-srl.iblocky.it",
+      "slug": "marmo-elite-srl",
+      "name": "Marmo Elite S.R.L.",
+      "provider": "iblocky"
+    },
+    {
+      "host": "mondial-granit.iblocky.it",
+      "slug": "mondial-granit",
+      "name": "Mondial Granit S.p.A.",
+      "provider": "iblocky"
+    },
+    {
+      "host": "payanini.iblocky.it",
+      "slug": "payanini",
+      "name": "Payanini S.R.L.",
+      "provider": "iblocky"
+    },
+    {
+      "host": "planetstone.iblocky.it",
+      "slug": "planetstone",
+      "name": "PlanetStone",
+      "provider": "iblocky"
+    },
+    {
+      "host": "stone-export.iblocky.it",
+      "slug": "stone-export",
+      "name": "Stone Export",
+      "provider": "iblocky"
+    },
+    {
+      "host": "testi-group-srl.iblocky.it",
+      "slug": "testi-group-srl",
+      "name": "Testi Group S.r.l.",
+      "provider": "iblocky"
+    },
+    {
+      "host": "wemakecode.iblocky.it",
+      "slug": "wemakecode",
+      "name": "We Make Code",
+      "provider": "iblocky"
     }
   ]
 }

@@ -5304,5 +5304,308 @@ class ColourFamilyTests(unittest.TestCase):
         self.assertEqual(app._colors_for_choice(self.conn, ""), [])
 
 
+class IBlockyProviderTests(unittest.TestCase):
+    """AIL-36 — iBlocky, the first deliberately-sought international source.
+
+    Every test here runs against an httpx.MockTransport through a real `PoliteClient`,
+    so the robots gate is exercised rather than stubbed. No network.
+    """
+
+    SLUG = "black-eagle"
+
+    def _row(self, **over):
+        row = {
+            "id": 1196449, "code": "260801", "material": "Cristallo Alba",
+            "petroDesc": "Quartzite", "origin": "Brasile", "type": "slab",
+            "isActive": True,
+            "stats": {"availableSlabs": 15, "totalM2": 104.44, "thickness": [2],
+                      "dimensions": "343x203", "finishes": ["Raw"]},
+            "photo": "https://cdn.iblocky.it/a.webp",
+        }
+        row.update(over)
+        return row
+
+    def _handler(self, pages, *, allow_get_list=False, seen=None):
+        """pages: {"slab": [[row, ...], ...], "block": [...]} — one list per page."""
+        import httpx
+
+        def route(request: httpx.Request) -> httpx.Response:
+            if seen is not None:
+                seen.append((request.method, str(request.url)))
+            path = request.url.path
+            if path == "/robots.txt":
+                # api.iblocky.it publishes none; RFC 9309 reads 404 as no restrictions.
+                return httpx.Response(404, text="not found")
+            if path.startswith("/api/v1/tenants/"):
+                return httpx.Response(200, json={"tenant": {
+                    "name": "Black Eagle", "email": "sales@blackeaglesrl.com",
+                    "phone": "(+39) 045 8530888"}})
+            if path.endswith("/commesse/all"):
+                if request.method != "POST" and not allow_get_list:
+                    # Exactly what the real API does. See the provider docstring.
+                    return httpx.Response(404, json={"success": False,
+                                                     "error": "Route not found"})
+                kind = json.loads(request.content or b"{}").get("commessaType", "slab")
+                page = int(request.url.params.get("page", 1))
+                buckets = pages.get(kind) or []
+                rows = buckets[page - 1] if page <= len(buckets) else []
+                return httpx.Response(200, json={
+                    "success": True, "commesse": rows,
+                    "pagination": {"page": page, "hasNext": page < len(buckets)}})
+            return httpx.Response(404, json={})
+        return route
+
+    def _crawl(self, pages, *, limit=0, allow_get_list=False, seen=None):
+        import asyncio
+        import contextlib
+
+        import httpx
+
+        from stonescan import robots
+        from stonescan.providers import iblocky
+
+        route = self._handler(pages, allow_get_list=allow_get_list, seen=seen)
+
+        @contextlib.asynccontextmanager
+        async def fake_client_for(entry, **kw):
+            kw.pop("transport", None)
+            async with robots.PoliteClient(transport=httpx.MockTransport(route), **kw) as c:
+                yield c
+
+        orig = iblocky.client_for
+        iblocky.client_for = fake_client_for
+        try:
+            return asyncio.run(iblocky.crawl(
+                {"host": f"{self.SLUG}.iblocky.it", "slug": self.SLUG,
+                 "provider": "iblocky"},
+                delay=0, limit=limit))
+        finally:
+            iblocky.client_for = orig
+
+    # --- the trap that hid this platform ------------------------------------
+    def test_the_inventory_call_is_a_post_with_the_kind_in_the_body(self):
+        """GET on this URL is a 404, so a GET-shaped provider reports an empty catalog.
+
+        Asserted on the wire rather than by reading the source, because the failure mode
+        is silent: `out.ok` would simply be False and the supplier would look empty.
+        """
+        seen: list[tuple[str, str]] = []
+        data = self._crawl({"slab": [[self._row()]]}, seen=seen)
+        self.assertTrue(data.ok, data.error)
+        lists = [(m, u) for m, u in seen if u.endswith("/commesse/all")
+                 or "/commesse/all?" in u]
+        self.assertTrue(lists, "no inventory call was made at all")
+        self.assertTrue(all(m == "POST" for m, _ in lists),
+                        f"inventory must be POSTed; saw {lists}")
+
+    def test_a_get_only_provider_would_have_reported_an_empty_catalog(self):
+        """Mutation guard: proves the POST above is load-bearing, not incidental."""
+        data = self._crawl({"slab": [[]]}, allow_get_list=True)
+        self.assertFalse(data.ok)
+
+    # --- units --------------------------------------------------------------
+    def test_slab_dimensions_are_centimetres(self):
+        data = self._crawl({"slab": [[self._row()]]})
+        m = data.materials[0]
+        self.assertAlmostEqual(m["avg_length"], 135.0, places=1)
+        self.assertAlmostEqual(m["avg_width"], 79.9, places=1)
+
+    def test_a_blocks_height_is_never_stored_as_its_width(self):
+        """Blocks publish LxWxH. Taking the last pair would make a 135cm height a width."""
+        data = self._crawl({"block": [[self._row(type="block",
+                                                 stats={"dimensions": "300x200x135",
+                                                        "thickness": [], "finishes": [],
+                                                        "availableSlabs": 1})]]})
+        m = data.materials[0]
+        self.assertAlmostEqual(m["avg_length"], 118.1, places=1)
+        self.assertAlmostEqual(m["avg_width"], 78.7, places=1)
+        self.assertEqual(m["product_form"], "BLOCK")
+
+    def test_thickness_is_read_as_centimetres_without_a_uom_hack(self):
+        data = self._crawl({"slab": [[self._row()]]})
+        self.assertEqual(data.materials[0]["thickness"], "2cm")
+
+    def test_the_cm_helper_is_not_the_magnitude_guesser(self):
+        """A block height of 135cm sits in dimension_to_inches' 'must be metres' band."""
+        from stonescan.providers.base import centimetres_to_inches
+        self.assertAlmostEqual(centimetres_to_inches(135), 53.1, places=1)
+        self.assertIsNone(centimetres_to_inches(None))
+        self.assertIsNone(centimetres_to_inches(0))
+
+    # --- vocabularies -------------------------------------------------------
+    def test_italian_stone_types_reach_the_same_canonical_type_as_english(self):
+        """`material_key` is (name, type): an untranslated 'Marmo' can never group
+        with the same stone from a US supplier, which is the whole point."""
+        from stonescan.providers import iblocky
+        for raw in ("Marmo", "MARMO", "Marmi", "MARBLES", "Marble"):
+            self.assertEqual(nz.canonical_type(iblocky.petro_type({"petroDesc": raw}),
+                                               "", "Bianco Carrara"), "Marble", raw)
+        for raw in ("Graniti", "GRANITI", "Granito", "Granite"):
+            self.assertEqual(nz.canonical_type(iblocky.petro_type({"petroDesc": raw}),
+                                               "", "Nero Assoluto"), "Granite", raw)
+        for raw in ("Quarzite", "QUARZITE", "Quartzite"):
+            self.assertEqual(nz.canonical_type(iblocky.petro_type({"petroDesc": raw}),
+                                               "", "Cristallo"), "Quartzite", raw)
+
+    def test_a_place_or_a_null_is_not_a_stone_type(self):
+        from stonescan.providers import iblocky
+        for junk in ("Sicily", "N/A", "PIETRA", "ALTRE PIETRE", ""):
+            self.assertEqual(iblocky.petro_type({"petroDesc": junk}), "", junk)
+
+    def test_origin_folds_language_and_case(self):
+        from stonescan.providers import iblocky
+        for raw in ("Italy", "italy", "Italia"):
+            self.assertEqual(iblocky.origin_of({"origin": raw}), "Italy", raw)
+        self.assertEqual(iblocky.origin_of({"origin": "Brasile"}), "Brazil")
+        self.assertEqual(iblocky.origin_of({"origin": "Brazil"}), "Brazil")
+        self.assertEqual(iblocky.origin_of({"origin": "Portogallo"}), "Portugal")
+
+    def test_a_supplier_brand_code_is_not_an_origin(self):
+        """637 rows say ELITEST or INNOVA. `origin` is the one field the photo-ID
+        reference data leans on, so a brand code landing there is worse than a blank."""
+        from stonescan.providers import iblocky
+        for junk in ("ELITEST", "INNOVA", "N/A", "", "Nonesuch Republic"):
+            self.assertEqual(iblocky.origin_of({"origin": junk}), "", junk)
+
+    def test_a_real_origin_survives_to_the_stored_row(self):
+        data = self._crawl({"slab": [[self._row()]]})
+        self.assertEqual(data.materials[0]["origin"], "Brazil")
+
+    # --- scope and shape ----------------------------------------------------
+    def test_no_slab_rows_are_invented(self):
+        """The platform publishes a COUNT, never the slabs. A synthetic slab row would
+        feed a fabricated size into the search UI's length/width filters."""
+        data = self._crawl({"slab": [[self._row()]]})
+        self.assertEqual(data.slabs, [])
+        self.assertEqual(data.materials[0]["available_slabs"], 15)
+
+    def test_paging_follows_hasnext(self):
+        pages = [[self._row(id=1, material="A")], [self._row(id=2, material="B")],
+                 [self._row(id=3, material="C")]]
+        data = self._crawl({"slab": pages})
+        self.assertEqual([m["item_name"] for m in data.materials], ["A", "B", "C"])
+
+    def test_limit_bounds_the_fetch(self):
+        pages = [[self._row(id=1), self._row(id=2)], [self._row(id=3)]]
+        self.assertEqual(len(self._crawl({"slab": pages}, limit=2).materials), 2)
+
+    def test_inactive_rows_are_dropped_but_zero_stock_is_kept(self):
+        rows = [self._row(id=1, isActive=False),
+                self._row(id=2, stats={"availableSlabs": 0, "thickness": [2],
+                                       "dimensions": "300x150", "finishes": []})]
+        data = self._crawl({"slab": [rows]})
+        self.assertEqual(len(data.materials), 1, "an out-of-stock product still exists")
+        self.assertEqual(data.materials[0]["available_slabs"], 0)
+
+    def test_item_id_is_stable_and_not_the_repeatable_lot_code(self):
+        """(supplier_id, item_id) is what watchlists and sourcing lists hang off, and
+        `code` repeats across the slab and block catalogs."""
+        data = self._crawl({"slab": [[self._row(id=11, code="A1")]],
+                            "block": [[self._row(id=22, code="A1", type="block")]]})
+        self.assertEqual({m["item_id"] for m in data.materials}, {"11", "22"})
+        self.assertEqual({m["sku"] for m in data.materials}, {"A1"})
+
+    def test_contacts_come_from_the_tenant_record(self):
+        data = self._crawl({"slab": [[self._row()]]})
+        self.assertEqual(data.company, "Black Eagle")
+        self.assertEqual(data.email, "sales@blackeaglesrl.com")
+
+    def test_material_key_matches_the_stone_profits_path(self):
+        """The cross-platform grouping contract: same stone, same key, any provider."""
+        from stonescan.providers.base import material_row
+        sps = material_row(name="Cristallo Alba", crawled_at="x", category="Quartzite")
+        data = self._crawl({"slab": [[self._row()]]})
+        self.assertEqual(data.materials[0]["material_key"], sps["material_key"])
+
+
+class IBlockyDiscoveryTests(unittest.TestCase):
+    def _merge(self, tenants, *, existing=None, denied=None):
+        import importlib
+        tmp = tempfile.mkdtemp()
+        supfile = os.path.join(tmp, "suppliers.json")
+        Path(supfile).write_text(json.dumps({"suppliers": existing or []}))
+        os.environ["STONESCAN_SUPPLIERS"] = supfile
+        importlib.reload(discover)
+        from stonescan import denylist
+        orig_denied, orig_is = denylist.denied_hosts, denylist.is_denied
+        if denied is not None:
+            denylist.denied_hosts = lambda: set(denied)
+            denylist.is_denied = lambda h, d=None: h.lower() in set(denied)
+        try:
+            added = discover.merge_iblocky(tenants)
+            return added, list(discover.load_suppliers())
+        finally:
+            denylist.denied_hosts, denylist.is_denied = orig_denied, orig_is
+            os.environ.pop("STONESCAN_SUPPLIERS", None)
+            importlib.reload(discover)
+
+    def _t(self, slug, name="X"):
+        return {"host": f"{slug}.iblocky.it", "slug": slug, "name": name,
+                "provider": "iblocky"}
+
+    def test_merge_dedupes_host_and_slug(self):
+        added, sups = self._merge(
+            [self._t("black-eagle"), self._t("payanini"), self._t("black-eagle")],
+            existing=[self._t("black-eagle")])
+        self.assertEqual(added, 1)
+        self.assertEqual({s["host"] for s in sups},
+                         {"black-eagle.iblocky.it", "payanini.iblocky.it"})
+
+    def test_a_denylisted_tenant_is_not_re_added(self):
+        added, sups = self._merge([self._t("payanini")],
+                                  denied=["payanini.iblocky.it"])
+        self.assertEqual(added, 0)
+        self.assertEqual(sups, [])
+
+    def test_denylisting_the_platform_stops_every_tenant(self):
+        """A removal request naming iblocky.it must stop the whole platform — deleting
+        one yard from suppliers.json is exactly what discovery would undo tonight."""
+        added, _ = self._merge([self._t("payanini"), self._t("dilamar")],
+                               denied=["iblocky.it"])
+        self.assertEqual(added, 0)
+
+    def test_only_tenants_who_published_themselves_are_discovered(self):
+        """`isPublic` is the tenant's own consent switch, so it is never overridden."""
+        import httpx
+
+        from stonescan import discover as d
+
+        payload = {"tenants": [
+            {"slug": "yes", "name": "Yes Srl", "isPublic": True, "city": "Carrara"},
+            {"slug": "no", "name": "No Srl", "isPublic": False, "city": "Massa"},
+            {"slug": "", "name": "Blank", "isPublic": True},
+        ]}
+        real_client = httpx.Client
+
+        def fake_client(*a, **kw):
+            return real_client(transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json=payload)), **kw)
+
+        orig_gate, orig_httpx = d._gate, d.httpx.Client
+        d._gate = lambda: (lambda url: True)
+        d.httpx.Client = fake_client
+        try:
+            found = d.discover_iblocky(verbose=False)
+        finally:
+            d._gate, d.httpx.Client = orig_gate, orig_httpx
+        self.assertEqual([t["slug"] for t in found], ["yes"])
+        self.assertEqual(found[0]["provider"], "iblocky")
+        self.assertEqual(found[0]["host"], "yes.iblocky.it")
+
+    def test_discovery_respects_a_robots_block_on_the_directory(self):
+        from stonescan import discover as d
+        orig = d._gate
+        d._gate = lambda: (lambda url: False)
+        try:
+            self.assertEqual(d.discover_iblocky(verbose=False), [])
+        finally:
+            d._gate = orig
+
+    def test_the_provider_is_registered(self):
+        from stonescan import providers
+        self.assertIn("iblocky", providers.REGISTRY)
+        self.assertEqual(providers.provider_of({"provider": "iblocky"}), "iblocky")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
