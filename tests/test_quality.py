@@ -5525,6 +5525,116 @@ class LightboxTests(unittest.TestCase):
         self.assertNotIn("lb.classList.add('show')", item)
 
 
+class FilterChipTests(unittest.TestCase):
+    """AIL-39 — active filters you can see and remove, and a pager you can navigate."""
+
+    def _chips(self, url):
+        from starlette.datastructures import QueryParams
+
+        from stonescan.web.app import active_filters
+
+        class _Req:
+            def __init__(self, u):
+                self.query_params = QueryParams(u.split("?", 1)[1] if "?" in u else "")
+        return active_filters(_Req(url))
+
+    def test_removing_one_chip_keeps_every_other_parameter(self):
+        """The href is asserted, not the resulting page: a hand-built query string is
+        exactly where a filter goes quietly missing."""
+        chips = self._chips("/?q=marble&thickness=3cm&color=White&in_stock=1&sort=name"
+                            "&view=table&per_page=120")
+        by_key = {c["key"]: c for c in chips}
+        href = by_key["thickness"]["remove_href"]
+        self.assertNotIn("thickness", href)
+        for keep in ("q=marble", "color=White", "in_stock=1", "sort=name",
+                     "view=table", "per_page=120"):
+            self.assertIn(keep, href, f"removing thickness dropped {keep}")
+
+    def test_the_view_and_page_size_survive_a_chip_removal(self):
+        """They are display choices, not filters. Dropping them would bounce a table
+        user back to the grid for removing a colour."""
+        chips = self._chips("/?color=White&view=table&per_page=30")
+        href = chips[0]["remove_href"]
+        self.assertIn("view=table", href)
+        self.assertIn("per_page=30", href)
+
+    def test_the_page_resets_when_a_filter_is_removed(self):
+        """Page 9 of the narrower result set may not exist once the filter is gone."""
+        chips = self._chips("/?color=White&thickness=3cm&page=9")
+        self.assertNotIn("page=9", chips[0]["remove_href"])
+
+    def test_near_and_its_radius_are_removed_together(self):
+        """A radius with nothing to be near is a stray parameter that survives forever,
+        because nothing renders it."""
+        chips = self._chips("/?near=Dallas&radius=250&color=White")
+        href = {c["key"]: c for c in chips}["near"]["remove_href"]
+        self.assertNotIn("near=", href)
+        self.assertNotIn("radius=", href)
+        self.assertIn("color=White", href)
+
+    def test_an_untouched_form_field_is_not_a_filter(self):
+        """A GET form submits every field, empty ones included — the min_length="" trap
+        from CLAUDE.md. Rendering those would put permanent dead chips on every search."""
+        chips = self._chips("/?q=marble&min_length=&thickness=&color=&in_stock=0&new_only=0")
+        self.assertEqual(chips, [])
+
+    def test_the_query_and_sort_get_no_chip(self):
+        """q is already in the search box; sort reorders rather than narrows, so offering
+        to remove it would imply an unsorted state exists."""
+        keys = {c["key"] for c in self._chips("/?q=marble&sort=name&color=White")}
+        self.assertEqual(keys, {"color"})
+
+    def test_flags_read_as_words_not_as_ones(self):
+        labels = {c["key"]: c["label"] for c in self._chips("/?in_stock=1&new_only=1&min_sqft=40")}
+        self.assertEqual(labels["in_stock"], "In stock")
+        self.assertEqual(labels["new_only"], "New arrivals")
+        self.assertIn("40", labels["min_sqft"])
+
+    # --- page size -----------------------------------------------------------
+    def test_page_size_accepts_only_the_offered_sizes(self):
+        from stonescan.web.app import DEFAULT_PAGE_SIZE, PAGE_SIZES, page_size
+        for n in PAGE_SIZES:
+            self.assertEqual(page_size(str(n)), n)
+        self.assertEqual(page_size(""), DEFAULT_PAGE_SIZE)
+
+    def test_a_junk_page_size_falls_back_rather_than_500s(self):
+        """This comes off a URL anyone can edit or bookmark."""
+        from stonescan.web.app import DEFAULT_PAGE_SIZE, page_size
+        for junk in ("all", "-1", "0", "1000000", None, "60; DROP TABLE", "6e2"):
+            self.assertEqual(page_size(junk), DEFAULT_PAGE_SIZE, junk)
+
+    # --- the pager -----------------------------------------------------------
+    def test_the_page_window_stays_inside_the_range(self):
+        from stonescan.web.app import page_window
+        self.assertEqual(page_window(1, 31), [1, 2, 3])
+        self.assertEqual(page_window(31, 31), [29, 30, 31])
+        self.assertEqual(page_window(15, 31), [13, 14, 15, 16, 17])
+
+    def test_the_page_window_handles_a_degenerate_result_set(self):
+        from stonescan.web.app import page_window
+        self.assertEqual(page_window(1, 1), [1])
+        self.assertEqual(page_window(1, 0), [])
+
+    # --- end to end ----------------------------------------------------------
+    def test_the_rendered_page_carries_chips_a_numbered_pager_and_a_size_control(self):
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        html = TestClient(webapp.app).get("/?q=marble&thickness=3cm&in_stock=1").text
+        self.assertIn('class="fchip"', html)
+        self.assertIn("Clear all", html)                  # two chips -> clear-all appears
+        self.assertIn('name="per_page"', html)
+        self.assertIn("<noscript><button", html)          # JS-off path for the select
+        self.assertIn('aria-current="page"', html)        # the current page is marked
+
+    def test_no_chip_row_at_all_on_an_unfiltered_search(self):
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        html = TestClient(webapp.app).get("/").text
+        self.assertNotIn('class="filterchips"', html)
+
+
 class IBlockyProviderTests(unittest.TestCase):
     """AIL-36 — iBlocky, the first deliberately-sought international source.
 

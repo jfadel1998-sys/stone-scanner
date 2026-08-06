@@ -97,6 +97,24 @@
   </span>
 </p>
 
+{# Active filters, each removable on its own. Until now the only sign a filter was on was
+   the word "active" on the More-filters summary, so narrowing a search was easy to do and
+   hard to undo. Plain links, so this works with JS off. #}
+{% set chips = active_filters(request) %}
+{% if chips %}
+<div class="filterchips">
+  <span class="fcap">Filters:</span>
+  {% for c in chips %}
+  <a class="fchip" href="{{ c.remove_href }}" title="Remove this filter">{{ c.label }}<span class="fx">×</span></a>
+  {% endfor %}
+  {% if chips|length > 1 %}
+  {# Keeps the query and the view: neither is a filter, and dropping the view here would
+     bounce a table user back to the grid for pressing "clear filters". #}
+  <a class="fclear" href="/?{{ ('q=' ~ (q|urlencode) ~ '&') if q else '' }}view={{ view }}&per_page={{ per_page }}">Clear all</a>
+  {% endif %}
+</div>
+{% endif %}
+
 {% macro mat_name(r) -%}
 {{ (r.material_key.split('|')[0] or r.item_name)|title }}
 {%- endmacro %}
@@ -193,10 +211,41 @@
 
 {% if pages > 1 %}
 <nav class="pager">
+  {% set win = page_window(page, pages) %}
   {% if page > 1 %}<a href="{{ base }}view={{ view }}&page={{ page-1 }}">‹ Prev</a>{% endif %}
-  <span>Page {{ page }} / {{ pages }}</span>
+  {# First/last are always reachable: prev/next alone made page 14 of a large result set
+     a thirteen-click journey. #}
+  {% if win and win[0] > 1 %}
+    <a href="{{ base }}view={{ view }}&page=1">1</a>
+    {% if win[0] > 2 %}<span class="gap">…</span>{% endif %}
+  {% endif %}
+  {% for n in win %}
+    {% if n == page %}<span class="on" aria-current="page">{{ n }}</span>
+    {% else %}<a href="{{ base }}view={{ view }}&page={{ n }}">{{ n }}</a>{% endif %}
+  {% endfor %}
+  {% if win and win[-1] < pages %}
+    {% if win[-1] < pages - 1 %}<span class="gap">…</span>{% endif %}
+    <a href="{{ base }}view={{ view }}&page={{ pages }}">{{ pages }}</a>
+  {% endif %}
   {% if page < pages %}<a href="{{ base }}view={{ view }}&page={{ page+1 }}">Next ›</a>{% endif %}
 </nav>
+{% endif %}
+
+{% if rows %}
+{# Density. A GET form so the choice lands in the URL and the view stays shareable.
+   No `page`: changing the size must return to page 1, because page 14 at 30/page does
+   not exist at 120/page and would render an empty result set that looks like a bug. #}
+<form class="pagesize" method="get" action="/">
+  {% for k, v in request.query_params.multi_items() %}
+    {% if k not in ('per_page', 'page') and v %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}
+  {% endfor %}
+  <label for="perPage">Per page</label>
+  <select id="perPage" name="per_page" onchange="this.form.submit()">
+    {% for n in page_sizes %}<option value="{{ n }}" {{ 'selected' if n == per_page }}>{{ n }}</option>{% endfor %}
+  </select>
+  {# The select auto-submits with JS; without it this button is the way to apply. #}
+  <noscript><button type="submit">Apply</button></noscript>
+</form>
 {% endif %}
 {% endblock %}
 

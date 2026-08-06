@@ -14,6 +14,7 @@ import re
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
@@ -905,6 +906,87 @@ def _filter_qs(request: Request, drop: tuple[str, ...] = ("page", "view", "added
                       if k not in drop and v != ""])
 
 
+PAGE_SIZES = (30, 60, 120)
+DEFAULT_PAGE_SIZE = 60
+
+
+def page_size(raw: Any) -> int:
+    """One of PAGE_SIZES, or the default. Junk falls back rather than raising: this comes
+    off a URL anyone can edit or bookmark, and a 500 on `?per_page=all` would be a worse
+    answer than 60 rows."""
+    try:
+        n = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_PAGE_SIZE
+    return n if n in PAGE_SIZES else DEFAULT_PAGE_SIZE
+
+
+# Filter key -> how to say it in a chip. The value is a formatter over the raw query value,
+# because "3cm" reads fine bare while "1" for in_stock does not.
+_CHIP_LABELS: dict[str, Any] = {
+    "material_type": lambda v: v,
+    "color": lambda v: v,
+    "thickness": lambda v: v,
+    "finish": lambda v: v,
+    "supplier": lambda v: v,
+    "location": lambda v: f"📍 {v}",
+    "min_length": lambda v: f"≥ {v}\" long",
+    "min_width": lambda v: f"≥ {v}\" wide",
+    "min_sqft": lambda v: f"≥ {v} ft²",
+    "new_only": lambda v: "New arrivals",
+    "in_stock": lambda v: "In stock",
+    "near": lambda v: f"near {v}",
+}
+# Removing one of these has to remove the other: a radius with nothing to be near is not a
+# filter, it is a stray parameter that survives forever because nothing renders it.
+_CHIP_PARTNERS = {"near": ("radius",)}
+
+
+def active_filters(request: Request) -> list[dict[str, str]]:
+    """Every active filter as a removable chip.
+
+    `q` is deliberately absent — it is already visible in the search box, and a chip that
+    duplicates a text input is a second place to have to clear the same thing. So is
+    `sort`: it reorders results, it does not narrow them, and offering to "remove" it
+    would imply there is an unsorted state.
+
+    Each chip's href is built by `_filter_qs`, the same rebuild-from-the-request the pager
+    uses, so removing one filter provably preserves every other — including any filter
+    added to the route later.
+    """
+    out: list[dict[str, str]] = []
+    for key, fmt in _CHIP_LABELS.items():
+        value = (request.query_params.get(key) or "").strip()
+        # An untouched form field submits "", and the flags submit "0" when off. Neither
+        # is a filter; rendering them would put a permanent "In stock" chip on every
+        # search. This is the empty-string trap CLAUDE.md records for min_length.
+        if not value or (key in ("new_only", "in_stock") and value in ("0", "false")):
+            continue
+        # `view` and `per_page` are NOT dropped here, unlike the pager's default: they are
+        # display choices, not filters, and dropping a chip must not also throw you from
+        # the table back to the grid or reset your page size.
+        drop = ("page", "added", "list", key) + _CHIP_PARTNERS.get(key, ())
+        qs = _filter_qs(request, drop=drop)
+        out.append({"key": key, "label": str(fmt(value)),
+                    "remove_href": "/?" + qs if qs else "/"})
+    return out
+
+
+templates.env.globals["active_filters"] = active_filters
+
+
+def page_window(page: int, pages: int, span: int = 2) -> list[int]:
+    """The page numbers to render around the current one. First and last are rendered
+    separately by the template, so this is only the middle band."""
+    if pages <= 1:
+        return [1] if pages == 1 else []
+    lo, hi = max(1, page - span), min(pages, page + span)
+    return list(range(lo, hi + 1))
+
+
+templates.env.globals["page_window"] = page_window
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
@@ -925,13 +1007,14 @@ def index(
     min_sqft: str = "",
     view: str = "grid",
     page: int = 1,
+    per_page: str = "",
     added: int = -1,
     list: int = 0,
 ):
     conn = db.connect()
     view = view if view in ("table", "grid") else "grid"
     sort = sort if sort in SORTS else "relevance"
-    limit = 60
+    limit = page_size(per_page)
     offset = max(page - 1, 0) * limit
     ml, mw = _to_float(min_length), _to_float(min_width)
     # Clamp to a positive radius: a 0/blank/negative value falls back to the default,
@@ -991,7 +1074,10 @@ def index(
         "radius": radius or (str(int(radius_mi)) if near else ""),
         "min_sqft": min_sqft or "",
         "view": view,
-        # Every active filter, ready to prefix onto pager / view-toggle links.
+        "per_page": limit,
+        "page_sizes": PAGE_SIZES,
+        # Every active filter, ready to prefix onto pager / view-toggle links. per_page is
+        # NOT dropped: a chip removal or a page step must keep the density you chose.
         "qs": _filter_qs(request),
         "lists": db.get_lists(conn),
         "added": added,
