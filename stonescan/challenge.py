@@ -38,13 +38,43 @@ import httpx
 # ("Challenged: challenge-blocked: …"), not the bare message — see robots.is_declined.
 CHALLENGE_MARKER = "challenge-blocked:"
 
-# Body fingerprints of the interstitial, used only where the text is already in hand. These
-# identify the page; they are not parsed, followed or executed.
+# Statuses a challenge is served with. Also the ONLY statuses whose body the client hook
+# will read: nothing legitimate is being streamed from a refusal, so reading here cannot
+# disturb a real download, and every other status is left untouched.
+CHALLENGE_STATUSES = (403, 503)
+
+# Body fingerprints of an interstitial. These identify the page; they are not parsed,
+# followed or executed.
+#
+# Cloudflare is not the only vendor, and assuming it was is what made this detector blind
+# outside the US. Measured on rkmarblesindia.com: HTTP 403, `server: hcdn` (Hostinger), body
+# "Checking your browser before accessing. Just a moment..." — invisible to a rule that
+# required `server: cloudflare`. Sucuri, Imperva/Incapsula and DataDome are equally invisible.
+#
+# Chosen to be SPECIFIC, because the errors are asymmetric: a false positive silently stops
+# crawling a supplier who is merely erroring, while a false negative just leaves the old
+# behaviour. So these are interstitial-only phrases and vendor script names — never bare
+# words like "denied", "forbidden" or "blocked", which any honest 403 page contains.
 _BODY_MARKERS = (
+    # Cloudflare
     "just a moment",
     "cf-browser-verification",
     "challenge-platform",
     "_cf_chl_opt",
+    "cf_chl_",
+    # Generic "prove you are a browser" interstitials (Hostinger hcdn, Sucuri, others)
+    "checking your browser",
+    "checking if the site connection is secure",
+    "enable javascript and cookies to continue",
+    "verifying you are human",
+    "please verify you are a human",
+    # Named vendors, from their own markup
+    "incapsula incident id",
+    "_incapsula_resource",
+    "sucuri website firewall",
+    "datadome",
+    "perimeterx",
+    "px-captcha",
 )
 
 
@@ -67,16 +97,18 @@ def detect(status_code: int, headers: Mapping[str, Any] | None, body: str = "") 
     if h.get("cf-mitigated", "").strip().lower() == "challenge":
         return "bot-protection challenge (cf-mitigated: challenge)"
 
-    # SECONDARY: a 403 served BY Cloudflare whose body is the interstitial. Both halves are
-    # required. A bare 403 from a Cloudflare-fronted origin is NOT enough — plenty of origins
-    # sit behind Cloudflare and return an honest 403 for their own reasons, and misreading
-    # that as "declined" would silently stop crawling a supplier who is merely erroring. The
-    # asymmetry is deliberate: a false positive quietly drops a working catalogue, while a
-    # false negative just leaves today's behaviour, which is the milder failure.
-    if status_code == 403 and "cloudflare" in h.get("server", "").lower() and body:
+    # SECONDARY: a refusal status whose body is an interstitial. NOT restricted to Cloudflare
+    # any more — that restriction is what made this blind to every other WAF, and the vendor
+    # is not the point. Both halves are still required: the status must be a refusal AND the
+    # body must carry a marker, so a bare 403 from any origin is not enough. Plenty of hosts
+    # return an honest 403 for their own reasons, and misreading that as "declined" would
+    # silently stop crawling a supplier who is merely erroring.
+    if status_code in CHALLENGE_STATUSES and body:
         low = body[:4000].lower()
-        if any(m in low for m in _BODY_MARKERS):
-            return "bot-protection challenge (Cloudflare interstitial)"
+        for m in _BODY_MARKERS:
+            if m in low:
+                vendor = h.get("server", "").strip() or "unknown"
+                return f"bot-protection challenge (interstitial, server: {vendor})"
     return ""
 
 

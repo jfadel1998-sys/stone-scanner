@@ -612,13 +612,45 @@ class ChallengeDetectionTests(unittest.TestCase):
         self.assertFalse(challenge.detect(403, {"server": "Microsoft-IIS/10.0"}))
         self.assertFalse(challenge.detect(200, {"cf-mitigated": "challenge"}) == "")  # 200+header still counts
 
-    def test_the_body_rule_needs_both_halves(self):
+    def test_the_body_rule_needs_a_refusal_status_and_a_marker(self):
+        # Both halves are still required — but the vendor is NOT one of them any more.
+        # Requiring `server: cloudflare` is what made this blind outside the US.
         from stonescan import challenge
         self.assertTrue(challenge.detect(403, {"server": "cloudflare"},
                                          "<title>Just a moment...</title>"))
-        self.assertFalse(challenge.detect(403, {"server": "cloudflare"}, "Access denied"))
-        self.assertFalse(challenge.detect(403, {"server": "nginx"},
-                                          "<title>Just a moment...</title>"))
+        self.assertTrue(challenge.detect(403, {"server": "nginx"},
+                                         "<title>Just a moment...</title>"),
+                        "a challenge is a challenge whoever is serving it")
+        self.assertFalse(challenge.detect(403, {"server": "cloudflare"}, "Access denied"),
+                         "an honest 403 from a Cloudflare-fronted origin is not a challenge")
+        self.assertFalse(challenge.detect(200, {}, "<title>Just a moment...</title>"),
+                         "a 200 is not a refusal, whatever the page says")
+
+    def test_it_sees_the_non_cloudflare_interstitials_it_used_to_miss(self):
+        # Measured on rkmarblesindia.com: HTTP 403, server: hcdn (Hostinger), body
+        # "Checking your browser before accessing. Just a moment...". The old rule required
+        # server: cloudflare, so detect() returned "" and the host was filed as BROKEN.
+        from stonescan import challenge
+        cases = [
+            (403, {"server": "hcdn"}, "Checking your browser before accessing."),
+            (403, {"server": "nginx"}, "Request unsuccessful. Incapsula incident ID 123"),
+            (403, {"server": "Sucuri/Cloudproxy"}, "Sucuri Website Firewall - Access Denied"),
+            (403, {}, "<script src='/_Incapsula_Resource?SWJIYLWA=x'></script>"),
+            (503, {"server": "cloudflare"}, "Checking if the site connection is secure"),
+        ]
+        for status, headers, body in cases:
+            self.assertTrue(challenge.detect(status, headers, body),
+                            f"missed: {body[:40]!r}")
+
+    def test_ordinary_error_pages_are_not_mistaken_for_challenges(self):
+        # The asymmetry that governs this whole module: a false positive silently stops
+        # crawling a working supplier. So no bare "denied"/"forbidden"/"blocked" markers.
+        from stonescan import challenge
+        for body in ("403 Forbidden", "Access Denied", "You do not have permission",
+                     "Your IP has been blocked by the administrator",
+                     "<h1>Forbidden</h1><p>nginx</p>", "Service Temporarily Unavailable"):
+            self.assertFalse(challenge.detect(403, {"server": "nginx"}, body),
+                             f"false positive on: {body!r}")
 
     def test_the_marker_survives_the_stored_exception_form(self):
         # Providers store f"{type(e).__name__}: {e}", so the marker lands mid-string. The old
@@ -684,6 +716,67 @@ class ChallengeDetectionTests(unittest.TestCase):
                 return r.status_code, r.text
 
         self.assertEqual(asyncio.run(go()), (200, "ok"))
+
+    def test_a_challenged_robots_txt_is_not_read_as_permission(self):
+        # The worst of the three. _policy_from_response mapped ANY 4xx to none_published, and
+        # its comment named a Cloudflare 403 challenge as a case it covered. RFC 9309 2.3.1.3
+        # is about a file that is not there; a challenge is "you specifically are not
+        # welcome". Reading the second as permission inverts the supplier's answer on the very
+        # fetch whose job is to ask it.
+        from stonescan import robots
+        challenged = robots._policy_from_response(
+            403, "<title>Just a moment...</title>", robots.AGENT_TOKEN,
+            {"cf-mitigated": "challenge"})
+        self.assertFalse(challenged.allows("/anything").allowed)
+        self.assertEqual(challenged.allows("/anything").reason, robots.UNREACHABLE)
+
+        # A plain 404 keeps the RFC reading — the case it actually describes.
+        absent = robots._policy_from_response(404, "not found", robots.AGENT_TOKEN, {})
+        self.assertTrue(absent.allows("/anything").allowed)
+
+    def test_a_200_that_is_not_a_robots_txt_is_treated_as_no_file(self):
+        # Measured: api.vavastone.com/robots.txt answers 200 text/plain "Connected to
+        # backend!". looks_like_html misses it, so parse() saw zero rules and reported
+        # "allowed" — right answer, wrong reason, and one colon-bearing line away from
+        # inventing a rule. Same trap the SPA index.html case already guards.
+        from stonescan import robots
+        self.assertFalse(robots.looks_like_robots("Connected to backend!"))
+        self.assertFalse(robots.looks_like_robots('{"status":"ok"}'))
+        self.assertTrue(robots.looks_like_robots(""), "an empty robots.txt is a real one")
+        self.assertTrue(robots.looks_like_robots("User-agent: *\nDisallow: /admin"))
+        self.assertTrue(robots.looks_like_robots("# just a comment\nSitemap: https://x/s.xml"))
+        p = robots._policy_from_response(200, "Connected to backend!", robots.AGENT_TOKEN, {})
+        self.assertIn("not a robots.txt", p.allows("/x").reason + p.allows("/x").rule
+                      if p.allows("/x").rule else "not a robots.txt")
+
+    def test_the_hook_reads_a_body_only_for_refusal_statuses(self):
+        # Making the body rule reachable must not break streaming. The read is scoped to
+        # 403/503, where nothing legitimate is being streamed.
+        import asyncio
+
+        import httpx
+
+        from stonescan import robots
+        from stonescan.challenge import Challenged
+
+        async def go(status, body, headers):
+            def handler(request):
+                if request.url.path == "/robots.txt":
+                    return httpx.Response(404, text="nope")
+                return httpx.Response(status, headers=headers, text=body)
+            async with robots.PoliteClient(transport=httpx.MockTransport(handler)) as c:
+                return await c.get("https://x.example.com/page")
+
+        # A non-Cloudflare interstitial now raises through the live client path.
+        with self.assertRaises(Challenged):
+            asyncio.run(go(403, "Checking your browser before accessing.",
+                           {"server": "hcdn"}))
+        # A 200 stream is untouched — the hook never reads it.
+        r = asyncio.run(go(200, "payload", {"server": "nginx"}))
+        self.assertEqual((r.status_code, r.text), (200, "payload"))
+        # An honest 403 still comes back as a normal response, not a Challenged.
+        r = asyncio.run(go(403, "Forbidden", {"server": "nginx"}))
+        self.assertEqual(r.status_code, 403)
 
     def test_nothing_tries_to_get_past_a_challenge(self):
         # A standing guard, not a one-off assertion. The whole point of this feature is that
