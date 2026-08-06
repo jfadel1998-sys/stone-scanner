@@ -3858,6 +3858,127 @@ class RefreshGuardDecisionTests(unittest.TestCase):
                       "robocopy's bitmask must not become the script's own exit code")
 
 
+class ChallengeIsADecisionTests(_SuppliersFileCase):
+    """AIL-33: a Cloudflare managed challenge is the supplier declining automated access.
+    Scored as an ordinary failure it bumped empty_streak, and reject_by_streak auto-rejected
+    192 slabware tenants on 2026-08-03 under a reason quoting a 403 they never earned."""
+
+    CHALLENGE = ("Challenged: challenge-blocked: bot-protection challenge "
+                 "(cf-mitigated: challenge): https://x.slabware.com/FullInventory.aspx")
+
+    def _supplier(self, host, error, items=0, crawled="2026-08-06T03:00:00+00:00"):
+        self.conn.execute(
+            "INSERT INTO suppliers (host, item_count, last_error, last_crawled, empty_streak)"
+            " VALUES (?,?,?,?,0)", (host, items, error, crawled))
+        self.conn.commit()
+
+    def test_a_challenge_never_bumps_the_empty_streak(self):
+        self._supplier("c.example.com", "")
+        db.record_crawl_streak(self.conn, "c.example.com", 0, self.CHALLENGE)
+        n = self.conn.execute(
+            "SELECT empty_streak n FROM suppliers WHERE host='c.example.com'").fetchone()["n"]
+        self.assertEqual(n, 0, "a supplier who answered cannot be auto-rejected for it")
+
+    def test_an_ordinary_failure_still_bumps_it(self):
+        # The control. Without this the test above passes on a record_crawl_streak that has
+        # simply stopped working.
+        self._supplier("e.example.com", "")
+        db.record_crawl_streak(self.conn, "e.example.com", 0, "ConnectError: boom")
+        n = self.conn.execute(
+            "SELECT empty_streak n FROM suppliers WHERE host='e.example.com'").fetchone()["n"]
+        self.assertEqual(n, 1)
+
+    def test_health_shows_declined_not_broken_and_keeps_the_data(self):
+        self._supplier("c.example.com", self.CHALLENGE, items=273)
+        row = next(r for r in db.supplier_health(self.conn) if r["host"] == "c.example.com")
+        self.assertEqual(row["status"], "challenged")
+        self.assertEqual(row["item_count"], 273, "a challenged host keeps its stored data")
+
+    def test_a_stored_robots_block_is_finally_recognised(self):
+        # The latent bug AC-5 caught: providers store f"{type(e).__name__}: {e}", so the
+        # marker sits mid-string and the old startswith test never matched. Unexercised only
+        # because no host currently publishes a Disallow we honour.
+        stored = ("Disallowed: robots-blocked: blocked (Disallow: /) for StoneScanner: "
+                  "https://x.example.com/")
+        self._supplier("b.example.com", stored)
+        row = next(r for r in db.supplier_health(self.conn) if r["host"] == "b.example.com")
+        self.assertEqual(row["status"], "blocked")
+
+    def test_a_challenge_does_not_move_the_circuit_breaker(self):
+        from stonescan.ingest import _breaker_outcome
+        self.assertEqual(_breaker_outcome(False, self.CHALLENGE), "block")
+        self.assertEqual(_breaker_outcome(False, "ConnectError: boom"), "error")
+
+    def test_a_challenged_host_is_kept_out_of_the_retry_pass(self):
+        from stonescan.ingest import _errored_hosts
+        self._supplier("c.example.com", self.CHALLENGE)
+        self._supplier("e.example.com", "ConnectError: boom")
+        got = _errored_hosts(self.path, ["c.example.com", "e.example.com"])
+        self.assertEqual(got, {"e.example.com"},
+                         "re-asking a host that already said no is the bug, not the fix")
+
+    def test_a_challenged_host_is_not_re_probed_for_a_week(self):
+        # NOT the nightly re-check robots.txt gets. Re-asking ~192 challenged hosts every
+        # night is precisely the traffic that protection exists to stop.
+        from datetime import datetime, timedelta, timezone
+        from stonescan.ingest import _defer_challenged
+        now = datetime.now(timezone.utc)
+        self._supplier("fresh.example.com", self.CHALLENGE,
+                       crawled=(now - timedelta(days=2)).isoformat())
+        self._supplier("old.example.com", self.CHALLENGE,
+                       crawled=(now - timedelta(days=db.CHALLENGE_RECHECK_DAYS + 1)).isoformat())
+        entries = [{"host": "fresh.example.com"}, {"host": "old.example.com"}]
+        keep, deferred = _defer_challenged(entries, self.path)
+        self.assertEqual([e["host"] for e in keep], ["old.example.com"],
+                         "past the window, probe again; inside it, leave them alone")
+        self.assertEqual([h for h, _ in deferred], ["fresh.example.com"])
+
+    def test_the_deferral_falls_open_if_the_read_fails(self):
+        # It gates the crawl list. A bookkeeping failure must never shrink it to nothing.
+        from stonescan.ingest import _defer_challenged
+        entries = [{"host": "a.example.com"}, {"host": "b.example.com"}]
+        keep, deferred = _defer_challenged(entries, os.path.join(self.tmp, "nope", "x.db"))
+        self.assertEqual(len(keep), 2)
+        self.assertEqual(deferred, [])
+
+    # --- the repair ---------------------------------------------------------
+
+    def _write(self, entries):
+        Path(self.suppliers).write_text(json.dumps({"suppliers": entries}, indent=2),
+                                        encoding="utf-8")
+
+    def test_the_repair_frees_403_rejections_and_leaves_dead_hosts_alone(self):
+        self._write([
+            {"host": "challenged.slabware.com", "provider": "slabware",
+             "rejected": {"reason": "3 consecutive zero-item crawls; last: HTTPStatusError: "
+                                    "Client error '403 Forbidden' for url 'https://x'",
+                          "at": "2026-08-03"}},
+            {"host": "dead.slabware.com", "provider": "slabware",
+             "rejected": {"reason": "3 consecutive zero-item crawls; last: Disallowed: "
+                                    "robots.txt unreachable (HTTP 530)", "at": "2026-08-03"}},
+            {"host": "fine.slabware.com", "provider": "slabware"},
+        ])
+        r = discover.repair_challenge_rejections()
+        self.assertEqual(r["freed"], ["challenged.slabware.com"])
+        self.assertEqual(r["kept"], ["dead.slabware.com"])
+        after = {e["host"]: e for e in self._read_suppliers()}
+        self.assertNotIn("rejected", after["challenged.slabware.com"])
+        self.assertIn("rejected", after["dead.slabware.com"],
+                      "a dead subdomain stays rejected — it did not decline, it does not exist")
+
+    def test_the_repair_is_idempotent_and_dry_run_writes_nothing(self):
+        entry = {"host": "c.slabware.com", "provider": "slabware",
+                 "rejected": {"reason": "last: HTTPStatusError: Client error '403 Forbidden'",
+                              "at": "2026-08-03"}}
+        self._write([entry])
+        dry = discover.repair_challenge_rejections(dry_run=True)
+        self.assertEqual(dry["freed"], ["c.slabware.com"])
+        self.assertIn("rejected", self._read_suppliers()[0], "--dry-run must not write")
+        discover.repair_challenge_rejections()
+        again = discover.repair_challenge_rejections()
+        self.assertEqual(again["freed"], [], "a second run must change nothing")
+
+
 class VoteAfterCrawlTests(_SuppliersFileCase):
     """AIL-32: `recover_by_majority_vote` is the project's only cross-row classification, and
     it lived only in the `reclassify` CLI. `replace_materials` deletes a supplier's rows

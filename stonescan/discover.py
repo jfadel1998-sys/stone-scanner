@@ -357,6 +357,44 @@ def reject_by_streak(db_path=None, *, threshold: int = AUTO_REJECT_STREAK,
     return rejected
 
 
+# Text that identifies a rejection made on the false premise that a bot check was a failure.
+# Narrow on purpose: a bare 403 in the reason is the signature of the 2026-08-03 sweep, which
+# quoted the HTTPStatusError verbatim. Anything else — robots.txt 5xx, a ConnectError, a 400,
+# a 404 — is a genuinely dead host and stays rejected.
+_CHALLENGE_REJECTION_HINT = "403 Forbidden"
+
+
+def repair_challenge_rejections(*, dry_run: bool = False) -> dict[str, list[str]]:
+    """Un-reject hosts auto-rejected for what turns out to have been a bot check.
+
+    OFFLINE and evidence-scoped: it reads the stored reason text and nothing else — no probe,
+    no network, no browser. That is deliberate. The rejections were made from stored text, so
+    the repair is judged on the same text, which makes it deterministic and testable; and the
+    next crawl supplies the real evidence either way. A host still behind a challenge is
+    stamped `challenge-blocked:`, files under CHALLENGED and never re-accrues a streak; a host
+    since opened up simply crawls. The repair does not need to be right, only reversible.
+
+    Idempotent — a second run finds no `rejected` block quoting a 403 and reports nothing.
+    """
+    data = json.loads(SUPPLIERS_FILE.read_text(encoding="utf-8"))
+    freed, kept = [], []
+    for s in data.get("suppliers", []):
+        raw = s.get("rejected")
+        if not raw or not isinstance(raw, dict):
+            continue
+        reason = (raw.get("reason") or "")
+        host = s.get("host") or ""
+        if _CHALLENGE_REJECTION_HINT in reason:
+            freed.append(host)
+            if not dry_run:
+                s.pop("rejected", None)
+        else:
+            kept.append(host)
+    if freed and not dry_run:
+        SUPPLIERS_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return {"freed": freed, "kept": kept}
+
+
 def reconcile_rejections(db_path=None, crawled_hosts=None, *,
                          threshold: int = AUTO_REJECT_STREAK, today: date | None = None) -> dict:
     """After a crawl, reconcile suppliers.json rejections against the fresh empty-streak.
@@ -602,6 +640,22 @@ def discover_sps_embeds(verbose: bool = True) -> set[str]:
 
 
 if __name__ == "__main__":
+    import sys as _sys
+
+    if "--repair-challenge-rejections" in _sys.argv:
+        # Offline: reads stored reason text, writes suppliers.json, touches no network.
+        _dry = "--dry-run" in _sys.argv
+        _r = repair_challenge_rejections(dry_run=_dry)
+        say(f"{'Would un-reject' if _dry else 'Un-rejected'} {len(_r['freed'])} host(s) "
+            f"rejected for what was actually a bot check.")
+        for _h in _r["freed"][:10]:
+            say(f"  + {_h}")
+        if len(_r["freed"]) > 10:
+            say(f"  … and {len(_r['freed']) - 10} more")
+        say(f"Left {len(_r['kept'])} genuinely-rejected host(s) alone "
+            f"(robots.txt unreachable, dead subdomains, and the like).")
+        raise SystemExit(0)
+
     say("Discovering public catalogs across "
           + ", ".join(p["base"] for p in PLATFORMS) + " ...")
     found = discover_all()

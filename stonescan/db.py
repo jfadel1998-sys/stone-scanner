@@ -481,8 +481,12 @@ def record_crawl_streak(conn: sqlite3.Connection, host: str, n_items: int,
     is stale on a failed crawl (replace_materials only runs on success), so it can't be
     reconstructed afterwards.
     """
-    from .robots import is_block_error
-    if is_block_error(error or ""):
+    from .robots import is_declined
+    # A supplier who ANSWERED — robots.txt or a bot-protection challenge — has not failed a
+    # crawl, and must never accrue an empty streak. Without this, discover.reject_by_streak
+    # auto-rejects them after three nights: that is exactly what happened to 192 slabware
+    # tenants on 2026-08-03, filed under a reason quoting the 403 they never earned.
+    if is_declined(error or ""):
         return
     if n_items > 0:
         conn.execute("UPDATE suppliers SET empty_streak = 0 WHERE host = ?", (host,))
@@ -978,7 +982,7 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """
     from datetime import datetime, timezone
 
-    from .robots import BLOCK_MARKER
+    from .robots import is_block_error, is_challenge_error
     now = datetime.now(timezone.utc)
     residue = residue_supplier_ids(conn)
 
@@ -1008,9 +1012,18 @@ def supplier_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         d = dict(r)
         err = bool(d["last_error"])
         has = (d["item_count"] or 0) > 0
-        if (d["last_error"] or "").startswith(BLOCK_MARKER):
+        # Same startswith bug as is_block_error had: the stored text is a formatted
+        # exception, so use the shared predicates rather than a prefix test.
+        if is_block_error(d["last_error"]):
             # robots.txt said no — the supplier's own answer, not a crawl fault.
             d["status"] = "blocked"
+        elif is_challenge_error(d["last_error"]):
+            # A bot-protection challenge: the same answer, stated out of band rather than in
+            # a published rule. Distinct from `blocked` because only one of the two is a rule
+            # the supplier wrote down, and a human triaging them will want to tell them apart.
+            # Wins over stale/broken so a challenged host that still serves data keeps its
+            # data-age and residue chip rather than being filed as a fault.
+            d["status"] = "challenged"
         else:
             d["status"] = ("ok" if not err else "stale") if has else ("broken" if err else "empty")
         d["age_hours"] = _hours(d["last_crawled"])
@@ -1128,6 +1141,48 @@ def spill_watermarks_merged(conn: sqlite3.Connection) -> set[str]:
             "SELECT watermark FROM spill_merges WHERE watermark IS NOT NULL")}
     except sqlite3.Error:
         return set()
+
+
+# How long to leave a supplier alone after it answered with a bot-protection challenge.
+#
+# Deliberately NOT the every-crawl re-check robots.txt gets. Re-fetching robots.txt retrieves
+# a small published policy file the standard exists to serve; a managed challenge is active
+# mitigation somebody switched on, and re-asking ~192 of them nightly is exactly the traffic
+# it exists to stop. A week still notices a supplier turning it off — none of the three
+# slabware tenants that serve fine has changed state in the observed window — while costing
+# about a seventh of the requests.
+CHALLENGE_RECHECK_DAYS = 7
+
+
+def recently_challenged(conn: sqlite3.Connection) -> dict[str, int]:
+    """host -> days since it answered with a bot check, for hosts still inside the window.
+
+    Degrades to {} rather than raising: this gates the crawl list, and a bookkeeping failure
+    must never be able to shrink it.
+    """
+    from datetime import datetime, timezone
+    from .robots import is_challenge_error
+    try:
+        rows = conn.execute(
+            "SELECT host, last_error, last_crawled FROM suppliers "
+            "WHERE last_error IS NOT NULL AND last_error <> ''").fetchall()
+    except sqlite3.Error:
+        return {}
+    now = datetime.now(timezone.utc)
+    out: dict[str, int] = {}
+    for r in rows:
+        if not is_challenge_error(r["last_error"]):
+            continue
+        try:
+            when = datetime.fromisoformat(str(r["last_crawled"]))
+        except (TypeError, ValueError):
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        days = (now - when).days
+        if 0 <= days < CHALLENGE_RECHECK_DAYS:
+            out[(r["host"] or "").lower()] = days
+    return out
 
 
 # Consecutive days without a successful refresh before the app says so unprompted. Two, not

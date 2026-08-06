@@ -592,5 +592,138 @@ class PurgeTests(unittest.TestCase):
         self.assertGreaterEqual(totals["materials"], 6)
 
 
+class ChallengeDetectionTests(unittest.TestCase):
+    """AIL-33: 192 slabware tenants were filed as BROKEN for answering with a Cloudflare
+    managed challenge. That is the supplier declining automated access — the same statement
+    robots.txt makes, said out of band — and it must be recorded, never circumvented."""
+
+    def test_the_cloudflare_header_is_the_primary_signal(self):
+        from stonescan import challenge
+        self.assertTrue(challenge.detect(403, {"cf-mitigated": "challenge"}))
+        self.assertTrue(challenge.detect(403, {"CF-Mitigated": "Challenge"}))  # case-insensitive
+
+    def test_a_plain_403_is_not_a_challenge(self):
+        # The asymmetry that matters. A false positive silently stops crawling a supplier who
+        # is merely erroring; a false negative just leaves today's behaviour. So a bare 403 —
+        # even from a Cloudflare-fronted origin — is NOT enough on its own.
+        from stonescan import challenge
+        self.assertFalse(challenge.detect(403, {}))
+        self.assertFalse(challenge.detect(403, {"server": "cloudflare"}))
+        self.assertFalse(challenge.detect(403, {"server": "Microsoft-IIS/10.0"}))
+        self.assertFalse(challenge.detect(200, {"cf-mitigated": "challenge"}) == "")  # 200+header still counts
+
+    def test_the_body_rule_needs_both_halves(self):
+        from stonescan import challenge
+        self.assertTrue(challenge.detect(403, {"server": "cloudflare"},
+                                         "<title>Just a moment...</title>"))
+        self.assertFalse(challenge.detect(403, {"server": "cloudflare"}, "Access denied"))
+        self.assertFalse(challenge.detect(403, {"server": "nginx"},
+                                          "<title>Just a moment...</title>"))
+
+    def test_the_marker_survives_the_stored_exception_form(self):
+        # Providers store f"{type(e).__name__}: {e}", so the marker lands mid-string. The old
+        # is_block_error used startswith and therefore never matched a stored robots block —
+        # a live latent bug, unexercised only because 0 of 393 hosts publish a Disallow.
+        from stonescan import robots
+        from stonescan.challenge import Challenged
+        c = Challenged("https://x/y", "bot-protection challenge")
+        stored = f"{type(c).__name__}: {c}"
+        self.assertTrue(robots.is_challenge_error(stored))
+        self.assertTrue(robots.is_declined(stored))
+        self.assertFalse(robots.is_block_error(stored), "a challenge is not a robots block")
+
+        d = robots.Disallowed("https://x/y", robots.Decision(False, robots.BLOCKED, "Disallow: /"))
+        stored_block = f"{type(d).__name__}: {d}"
+        self.assertTrue(robots.is_block_error(stored_block),
+                        "the stored form of a real robots block must match")
+        self.assertTrue(robots.is_declined(stored_block))
+
+    def test_the_response_hook_raises_without_reading_the_body(self):
+        # httpx fires response hooks on an UNREAD response; touching .text there would force
+        # a read and break client.stream() for every provider.
+        import asyncio
+
+        import httpx
+
+        from stonescan import robots
+        from stonescan.challenge import Challenged
+
+        async def go():
+            def handler(request):
+                if request.url.path == "/robots.txt":
+                    return httpx.Response(404, text="nope")
+                return httpx.Response(403, headers={"cf-mitigated": "challenge",
+                                                    "server": "cloudflare"},
+                                      text="<title>Just a moment...</title>")
+            transport = httpx.MockTransport(handler)
+            async with robots.PoliteClient(transport=transport) as c:
+                with self.assertRaises(Challenged) as ctx:
+                    await c.get("https://tenant.example.com/FullInventory.aspx")
+                return ctx.exception
+
+        exc = asyncio.run(go())
+        self.assertIn("challenge-blocked:", str(exc))
+        self.assertTrue(isinstance(exc, httpx.HTTPError),
+                        "must subclass HTTPError so providers' existing handlers catch it")
+
+    def test_a_normal_response_passes_through_untouched(self):
+        import asyncio
+
+        import httpx
+
+        from stonescan import robots
+
+        async def go():
+            def handler(request):
+                if request.url.path == "/robots.txt":
+                    return httpx.Response(404, text="nope")
+                return httpx.Response(200, headers={"server": "Microsoft-IIS/10.0"},
+                                      text="ok")
+            async with robots.PoliteClient(transport=httpx.MockTransport(handler)) as c:
+                r = await c.get("https://good.example.com/FullInventory.aspx")
+                return r.status_code, r.text
+
+        self.assertEqual(asyncio.run(go()), (200, "ok"))
+
+    def test_nothing_tries_to_get_past_a_challenge(self):
+        # A standing guard, not a one-off assertion. The whole point of this feature is that
+        # it recognises and stops; a future change that routes a challenged host through a
+        # browser, replays a clearance cookie, or retries until it passes would defeat the
+        # supplier's decision. Keep the module free of the machinery that would enable it.
+        # Checks EXECUTABLE code, not prose. A first cut grepped the raw text and failed on
+        # this module's own docstring, which says Playwright must not be used here — a
+        # prohibition is not machinery, and a guard that cannot tell them apart would push
+        # the next author to delete the warning rather than obey it.
+        import ast
+        from pathlib import Path
+        tree = ast.parse(Path("stonescan/challenge.py").read_text(encoding="utf-8"))
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+                d = ast.get_docstring(node, clean=False)
+                if d:
+                    docstrings.add(d)
+        used = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                used.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                used.add((node.module or "").split(".")[0])
+            elif isinstance(node, ast.Name):
+                used.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                used.add(node.attr)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if node.value not in docstrings:
+                    used.add(node.value)
+        blob = " ".join(used).lower()
+        for forbidden in ("playwright", "cf_clearance", "clearance", "solver",
+                          "webdriver", "selenium", "undetected", "sleep"):
+            self.assertNotIn(forbidden, blob,
+                             f"challenge.py must not USE {forbidden!r} — it recognises a "
+                             f"challenge and stops; it never tries to get past one")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

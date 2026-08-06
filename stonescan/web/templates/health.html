@@ -17,6 +17,8 @@
   <span class="hstat broken"><b>{{ counts.broken }}</b> broken (no data)</span>
   <span class="hstat empty"><b>{{ counts.empty }}</b> empty</span>
   {% if counts.blocked %}<span class="hstat blocked"><b>{{ counts.blocked }}</b> blocked (robots.txt)</span>{% endif %}
+  {% if counts.challenged %}<span class="hstat challenged" title="These suppliers answered with a bot-protection challenge (Cloudflare). That is their decision about automated access, not a fault on our side and not something to fix — we record it and leave them alone, re-probing at most weekly.">
+    <b>{{ counts.challenged }}</b> declined (bot check)</span>{% endif %}
 </div>
 
 <div class="mirrorbox pipelinebox">
@@ -151,7 +153,7 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><span class="statuspill {{ r.status }}">{{ {'ok':'OK','stale':'STALE','broken':'BROKEN','empty':'EMPTY','blocked':'BLOCKED'}[r.status] }}</span></td>
+      <td><span class="statuspill {{ r.status }}">{{ {'ok':'OK','stale':'STALE','broken':'BROKEN','empty':'EMPTY','blocked':'BLOCKED','challenged':'DECLINED'}[r.status] }}</span></td>
       <td class="name">{{ r.name }}<div class="muted hhost">{{ r.host }}</div></td>
       <td class="muted">{{ r.provider }}</td>
       <td class="num">{{ r.item_count or '—' }}</td>

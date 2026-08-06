@@ -146,6 +146,17 @@ build/packaging details.
   per-path-prefix, and invalid without a written `reason` (`Override.from_entry`
   raises), so exceptions are auditable rather than silent. It can rescue a `BLOCKED`
   but never an `UNREACHABLE`: "we couldn't ask" is not something a human pre-approved.
+- **A bot-protection challenge is the supplier declining, not a crawl failure.** ~192 SlabWare
+  tenants sit behind a Cloudflare managed challenge (`cf-mitigated: challenge`, a
+  "Just a moment..." interstitial); the rest answer straight from IIS. `challenge.py`
+  recognises it and stops — it is **never** circumvented, no browser, no clearance replay,
+  no retry-until-it-passes, because it is the same statement robots.txt makes said out of
+  band. Recognised hosts are excluded from the retry pass and the empty-crawl streak (so
+  `reject_by_streak` cannot auto-reject them, as it did on 2026-08-03) and re-probed only
+  every `CHALLENGE_RECHECK_DAYS` — deliberately *not* nightly like robots.txt, because
+  re-asking 192 challenged hosts every night is the traffic that protection exists to stop.
+  Note `is_block_error`/`is_challenge_error` match **anywhere** in the string: providers
+  store `f"{type(e).__name__}: {e}"`, so a prefix test never matched a real block.
 - **Dimensions are stored unitless and read as inches, and two suppliers don't oblige.**
   `graniteslabsuk` publishes metres, `stoneyarduk` centimetres; everyone else's per-supplier
   mean sits between 70 and 132. **The `uom` column cannot decide this** — graniteslabsuk
