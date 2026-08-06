@@ -897,6 +897,46 @@ img[data-lb] { cursor: zoom-in; }
 }
 .navcount[hidden] { display: none; }
 
+/* ---- Active filter chips + result density --------------------------------
+   Reuses the .chip look so a filter reads as the same kind of object as the colour and
+   type chips already in the results table. */
+.filterchips {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+  margin: 0 var(--pad-x) 10px;
+}
+.fcap { font-size: 12px; color: var(--muted); font-weight: 600; }
+.fchip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-pill);
+  background: var(--accent-soft); color: var(--accent-soft-ink);
+  font-size: 12.5px; font-weight: 600; text-decoration: none;
+}
+.fchip:hover { text-decoration: none; border-color: var(--accent); }
+.fchip .fx {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; background: rgba(0,0,0,.10);
+  font-size: 12px; line-height: 1;
+}
+.fchip:hover .fx { background: rgba(0,0,0,.2); }
+:root[data-theme="dark"] .fchip .fx { background: rgba(255,255,255,.14); }
+.fclear { font-size: 12px; font-weight: 600; color: var(--muted); text-decoration: underline; }
+.pagesize {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin: 0 var(--pad-x) 26px; font-size: 12.5px; color: var(--muted);
+}
+.pagesize select {
+  padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  background: var(--panel); color: var(--ink); font: inherit;
+}
+/* Numbered pages need a tighter rhythm than the old two-button prev/next did. */
+.pager { gap: 6px; flex-wrap: wrap; padding-bottom: 14px; }
+.pager a { padding: 7px 12px; }
+.pager .gap { color: var(--muted); padding: 0 2px; }
+.pager .on {
+  padding: 7px 12px; border: 1px solid var(--accent); border-radius: var(--r-pill);
+  background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 13px;
+}
+
 /* ---- ⚙ operator menu -----------------------------------------------------
    Health / Discovery / Quality live here rather than in the top nav, so staff who only
    search are not looking at maintenance pages. It sits in .header-aside deliberately:
