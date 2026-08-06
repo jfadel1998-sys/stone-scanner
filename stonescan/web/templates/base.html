@@ -25,13 +25,28 @@
     <a href="/lists" class="{{ 'active' if p.startswith('/list') }}">📋 Lists</a>
     <a href="/compare" class="{{ 'active' if p.startswith('/compare') }}">⚖ Compare <span class="navcount" id="cmpNavCount"{% if not cmp.count %} hidden{% endif %}>{{ cmp.count }}</span></a>
     <a href="/watchlist" class="{{ 'active' if p.startswith('/watchlist') }}">★ Watchlist</a>
-    <a href="/health" class="{{ 'active' if p.startswith('/health') }}">🩺 Health</a>
-    <a href="/discovery" class="{{ 'active' if p.startswith('/discovery') }}">🔍 Discovery</a>
-    <a href="/quality" class="{{ 'active' if p.startswith('/quality') }}">🧹 Quality</a>
   </nav>
   <div class="header-aside">
     {% include "_refresh_warning.html" %}
     {% block headeraside %}{% endblock %}
+    {# Operator tools. A <details> and not a scripted dropdown so it opens with JS off —
+       the same reason the More-filters panel on /search is one. The script at the foot of
+       this file only adds Esc-to-close and click-outside-to-close. #}
+    {% set ops = ops_state() %}
+    {% set opshere = p.startswith('/health') or p.startswith('/discovery') or p.startswith('/quality') %}
+    <details class="opsmenu{{ ' active' if opshere }}" id="opsMenu">
+      <summary class="iconbtn" title="Operator tools — Health, Discovery, Quality"
+               aria-label="Operator tools">⚙{% if ops.total %}<span
+        class="navcount opscount">{{ '99+' if ops.total > 99 else ops.total }}</span>{% endif %}</summary>
+      <div class="opspanel" role="menu">
+        <a role="menuitem" href="/health" class="{{ 'active' if p.startswith('/health') }}">
+          🩺 Health{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.health }}">{{ ops.health }} need attention</span>{% endif %}</a>
+        <a role="menuitem" href="/discovery" class="{{ 'active' if p.startswith('/discovery') }}">
+          🔍 Discovery{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.discovery }}">{{ ops.discovery }} to triage</span>{% endif %}</a>
+        <a role="menuitem" href="/quality" class="{{ 'active' if p.startswith('/quality') }}">
+          🧹 Quality{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.quality }}">{{ ops.quality }} to review</span>{% endif %}</a>
+      </div>
+    </details>
     <button id="themeToggle" class="iconbtn" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">🌗</button>
   </div>
 </header>
@@ -63,6 +78,21 @@
 <footer>{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}</footer>
 
 {% block scripts %}{% endblock %}
+<script>
+/* ⚙ menu: progressive enhancement only. The <details> already opens and closes on its
+   own with JS off; this adds Esc-to-close (returning focus to the summary, so keyboard
+   users are not stranded inside the panel) and click-outside-to-close. */
+(function(){
+  var d=document.getElementById('opsMenu');
+  if(!d)return;
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&d.open){ d.open=false; var s=d.querySelector('summary'); if(s)s.focus(); }
+  });
+  document.addEventListener('click',function(e){
+    if(d.open&&!d.contains(e.target)) d.open=false;
+  });
+})();
+</script>
 <script>
 (function(){
   var b=document.getElementById('themeToggle');
