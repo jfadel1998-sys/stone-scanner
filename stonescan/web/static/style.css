@@ -897,6 +897,44 @@ img[data-lb] { cursor: zoom-in; }
 }
 .navcount[hidden] { display: none; }
 
+/* ---- Instant search: suggestions + live match count -----------------------
+   The wrapper is the positioning context for both. It has to be inline so the input keeps
+   the flex sizing the filter bar gives it. */
+.qwrap { position: relative; display: flex; flex: 1 1 320px; min-width: 220px; }
+.qwrap input[type="search"] { width: 100%; }
+.qcount {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 11.5px; color: var(--muted); pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.qcount[hidden] { display: none; }
+.qsuggest {
+  position: absolute; left: 0; right: 0; top: calc(100% + 5px); z-index: 45;
+  margin: 0; padding: 5px; list-style: none;
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  background: var(--panel); box-shadow: var(--shadow-md, 0 12px 34px rgba(0,0,0,.18));
+  max-height: 60vh; overflow-y: auto;
+}
+.qsuggest[hidden] { display: none; }
+.qopt {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  border-radius: var(--r-sm); cursor: pointer; font-size: 13px;
+}
+.qopt.on { background: var(--accent-soft); color: var(--accent-soft-ink); }
+.qopt img, .qopt .qph {
+  width: 34px; height: 26px; flex: 0 0 auto; border-radius: 3px;
+  object-fit: cover; background: var(--chip);
+}
+.qopt .qph { display: flex; align-items: center; justify-content: center; font-size: 14px; opacity: .5; }
+.qlabel { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qmeta { flex: 0 0 auto; font-size: 11.5px; color: var(--muted); }
+.qkind {
+  flex: 0 0 auto; padding: 1px 7px; border-radius: var(--r-pill);
+  background: var(--chip); font-size: 10.5px; color: var(--muted); text-transform: lowercase;
+}
+.qopt.on .qmeta { color: inherit; opacity: .8; }
+.qopt.on .qkind { color: inherit; opacity: .75; }
+
 /* ---- Active filter chips + result density --------------------------------
    Reuses the .chip look so a filter reads as the same kind of object as the colour and
    type chips already in the results table. */
