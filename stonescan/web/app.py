@@ -159,6 +159,72 @@ def _refresh_warning() -> dict:
 templates.env.globals["refresh_warning"] = _refresh_warning
 
 
+# --- the ⚙ operator menu ----------------------------------------------------------------
+# Health, Discovery and Quality moved out of the top nav, which means the problems they
+# exist to surface no longer have a permanent seat on screen. The badge is what replaces
+# that seat, so it has to be RIGHT and it has to be FREE — it renders on every page.
+#
+# It is not free. Measured on the 174k-row catalog (on the project's USB drive, which is
+# slow and variable): supplier_health 0.96s, dedupe.pending_counts 2.6s typical and 17.8s
+# at its worst. Blocking a paint on that is out of the question, and a plain TTL cache only
+# moves the stall to one unlucky request per period.
+#
+# So: STALE-WHILE-REVALIDATE. A render returns whatever is cached, instantly and always,
+# and a background thread refreshes it when the value is older than the TTL. Nothing ever
+# waits. The cost is that the badge is up to _OPS_TTL out of date, and absent entirely on
+# the very first page load of a process (`ready` is False until the first refresh lands) —
+# which is the right trade when the alternative is a multi-second stall on every page.
+_ops_cache: dict = {"at": 0.0, "value": None, "running": False}
+_OPS_TTL = 300.0
+_ops_lock = threading.Lock()
+
+
+def _ops_counts() -> dict:
+    """The three counts, computed for real. Only ever called on the refresh thread."""
+    conn = db.connect()
+    try:
+        _, counts = _health_rows(conn)
+        # "Needs attention" is the crawled fleet's three failure states, and deliberately
+        # NOT blocked/challenged/paused/delisted: those are decisions (ours or the
+        # supplier's), not problems, and badging them would nag forever about ~192
+        # challenged SlabWare tenants that are behaving exactly as expected.
+        health = counts["broken"] + counts["stale"] + counts["empty"]
+        # "Awaiting triage" is `unprobed` specifically: hosts discovery added that nobody
+        # has looked at yet. The empty/broken buckets are crawl OUTCOMES, already counted
+        # on the health side, and double-badging them would inflate the number.
+        disc = len(_discovery_cats(conn)[0]["unprobed"])
+        quality = dedupe.pending_counts(conn)["total"]
+    finally:
+        conn.close()
+    return {"health": health, "discovery": disc, "quality": quality,
+            "total": health + disc + quality, "ready": True}
+
+
+def _ops_refresh() -> None:
+    try:
+        value = _ops_counts()
+        _ops_cache["value"] = value
+        _ops_cache["at"] = time.time()
+    except Exception:  # noqa: BLE001 - a badge must never take the app down
+        _ops_cache["at"] = time.time()   # back off rather than spin on a failing query
+    finally:
+        _ops_cache["running"] = False
+
+
+def _ops_state() -> dict:
+    """⚙ menu counts for base.html. Never blocks, never raises — see the note above."""
+    value = _ops_cache["value"]
+    if time.time() - _ops_cache["at"] > _OPS_TTL:
+        with _ops_lock:
+            if not _ops_cache["running"]:
+                _ops_cache["running"] = True
+                threading.Thread(target=_ops_refresh, daemon=True).start()
+    return value or {"health": 0, "discovery": 0, "quality": 0, "total": 0, "ready": False}
+
+
+templates.env.globals["ops_state"] = _ops_state
+
+
 def _distinct(conn, column: str) -> list[str]:
     # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
     # is stone/tile only (it remains queryable on the Quality audit page).
@@ -376,6 +442,7 @@ def _invalidate_caches() -> None:
     _stock_cache.clear()
     _quality_cache.clear()
     _alert_cache.clear()  # a crawl adds a snapshot -> new change events / badge count
+    _ops_cache["at"] = 0.0      # the ⚙ badge counts move on a crawl and on any triage
     _NAME_WORDS = None  # the fuzzy-match vocabulary is derived from the catalog too
     db._stats_cache.clear()
     db._residue_cache.clear()   # which suppliers serve residue changes only on a crawl
@@ -2031,11 +2098,15 @@ def _rejection_note(entries: list[dict], host: str) -> dict | None:
             "lapses_in": rej.days_until_lapse(_date.today())}
 
 
-@app.get("/health", response_class=HTMLResponse)
-def health(request: Request):
-    """Per-supplier crawl health: what's fresh, stale, broken, or empty."""
+def _health_rows(conn) -> tuple[list[dict], dict[str, int]]:
+    """The /health table's rows and status counts.
+
+    Extracted so the ⚙ badge and the page compute their numbers with ONE implementation.
+    The status here is not `supplier_health`'s raw value — the precedence below rewrites
+    it from suppliers.json, and a badge that skipped that would have reported 252 broken
+    hosts while the page showed a fraction of that.
+    """
     from .. import discover
-    conn = db.connect()
     rows = db.supplier_health(conn)
     entries = discover.load_suppliers()
     provider_of = {s["host"]: (s.get("provider") or "stoneprofits") for s in entries}
@@ -2067,6 +2138,14 @@ def health(request: Request):
                         "paused", "delisted")}
     counts["crawled"] = sum(1 for r in rows if r["crawled_fleet"])
     counts["not_crawled"] = len(rows) - counts["crawled"]
+    return rows, counts
+
+
+@app.get("/health", response_class=HTMLResponse)
+def health(request: Request):
+    """Per-supplier crawl health: what's fresh, stale, broken, or empty."""
+    conn = db.connect()
+    rows, counts = _health_rows(conn)
     mirrors = db.mirror_report(conn)
     proposals = db.supplier_filter_proposals(conn)
     stats = db.stats(conn)
@@ -2264,13 +2343,14 @@ def discovery_status(*, probed: bool, items: int, error: str) -> str:
     return "live" if items > 0 else "empty"
 
 
-@app.get("/discovery", response_class=HTMLResponse)
-def discovery(request: Request):
-    """Triage the discovery pipeline: which suppliers.json candidates are live public
-    catalogs, which came back empty (private/login-gated), which errored, and which
-    haven't been probed yet. Turns fire-and-forget discovery into a curation queue."""
+def _discovery_cats(conn) -> tuple[dict[str, list], dict[str, dict]]:
+    """Categorise every suppliers.json entry for the triage queue.
+
+    Extracted for the same reason as `_health_rows`: the ⚙ badge counts what is awaiting
+    triage, and it must be the same categorisation the page shows rather than a second
+    opinion about what "unprobed" means.
+    """
     from .. import discover
-    conn = db.connect()
     entries = discover.load_suppliers()
     rows = {r["host"]: dict(r) for r in conn.execute(
         "SELECT host, company, item_count, slab_count, last_crawled, last_error FROM suppliers")}
@@ -2314,6 +2394,17 @@ def discovery(request: Request):
     cats["live"].sort(key=lambda r: -r["items"])
     for k in ("unprobed", "empty", "broken", "blocked", "rejected"):
         cats[k].sort(key=lambda r: r["host"])
+    return cats, by_provider
+
+
+@app.get("/discovery", response_class=HTMLResponse)
+def discovery(request: Request):
+    """Triage the discovery pipeline: which suppliers.json candidates are live public
+    catalogs, which came back empty (private/login-gated), which errored, and which
+    haven't been probed yet. Turns fire-and-forget discovery into a curation queue."""
+    conn = db.connect()
+    cats, by_provider = _discovery_cats(conn)
+    entries = [r for v in cats.values() for r in v]
     stats = db.stats(conn)
     conn.close()
     return templates.TemplateResponse(request, "discovery.html", {

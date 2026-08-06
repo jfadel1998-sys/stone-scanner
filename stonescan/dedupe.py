@@ -147,6 +147,37 @@ def fuzzy_clusters(conn, limit: int = 200) -> list[dict[str, Any]]:
     return clusters[:limit]
 
 
+def pending_counts(conn) -> dict[str, int]:
+    """How many merge candidates are waiting, without building the clusters.
+
+    Exists because the ⚙ menu badge renders on EVERY page in the app, and asking the
+    cluster builders for a count is not affordable there: measured on the 174k-row
+    catalog, `conflict_clusters` takes 14.5s and `fuzzy_clusters` 2.9s. Almost none of
+    that is the data — `_key_aggregates` is 0.38s. The cost is `_first_image`, one query
+    per cluster, which a count has no use for. Skipping it and sharing a single
+    `_key_aggregates` call brings both counts to ~0.4s together.
+
+    The grouping and rejection rules are duplicated from the two builders rather than
+    factored out of them, because the builders' member sorting and canonical-pick logic
+    is genuinely irrelevant here. `test_pending_counts_match_the_cluster_builders` asserts
+    the two agree, so the duplication cannot drift silently.
+    """
+    rej = db.rejections(conn)
+    by_base: dict[str, set[str]] = defaultdict(set)
+    by_norm: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for r in _key_aggregates(conn):
+        by_base[r["base"]].add(r["type"])
+        norm = _norm_base(r["base"])
+        if norm:
+            by_norm[(r["type"], norm)].add(r["base"])
+
+    conflicts = sum(1 for base, types in by_base.items()
+                    if len(types) >= 2 and f"conflict:{base}" not in rej)
+    fuzzy = sum(1 for (typ, norm), bases in by_norm.items()
+                if len(bases) >= 2 and f"fuzzy:{typ}:{norm}" not in rej)
+    return {"conflicts": conflicts, "fuzzy": fuzzy, "total": conflicts + fuzzy}
+
+
 def other_samples(conn, material_type: str = "Other", limit: int = 80) -> list[dict[str, Any]]:
     """Most-common item names sitting in the Other (or Accessory) bucket — the
     worklist for improving the classifier / spotting misfiled real stones."""

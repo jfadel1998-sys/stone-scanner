@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -5302,6 +5303,154 @@ class ColourFamilyTests(unittest.TestCase):
     def test_an_uncoloured_material_has_no_colour_restriction(self):
         from stonescan.web import app
         self.assertEqual(app._colors_for_choice(self.conn, ""), [])
+
+
+class OpsMenuTests(unittest.TestCase):
+    """AIL-37 — operator tools behind ⚙, and the badge that replaces their nav seat."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.dbp = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.dbp)
+        _seed_suppliers(self.conn, upto=4)
+
+    def tearDown(self):
+        self.conn.close()
+
+    # --- the cheap count must equal the expensive one ------------------------
+    def test_pending_counts_match_the_cluster_builders(self):
+        """`pending_counts` duplicates the builders' grouping to skip their per-cluster
+        image query (14.5s -> ~0.4s of grouping on the real catalog). That duplication is
+        only safe while this holds."""
+        # a type conflict (same name, two types) and a spelling pair (same type)
+        _insert(self.conn, 1, "Taj Mahal", "Quartzite")
+        _insert(self.conn, 2, "Taj Mahal", "Granite")
+        _insert(self.conn, 3, "Calacatta Gold", "Marble")
+        _insert(self.conn, 4, "Calcatta Gold", "Marble")
+        self.conn.commit()
+        pc = dedupe.pending_counts(self.conn)
+        self.assertEqual(pc["conflicts"], len(dedupe.conflict_clusters(self.conn, limit=100000)))
+        self.assertEqual(pc["fuzzy"], len(dedupe.fuzzy_clusters(self.conn, limit=100000)))
+        self.assertEqual(pc["total"], pc["conflicts"] + pc["fuzzy"])
+
+    def test_pending_counts_honour_rejections_like_the_builders(self):
+        """A cluster someone rejected is not 'awaiting review', so it must not badge."""
+        _insert(self.conn, 1, "Taj Mahal", "Quartzite")
+        _insert(self.conn, 2, "Taj Mahal", "Granite")
+        self.conn.commit()
+        before = dedupe.pending_counts(self.conn)["conflicts"]
+        self.assertEqual(before, 1)
+        db.add_rejection(self.conn, "conflict:taj mahal")
+        self.assertEqual(dedupe.pending_counts(self.conn)["conflicts"], 0)
+        self.assertEqual(len(dedupe.conflict_clusters(self.conn, limit=100000)), 0)
+
+    def test_pending_counts_on_an_empty_catalog(self):
+        self.assertEqual(dedupe.pending_counts(self.conn),
+                         {"conflicts": 0, "fuzzy": 0, "total": 0})
+
+    # --- the badge state -----------------------------------------------------
+    def _state(self, **counts):
+        """Run the real _ops_state against a patched _ops_counts."""
+        from stonescan.web import app as webapp
+        orig = webapp._ops_counts
+        webapp._ops_counts = lambda: {**{"health": 0, "discovery": 0, "quality": 0,
+                                         "total": 0, "ready": True}, **counts}
+        webapp._ops_cache.update({"at": 0.0, "value": None, "running": False})
+        try:
+            webapp._ops_refresh()          # synchronous; the thread is only a wrapper
+            return webapp._ops_state()
+        finally:
+            webapp._ops_counts = orig
+            webapp._ops_cache.update({"at": 0.0, "value": None, "running": False})
+
+    def test_state_is_empty_and_not_ready_before_the_first_refresh(self):
+        """Stale-while-revalidate: the very first render must not block on a 3s query."""
+        from stonescan.web import app as webapp
+        webapp._ops_cache.update({"at": 0.0, "value": None, "running": True})
+        try:
+            st = webapp._ops_state()
+            self.assertFalse(st["ready"])
+            self.assertEqual(st["total"], 0)
+        finally:
+            webapp._ops_cache.update({"at": 0.0, "value": None, "running": False})
+
+    def test_total_is_the_sum_of_the_three(self):
+        st = self._state(health=2, discovery=3, quality=4, total=9)
+        self.assertEqual(st["total"], 9)
+        self.assertTrue(st["ready"])
+
+    def test_a_failing_count_never_takes_a_page_down(self):
+        """This renders on every page in the app; it may not be able to raise."""
+        from stonescan.web import app as webapp
+        orig = webapp._ops_counts
+
+        def boom():
+            raise RuntimeError("db gone")
+
+        webapp._ops_counts = boom
+        webapp._ops_cache.update({"at": 0.0, "value": None, "running": False})
+        try:
+            webapp._ops_refresh()
+            st = webapp._ops_state()
+            self.assertEqual(st["total"], 0)
+            self.assertFalse(st["ready"])
+            # and it backed off rather than re-firing a failing query on every render
+            self.assertGreater(webapp._ops_cache["at"], 0.0)
+        finally:
+            webapp._ops_counts = orig
+            webapp._ops_cache.update({"at": 0.0, "value": None, "running": False})
+
+    # --- what actually renders ----------------------------------------------
+    def _render(self, **counts):
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        orig_conn, orig_counts = db.connect, webapp._ops_counts
+        # bind the ORIGINAL: routing through init_db here would re-enter the patched
+        # connect and recurse until the stack gives out. setUp already created the schema.
+        db.connect = lambda *a, **k: orig_conn(self.dbp)
+        webapp._ops_counts = lambda: {**{"health": 0, "discovery": 0, "quality": 0,
+                                         "total": 0, "ready": True}, **counts}
+        webapp._ops_cache.update({"at": 0.0, "value": None, "running": False})
+        try:
+            webapp._ops_refresh()
+            return TestClient(webapp.app).get("/").text
+        finally:
+            db.connect, webapp._ops_counts = orig_conn, orig_counts
+            webapp._ops_cache.update({"at": 0.0, "value": None, "running": False})
+
+    def _topnav(self, html):
+        m = re.search(r'<nav class="topnav">(.*?)</nav>', html, re.S)
+        return m.group(1) if m else ""
+
+    def test_operator_links_leave_the_top_nav_for_the_menu(self):
+        html = self._render(health=1, discovery=2, quality=3, total=6)
+        nav = self._topnav(html)
+        for label in ("Health", "Discovery", "Quality"):
+            self.assertNotIn(label, nav, f"{label} must not remain a top-nav link")
+        panel = re.search(r'<div class="opspanel".*?</div>', html, re.S).group(0)
+        for href in ("/health", "/discovery", "/quality"):
+            self.assertIn(href, panel)
+
+    def test_the_badge_shows_the_total_when_there_is_one(self):
+        html = self._render(health=1, discovery=2, quality=3, total=6)
+        self.assertRegex(html, r'class="navcount opscount">\s*6\s*<')
+
+    def test_no_badge_at_all_when_everything_is_clean(self):
+        """A zero is a thing to read and dismiss; absence is not. AC-5."""
+        html = self._render(total=0)
+        self.assertNotIn("opscount", html)
+
+    def test_a_large_backlog_does_not_blow_out_the_badge(self):
+        html = self._render(health=192, discovery=21, quality=2433, total=2646)
+        self.assertIn("99+", html)
+        self.assertNotIn(">2646<", html)
+
+    def test_the_menu_opens_without_javascript(self):
+        """A <details>, not a scripted dropdown — otherwise the operator tools become
+        unreachable in the frozen app's WebView if a script fails to run."""
+        html = self._render(total=1)
+        self.assertRegex(html, r'<details class="opsmenu[^"]*" id="opsMenu">')
 
 
 class IBlockyProviderTests(unittest.TestCase):
