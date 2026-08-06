@@ -24,16 +24,15 @@ $spillExe = Join-Path $LocalCopy "StoneScanner.exe"
 # VALIDATE BEFORE UNREGISTERING. This script removes the existing task and then registers a
 # replacement, so anything that throws in between leaves the machine with NO task at all —
 # which is how a mistyped parameter turned into a silently missing nightly once already. The
-# guard compares the clock against the last trigger as a [timespan], so a value the cmdlet
-# accepts but [timespan] cannot parse ("7:00 AM") would fail at 07:00 in a hidden window
-# rather than here, in front of whoever typed it.
+# trigger builder below casts each time to a [timespan] to roll a past one forward, so a
+# value the cmdlet accepts but [timespan] cannot parse ("7:00 AM") would fail here in a
+# hidden window at install time rather than in front of whoever typed it.
 if (-not $At -or $At.Count -lt 1) { throw "-At needs at least one time, e.g. -At 03:00" }
 foreach ($t in $At) {
     try { [void][timespan]$t } catch {
         throw "-At times must be HH:mm (24-hour), e.g. 03:00,05:00,07:00 — '$t' is not."
     }
 }
-$lastAt = $At[-1]
 
 # Admin is required to register a task that runs whether or not you're logged in.
 $isAdmin = ([Security.Principal.WindowsPrincipal] `
@@ -72,31 +71,40 @@ if (-not (Test-Path $script)) { throw "refresh.ps1 not found next to this script
 #   * Give up with 200, not a small number. refresh.ps1 propagates the crawl's own exit code,
 #     so the old sentinel `exit 3` was indistinguishable from "the crawl itself exited 3".
 #
-# THE SPILL. Giving up is still losing the night, and the night has now been lost twice
-# (2026-08-04 and 2026-08-05). So on the LAST trigger of the day — and only then — a guard
-# that has waited out its deadline crawls into the local copy on C: instead of going home.
-# Three properties this depends on, in order of how easy they are to break:
-#   * Only at or past the last trigger. An earlier run that spilled would race the drive:
-#     D: often reappears by mid-morning, and a spill started at 03:20 would be crawling into
-#     the wrong database while the real one sat there available. Earlier triggers exit 200
-#     and leave it to the next one — that is what the extra triggers are FOR.
-#   * The deadline is `$At[-1]`, not a literal. The trigger list and the spill rule cannot
-#     drift apart, because they are the same value.
-#   * The spill writes nothing to D:. It cd's to the local copy and runs that copy's exe,
-#     which puts its database, its log and its refresh_runs ledger under the local copy's
-#     own data\ folder (desktop.setup_env). D: is absent in this branch by construction, but
-#     the branch must stay correct for the case where it comes back mid-crawl.
+# THE SPILL. Giving up is still losing the night, and the night has been lost twice already
+# (2026-08-04 and 2026-08-05). So as soon as a run has waited out its deadline and the drive
+# is still not there, it crawls into the local copy on C: instead of going home.
+#
+# ON THE FIRST TRIGGER, not the last. This reverses the original rule, deliberately. The old
+# design deferred to 07:00 on the theory that D: often reappears by mid-morning and an early
+# spill would race it — but that trades a whole known-lost night for the chance of a crawl
+# that might not come. When the drive is deliberately away, 03:20 is four hours of daylight
+# better than 07:20, and a spill that later turns out to have been unnecessary costs nothing:
+# AIL-29's merge takes a supplier from the spill only when it is STRICTLY newer, so a normal
+# D: crawl that happens afterwards simply supersedes it.
+#
+# ONCE A DAY, which is what makes the above safe. A crawl takes about three hours, so a spill
+# starting at 03:20 finishes around 06:20 — leaving the 07:00 trigger free to start a SECOND
+# full crawl of ~135 live supplier sites the same night. MultipleInstances=IgnoreNew does not
+# help, because by then the first one has finished. The date stamp is what stops it, and it
+# is written BEFORE the crawl rather than after: one attempt per day, predictable, and a
+# spill that dies two hours in does not get to start again from the top at 07:00.
+#
+# THE SPILL WRITES NOTHING TO D:. It cd's to the local copy and runs that copy's exe, which
+# puts its database, its log and its refresh_runs ledger under the local copy's own data\
+# folder (desktop.setup_env). D: is absent in this branch by construction, but the branch
+# must stay correct for the case where it comes back mid-crawl.
 # -WindowStyle Hidden so the nightly run doesn't flash a console; the log is the record.
 $notReachable = 200
 $guard = @(
     "`$s = '$script'"
     "`$spill = '$spillExe'"
-    "`$lastAt = '$lastAt'"
+    "`$stamp = Join-Path `$env:ProgramData 'StoneScanner\last-spill.txt'"
     "`$log = Join-Path `$env:ProgramData 'StoneScanner\refresh-task.log'"
     "`$d = Split-Path -LiteralPath `$log"
     "if (-not (Test-Path -LiteralPath `$d)) { New-Item -ItemType Directory -Path `$d -Force | Out-Null }"
     "function Note([string]`$m) { Add-Content -LiteralPath `$log -Encoding utf8 -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + `$m) }"
-    "function GiveUp { if ((Get-Date) -lt [datetime]::Today.Add([timespan]`$lastAt)) { Note ('GAVE UP after $WaitMinutes min - project not reachable: ' + `$s + ' (a later trigger will try again)'); exit $notReachable }; if (-not (Test-Path -LiteralPath `$spill)) { Note ('GAVE UP after $WaitMinutes min - project not reachable and no local copy at ' + `$spill); exit $notReachable }; Note ('SPILL - project drive absent at the last trigger; crawling into the local copy instead: ' + `$spill); Set-Location -LiteralPath (Split-Path -LiteralPath `$spill); & `$spill --refresh; `$sc = `$LASTEXITCODE; Note ('SPILL finished, exit ' + `$sc); exit `$sc }"
+    "function GiveUp { if (-not (Test-Path -LiteralPath `$spill)) { Note ('GAVE UP after $WaitMinutes min - project not reachable and no local copy at ' + `$spill); exit $notReachable }; `$today = (Get-Date).ToString('yyyy-MM-dd'); if ((Test-Path -LiteralPath `$stamp) -and ((Get-Content -LiteralPath `$stamp -Raw -ErrorAction SilentlyContinue) -replace '\s','') -eq `$today) { Note ('GAVE UP after $WaitMinutes min - project not reachable; already spilled today, not crawling again'); exit $notReachable }; Set-Content -LiteralPath `$stamp -Value `$today -Encoding utf8; Note ('SPILL - project drive absent; crawling into the local copy instead: ' + `$spill); Set-Location -LiteralPath (Split-Path -LiteralPath `$spill); & `$spill --refresh; `$sc = `$LASTEXITCODE; Note ('SPILL finished, exit ' + `$sc); exit `$sc }"
     "`$deadline = (Get-Date).AddMinutes($WaitMinutes)"
     "while (-not (Test-Path -LiteralPath `$s)) { if ((Get-Date) -ge `$deadline) { GiveUp }; Start-Sleep -Seconds 30 }"
     "Note ('starting ' + `$s)"
@@ -166,9 +174,11 @@ Write-Host "  Run now to test:  Start-ScheduledTask -TaskName $TaskName"
 Write-Host "  Crawl log: $(Join-Path $root 'refresh.log')  (on the project drive)"
 Write-Host "  Task log:  $(Join-Path $env:ProgramData 'StoneScanner\refresh-task.log')  (always on C:)"
 Write-Host "  Each run waits up to $WaitMinutes min for the project drive. If it never shows up,"
-Write-Host "  runs before $lastAt exit $notReachable and leave it to the next trigger; the $lastAt run"
+Write-Host "  the FIRST run of the day ($($At[0])) stops waiting and"
 if (Test-Path -LiteralPath $spillExe) {
     Write-Host "  crawls into the local copy instead ($spillExe)."
+    Write-Host "  Later triggers that day see the stamp in $(Join-Path $env:ProgramData 'StoneScanner\last-spill.txt')"
+    Write-Host "  and exit $notReachable rather than starting a second crawl."
 } else {
     Write-Host "  WOULD crawl into the local copy, but there isn't one at $spillExe yet." -ForegroundColor Yellow
     Write-Host "  Run .\build_exe.ps1 to create it — until then a lost drive is still a lost night." -ForegroundColor Yellow
