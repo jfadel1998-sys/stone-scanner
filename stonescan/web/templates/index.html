@@ -14,7 +14,14 @@
 {% set adv_active = thickness or finish or location or min_length or min_width or near or min_sqft or new_only or in_stock or (sort and sort != 'relevance') %}
 <form class="filters" method="get" action="/">
   <div class="primary">
-    <input type="search" name="q" value="{{ q }}" placeholder="Try: blue marble slabs · black granite · 3cm polished calacatta…" autofocus>
+    {# Combobox. Plain <input> in the markup and the ARIA/listbox wiring added by script,
+       so with JS off this is exactly the search box it has always been (AC-9). #}
+    <span class="qwrap">
+      <input type="search" name="q" id="qbox" value="{{ q }}" autocomplete="off"
+             placeholder="Try: blue marble slabs · black granite · 3cm polished calacatta…" autofocus>
+      <span class="qcount" id="qCount" hidden aria-live="polite"></span>
+      <ul class="qsuggest" id="qSuggest" hidden></ul>
+    </span>
     <select name="material_type">
       <option value="">All types</option>
       {% for t in types %}<option value="{{ t }}" {{ 'selected' if t == material_type }}>{{ t }}</option>{% endfor %}
@@ -252,6 +259,151 @@
 {% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}
 
 {% block scripts %}
+<script id="qVocab" type="application/json">{{ {"types": types, "colors": colors}|tojson }}</script>
+<script>
+/* Instant search. /api/search has existed and gone unused since it was written; this is
+   the UI for it, and it needs no backend change — the type and colour vocabularies are
+   already rendered into this page for the filter selects, so they are matched locally
+   and cost no request.
+
+   One request per keystroke-burst serves BOTH jobs: `total` is the live match count and
+   `results` are the name suggestions. The current filter state is sent along, so the
+   count answers "how many match what I am actually asking for", not "how many match this
+   word". Everything here is additive — with JS off the box submits as it always has. */
+(function(){
+  var box=document.getElementById('qbox'), list=document.getElementById('qSuggest'),
+      countEl=document.getElementById('qCount'), form=box&&box.form;
+  if(!box||!list||!form)return;
+  var vocab={types:[],colors:[]};
+  try{ vocab=JSON.parse(document.getElementById('qVocab').textContent)||vocab; }catch(e){}
+
+  var MIN=2, CAP=8, DEBOUNCE=180, items=[], active=-1, seq=0, timer=null;
+
+  function esc(v){
+    return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                               .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  /* The canonical name, matching mat_name() in the results below. The raw item_name is
+     the supplier's own shouty string ("2CM CALACATTA VIOLA"); showing that in the
+     dropdown and "Calacatta Viola" in the grid reads as two different stones. */
+  function stoneName(r){
+    var base=(r.material_key||'').split('|')[0];
+    if(!base) return r.item_name||'';
+    return base.replace(/\w\S*/g, function(w){
+      return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();
+    });
+  }
+
+  box.setAttribute('role','combobox');
+  box.setAttribute('aria-expanded','false');
+  box.setAttribute('aria-controls','qSuggest');
+  box.setAttribute('aria-autocomplete','list');
+  list.setAttribute('role','listbox');
+
+  function params(term){
+    // Everything the form holds, so the count and the suggestions respect the filters
+    // already set. FormData over hand-picked fields: a filter added to the form later
+    // is then included automatically instead of silently ignored.
+    var p=new URLSearchParams();
+    new FormData(form).forEach(function(v,k){ if(v!=='' && k!=='q') p.append(k,v); });
+    p.set('q',term); p.set('limit','8');
+    return p.toString();
+  }
+  function localMatches(term){
+    var t=term.toLowerCase(), out=[];
+    ['types','colors'].forEach(function(kind){
+      (vocab[kind]||[]).forEach(function(v){
+        if(String(v).toLowerCase().indexOf(t)===0)
+          out.push({kind:kind==='types'?'type':'color', label:String(v)});
+      });
+    });
+    return out.slice(0,3);
+  }
+  function href(it){
+    if(it.kind==='name') return it.href;
+    var p=new URLSearchParams();
+    if(box.value.trim() && it.kind!=='name') p.set('q', box.value.trim());
+    p.set(it.kind==='type'?'material_type':'color', it.label);
+    return '/?'+p.toString();
+  }
+  function render(){
+    list.innerHTML='';
+    if(!items.length){ close(); return; }
+    items.forEach(function(it,i){
+      var li=document.createElement('li');
+      li.id='qopt'+i; li.setAttribute('role','option');
+      li.setAttribute('aria-selected', i===active?'true':'false');
+      li.className='qopt'+(i===active?' on':'');
+      var thumb='';
+      if(it.kind==='name'&&it.image) thumb='<img src="'+it.image+'" alt="" onerror="this.remove()">';
+      else if(it.kind==='name') thumb='<span class="qph">🪨</span>';
+      li.innerHTML=thumb+'<span class="qlabel">'+esc(it.label)+'</span>'
+        +(it.meta?'<span class="qmeta">'+esc(it.meta)+'</span>':'')
+        +'<span class="qkind">'+(it.kind==='name'?'stone':it.kind)+'</span>';
+      li.addEventListener('mousedown',function(e){ e.preventDefault(); go(i); });
+      list.appendChild(li);
+    });
+    list.hidden=false; box.setAttribute('aria-expanded','true');
+  }
+  function close(){
+    list.hidden=true; list.innerHTML=''; items=[]; active=-1;
+    box.setAttribute('aria-expanded','false');
+    box.removeAttribute('aria-activedescendant');
+  }
+  function go(i){ var it=items[i]; if(it) location.href=href(it); }
+  function move(d){
+    if(!items.length)return;
+    active=Math.max(-1, Math.min(items.length-1, active+d));
+    [].forEach.call(list.children,function(li,n){
+      li.classList.toggle('on', n===active);
+      li.setAttribute('aria-selected', n===active?'true':'false');
+    });
+    if(active>=0) box.setAttribute('aria-activedescendant','qopt'+active);
+    else box.removeAttribute('aria-activedescendant');
+  }
+  function query(){
+    var term=box.value.trim();
+    if(term.length<MIN){ close(); countEl.hidden=true; return; }
+    var mine=++seq;
+    fetch('/api/search?'+params(term),{headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(mine!==seq) return;                 // a later keystroke already won
+        countEl.textContent=(d.total||0).toLocaleString()+' match'+(d.total===1?'':'es');
+        countEl.hidden=false;
+        var seen={}, names=[];
+        (d.results||[]).forEach(function(r){
+          var key=r.material_key||('id:'+r.id);
+          if(seen[key])return; seen[key]=1;
+          names.push({kind:'name', label:stoneName(r)||r.item_name||key,
+            image:r.image_url||r.rep_image||'',
+            meta:(r.suppliers?r.suppliers+' supplier'+(r.suppliers===1?'':'s'):''),
+            href:r.material_key?('/material?key='+encodeURIComponent(r.material_key)):('/item?id='+r.id)});
+        });
+        var extra=localMatches(term);
+        items=names.slice(0, Math.max(CAP-extra.length,1)).concat(extra).slice(0,CAP);
+        active=-1; render();
+      })
+      .catch(function(){
+        /* AC-8: a failed suggestion fetch is not an error the user needs to see. The box
+           and the form are untouched, so submitting still works. */
+        close(); countEl.hidden=true;
+      });
+  }
+  box.addEventListener('input',function(){ clearTimeout(timer); timer=setTimeout(query,DEBOUNCE); });
+  box.addEventListener('keydown',function(e){
+    if(e.key==='ArrowDown'){ e.preventDefault(); move(1); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); move(-1); }
+    else if(e.key==='Escape'){ if(!list.hidden){ e.preventDefault(); close(); } }
+    else if(e.key==='Enter'){
+      // Only intercept when something is highlighted; a bare Enter must submit the form
+      // exactly as it always has (AC-7).
+      if(active>=0 && items[active]){ e.preventDefault(); go(active); }
+    }
+  });
+  box.addEventListener('blur',function(){ setTimeout(close,120); });
+})();
+</script>
 <script>
 (function(){
   var btn=document.getElementById('refreshBtn'), msg=document.getElementById('refreshMsg'), timer=null;

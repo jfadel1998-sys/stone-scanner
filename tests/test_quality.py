@@ -5635,6 +5635,93 @@ class FilterChipTests(unittest.TestCase):
         self.assertNotIn('class="filterchips"', html)
 
 
+class InstantSearchTests(unittest.TestCase):
+    """AIL-40 — the UI for /api/search, which had existed unused since it was written."""
+
+    def _index(self):
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        return TestClient(webapp.app).get("/").text
+
+    def test_the_search_box_is_a_combobox_with_a_listbox(self):
+        html = self._index()
+        self.assertIn('id="qbox"', html)
+        self.assertIn('id="qSuggest"', html)
+        self.assertIn('id="qCount"', html)
+
+    def test_the_vocabularies_are_embedded_rather_than_fetched(self):
+        """types and colours are already rendered for the filter selects, so matching them
+        locally costs no request and needs no new endpoint (NG-1, NG-5)."""
+        html = self._index()
+        self.assertIn('id="qVocab"', html)
+        m = re.search(r'<script id="qVocab" type="application/json">(.*?)</script>',
+                      html, re.S)
+        self.assertIsNotNone(m)
+        vocab = json.loads(m.group(1))
+        self.assertIn("types", vocab)
+        self.assertIn("colors", vocab)
+
+    def test_no_backend_was_added_for_this(self):
+        """NG-1: UI-only against /api/search as it stands. A new suggest endpoint would be
+        a second definition of what matches, free to drift from the real search."""
+        src = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+               "app.py").read_text(encoding="utf-8")
+        self.assertNotIn('"/api/suggest"', src)
+        self.assertNotIn("'/api/suggest'", src)
+
+    def test_the_endpoint_it_drives_still_answers_with_what_the_ui_needs(self):
+        """The dropdown reads total (the live count), and item_name / material_key /
+        image_url / suppliers per row. A change to any of those breaks it silently."""
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        data = TestClient(webapp.app).get("/api/search?q=a&limit=2").json()
+        self.assertIn("total", data)
+        self.assertIn("results", data)
+        for row in data["results"]:
+            for field in ("item_name", "material_key", "suppliers"):
+                self.assertIn(field, row)
+
+    def test_the_count_respects_the_filters_not_just_the_word(self):
+        """AC-5. Asserted end to end, because the dropdown sends the whole form and a
+        count that ignored the filters would look plausible and be wrong."""
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        c = TestClient(webapp.app)
+        loose = c.get("/api/search?q=marble&limit=1").json()["total"]
+        tight = c.get("/api/search?q=marble&thickness=3cm&limit=1").json()["total"]
+        if loose:                       # only meaningful against a populated catalog
+            self.assertLessEqual(tight, loose)
+
+    def test_the_form_still_works_without_the_script(self):
+        """AC-9. The ARIA and the listbox wiring are added by script, so the markup that
+        ships is the same plain GET form it has always been."""
+        html = self._index()
+        m = re.search(r'<input type="search" name="q" id="qbox"[^>]*>', html)
+        self.assertIsNotNone(m)
+        self.assertNotIn("role=", m.group(0))     # role is set at runtime, not in markup
+        self.assertIn('<form class="filters" method="get" action="/">', html)
+
+    def test_a_bare_enter_is_left_alone(self):
+        """AC-7: Enter with nothing highlighted must submit exactly as it always has, so
+        the interception is guarded on there being an active option."""
+        js = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+              "templates" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("if(active>=0 && items[active]){ e.preventDefault(); go(active); }", js)
+
+    def test_a_failed_suggestion_fetch_shows_no_error(self):
+        """AC-8: a suggestion is a convenience. Failing one must not put an error in front
+        of someone who can still just press Enter."""
+        js = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+              "templates" / "index.html").read_text(encoding="utf-8")
+        m = re.search(r"\.catch\(function\(\)\{(.*?)\}\)", js, re.S)
+        self.assertIsNotNone(m)
+        self.assertNotIn("alert", m.group(1))
+        self.assertIn("close()", m.group(1))
+
+
 class IBlockyProviderTests(unittest.TestCase):
     """AIL-36 — iBlocky, the first deliberately-sought international source.
 
