@@ -103,6 +103,16 @@
 {% macro mat_href(r) -%}
 {{ ('/material?key=' ~ (r.material_key|urlencode)) if r.material_key else ('/item?id=' ~ r.id) }}
 {%- endmacro %}
+{# Lightbox caption for a search row. A grouped row has no single supplier, so the
+   subtitle carries what IS true of the group: type/colour and how many yards hold it. #}
+{% macro lb_meta(r, rep=false) -%}
+{{ lb_attrs(mat_name(r),
+            ([r.material_type, r.color]|select|join(' · ')
+             ~ (' · ' ~ r.suppliers ~ ' supplier' ~ ('' if r.suppliers == 1 else 's') if r.suppliers else '')
+             ~ (' · ' ~ r.available_slabs ~ ' slabs' if r.available_slabs else '')
+             ~ (' · representative photo' if rep else '')),
+            mat_href(r)|trim) }}
+{%- endmacro %}
 {# Compare checkbox — only for canonical materials (a material_key); empty-key products
    have nothing to compare against (NG-2). Toggles the tray without reloading (base.html
    intercepts .js-compare); the <noscript> button is the JS-off fallback. #}
@@ -129,8 +139,8 @@
   {% for r in rows %}
   <div class="matcardwrap">
   <a class="matcard" href="{{ mat_href(r) }}">
-    {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'">
-    {% elif r.rep_image %}<img loading="lazy" src="{{ r.rep_image }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'"><span class="repbadge" title="A photo of the same-named stone from another listing — representative only; the actual slab varies">representative</span>
+    {% if r.image_url %}<img loading="lazy" data-lb data-full="{{ r.image_url|full_res }}" {{ lb_meta(r) }} src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'">
+    {% elif r.rep_image %}<img loading="lazy" data-lb data-full="{{ r.rep_image|full_res }}" {{ lb_meta(r, rep=true) }} src="{{ r.rep_image }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'"><span class="repbadge" title="A photo of the same-named stone from another listing — representative only; the actual slab varies">representative</span>
     {% else %}<span class="cardph">🪨</span>{% endif %}
     <span class="cardmeta">
       <b>{{ mat_name(r) }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
@@ -163,8 +173,8 @@
     <tr>
       <td class="thumbcell">
         <a href="{{ mat_href(r) }}">
-        {% if r.image_url %}<img class="thumb" loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
-        {% elif r.rep_image %}<img class="thumb" loading="lazy" src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone — the actual slab varies" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
+        {% if r.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ r.image_url|full_res }}" {{ lb_meta(r) }} src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
+        {% elif r.rep_image %}<img class="thumb" loading="lazy" data-lb data-full="{{ r.rep_image|full_res }}" {{ lb_meta(r, rep=true) }} src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone — the actual slab varies" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
         {% else %}<span class="thumb noimg"></span>{% endif %}</a>
       </td>
       <td class="name">{{ cmp_control(r, cmpkeys) }}<a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}{% if r.rep_image %} <span class="repchip" title="The shown photo is a representative of the same-named stone from another listing — natural stone varies">≈ ref photo</span>{% endif %}{% if r.has_residue %} <span class="residuechip" title="At least one supplier behind this row is serving data its last crawl failed to replace, so the totals here include figures that have not been reconfirmed. Open the item to see each supplier's own collection date.">unconfirmed</span>{% endif %}</td>

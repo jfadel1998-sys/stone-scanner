@@ -230,7 +230,7 @@
     <div class="cardgrid">
     {% for r in results %}
       <a class="matcard" href="/item?id={{ r.id }}">
-        {% if r.image_url %}<img src="{{ r.image_url }}" loading="lazy" onerror="this.classList.add('broken')">{% else %}<div class="cardph">🪨</div>{% endif %}
+        {% if r.image_url %}<img data-lb data-full="{{ r.image_url|full_res }}" {{ lb_attrs(r.item_name, r.supplier_name, '/material?key=' ~ (r.material_key|urlencode)) }} src="{{ r.image_url }}" loading="lazy" onerror="this.classList.add('broken')">{% else %}<div class="cardph">🪨</div>{% endif %}
         <span class="cardmeta">
           <b>{{ r.item_name }}</b>
           <span class="cardsup">{{ r.supplier_name }}</span>

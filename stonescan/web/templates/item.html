@@ -122,10 +122,6 @@
   </div>
 </section>
 
-<div id="lightbox" class="lightbox" onclick="this.classList.remove('show')">
-  <img id="lightbox-img" src="" alt="">
-</div>
-
 {% if variants %}
 <section class="block">
   <h2>Other {{ m.thickness_label if false else 'options' }} at {{ m.supplier_name }}</h2>
@@ -134,7 +130,7 @@
     <tbody>
     {% for v in variants %}
       <tr>
-        <td class="thumbcell">{% if v.image_url %}<img class="thumb" loading="lazy" src="{{ v.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
+        <td class="thumbcell">{% if v.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ v.image_url|full_res }}" {{ lb_attrs(v.item_name or m.item_name, m.supplier_name, '/item?id=' ~ v.id) }} src="{{ v.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
         <td class="name">{{ v.item_name }}</td>
         <td>{{ v.thickness }}</td>
         <td class="muted">{{ v.finish }}</td>
@@ -155,7 +151,7 @@
     <tbody>
     {% for o in others %}
       <tr class="{{ 'self' if o.supplier_host == m.supplier_host }}">
-        <td class="thumbcell">{% if o.image_url %}<img class="thumb" loading="lazy" src="{{ o.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
+        <td class="thumbcell">{% if o.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ o.image_url|full_res }}" {{ lb_attrs(o.item_name, o.supplier_name, '/item?id=' ~ o.id) }} src="{{ o.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
         <td class="name">{{ o.supplier_name }}{% if o.supplier_host == m.supplier_host %} <span class="here">viewing</span>{% endif %}</td>
         <td class="num">{% if o.slabs %}{{ o.slabs }}{% elif o.tile_sf %}<span class="milechip" title="Sold as tile — measured by area">{{ o.tile_sf|round|int }} ft² tile</span>{% elif o.has_tile %}<span class="milechip">tile</span>{% else %}—{% endif %}</td>
         <td class="num muted">{{ o.variants }}</td>
@@ -175,7 +171,7 @@
   <div class="simgrid">
     {% for x in similar %}
     <a class="simcard" href="/item?id={{ x.id }}">
-      {% if x.image_url %}<img loading="lazy" src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
+      {% if x.image_url %}<img loading="lazy" data-lb data-full="{{ x.image_url|full_res }}" {{ lb_attrs(x.item_name, (x.suppliers ~ ' supplier' ~ ('' if x.suppliers == 1 else 's')), '/material?key=' ~ (x.material_key|urlencode)) }} src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
       {% else %}<span class="simph">🪨</span>{% endif %}
       <div class="simmeta">
         <b>{{ x.item_name }}</b>
@@ -202,6 +198,15 @@
   var hdrLbl = document.getElementById('hdrslabslbl');
   var sps = {{ 'true' if m.supplier_token else 'false' }};   // only StoneProfits has a live per-slab feed
   var repPhoto = "{{ rep_photo }}";   // labeled fallback for slabs with no photo of their own
+  // Caption source for the shared lightbox. These are built into an attribute string
+  // below, so they go through esc() — a stone name with a quote in it would otherwise
+  // break out of the attribute and mangle the card.
+  var LB_NAME = {{ m.item_name|tojson }};
+  var LB_SUPPLIER = {{ m.supplier_name|tojson }};
+  function esc(v){
+    return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+                                     .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
   var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
 
   function nowLabel(){
@@ -222,10 +227,17 @@
       var size = (s.length && s.width) ? Math.round(s.length)+'×'+Math.round(s.width) : '';
       var img;
       if(s.thumb){
-        img = '<img loading="lazy" src="'+s.thumb+'" data-full="'+s.photo+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">';
+        img = '<img loading="lazy" data-lb src="'+s.thumb+'" data-full="'+s.photo+'"'
+            + ' data-lb-title="'+esc(LB_NAME)+'" data-lb-sub="'+esc(LB_SUPPLIER
+              + (s.slab_no ? ' · slab '+s.slab_no : '')
+              + (size ? ' · '+size+' '+(s.uom||'in') : '')
+              + (s.location ? ' · '+s.location : ''))+'"'
+            + ' alt="" onerror="this.parentNode.classList.add(\'noimg\')">';
       } else if(repPhoto){
         // No photo of this exact slab -> show a labeled representative of the stone.
-        img = '<img loading="lazy" class="repimg" src="'+repPhoto+'" data-full="'+repPhoto+'" alt="" onerror="this.parentNode.classList.add(\'noimg\')">'
+        img = '<img loading="lazy" data-lb class="repimg" src="'+repPhoto+'" data-full="'+repPhoto+'"'
+            + ' data-lb-title="'+esc(LB_NAME)+'" data-lb-sub="representative photo — the actual slab varies"'
+            + ' alt="" onerror="this.parentNode.classList.add(\'noimg\')">'
             + '<span class="repbadge" title="No photo of this exact slab was published — showing a representative photo of this stone">≈ representative</span>';
       } else {
         img = '<span class="thumb noimg"></span>';
@@ -235,12 +247,6 @@
         + (s.location?'<span>'+s.location+'</span>':'')
         + (s.barcode?'<span class="bc">#'+s.barcode+'</span>':'')
         + '</div>';
-      var im = card.querySelector('img');
-      if(im) im.addEventListener('click', function(){
-        var lb=document.getElementById('lightbox');
-        document.getElementById('lightbox-img').src=im.getAttribute('data-full');
-        lb.classList.add('show');
-      });
       list.appendChild(card);
     });
   }

@@ -75,9 +75,92 @@
   <div class="cmpbar-msg" id="cmpBarMsg" hidden></div>
 </div>
 
+{# Shared lightbox. Lives here rather than per-page because four templates now open it and
+   one implementation is the only way the keyboard behaviour stays identical between them.
+   Any <img data-lb ...> on any page participates; the script below finds them at open time,
+   so images added later by JS (the item page's live slab gallery) work with no extra wiring. #}
+<div id="lightbox" class="lightbox" aria-hidden="true">
+  <button type="button" class="lb-close" id="lbClose" aria-label="Close">✕</button>
+  <img id="lightbox-img" src="" alt="">
+  <div class="lb-caption" id="lbCaption">
+    <div class="lb-text"><b id="lbTitle"></b><span id="lbSub"></span></div>
+    <a id="lbLink" class="lb-link" href="">Open item ›</a>
+    <span class="lb-pos" id="lbPos"></span>
+  </div>
+</div>
+
 <footer>{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}</footer>
 
 {% block scripts %}{% endblock %}
+<script>
+/* Lightbox. Judging stone means seeing it big, and until now only the item page's slab
+   gallery could. Every <img data-lb> on any page opens here.
+
+   The set is collected AT OPEN TIME, not cached at load: the item page builds its slab
+   grid from a live fetch after first paint, and a cached list would silently exclude it.
+
+   data-full is a HINT (see app.full_res) — a supplier who doesn't honour a bigger width
+   just falls back to the src we already know loads. */
+(function(){
+  var box=document.getElementById('lightbox');
+  if(!box)return;
+  var img=document.getElementById('lightbox-img'), pos=document.getElementById('lbPos'),
+      title=document.getElementById('lbTitle'), sub=document.getElementById('lbSub'),
+      link=document.getElementById('lbLink'), set=[], i=0, opener=null;
+
+  function shots(){ return Array.prototype.slice.call(document.querySelectorAll('img[data-lb]')); }
+
+  function show(n){
+    var el=set[n]; if(!el)return;
+    i=n;
+    var full=el.getAttribute('data-full')||el.src;
+    img.onerror=function(){ img.onerror=null; img.src=el.src; };   // fall back, never break
+    img.src=full;
+    img.alt=el.getAttribute('data-lb-title')||'';
+    title.textContent=el.getAttribute('data-lb-title')||'';
+    sub.textContent=el.getAttribute('data-lb-sub')||'';
+    var href=el.getAttribute('data-lb-href')||'';
+    if(href){ link.href=href; link.hidden=false; } else { link.hidden=true; }
+    pos.textContent=(n+1)+' / '+set.length;
+  }
+  function open(el){
+    set=shots(); var n=set.indexOf(el); if(n<0)return;
+    opener=el; box.classList.add('show'); box.setAttribute('aria-hidden','false');
+    document.body.style.overflow='hidden';
+    show(n);
+  }
+  function close(){
+    box.classList.remove('show'); box.setAttribute('aria-hidden','true');
+    img.src=''; document.body.style.overflow='';
+    /* Return focus to the card, not the <img>: an image is not focusable, so .focus() on
+       it is a silent no-op that leaves the keyboard user stranded at the top of the page.
+       Nearly every catalog photo sits inside its card's <a>, which IS focusable and is
+       where the user's place in the page actually is. */
+    if(opener){
+      var back=(opener.closest&&opener.closest('a,button'))||opener;
+      if(back.focus) back.focus();
+    }
+    opener=null;
+  }
+  /* No wrap. In a 60-card grid, wrapping to the top reads as "it broke" — a hard stop
+     plus the n/total counter says where you are. */
+  function step(d){ var n=i+d; if(n>=0&&n<set.length) show(n); }
+
+  document.addEventListener('click',function(e){
+    var el=e.target.closest?e.target.closest('img[data-lb]'):null;
+    if(el){ e.preventDefault(); open(el); return; }
+    // Backdrop only: a click on the image or the caption must not close it.
+    if(box.classList.contains('show')&&(e.target===box)) close();
+  });
+  document.getElementById('lbClose').addEventListener('click',close);
+  document.addEventListener('keydown',function(e){
+    if(!box.classList.contains('show'))return;
+    if(e.key==='Escape'){ close(); }
+    else if(e.key==='ArrowRight'){ e.preventDefault(); step(1); }
+    else if(e.key==='ArrowLeft'){ e.preventDefault(); step(-1); }
+  });
+})();
+</script>
 <script>
 /* ⚙ menu: progressive enhancement only. The <details> already opens and closes on its
    own with JS off; this adds Esc-to-close (returning focus to the summary, so keyboard

@@ -20,6 +20,7 @@ from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from .. import db, dedupe, geocode, imagesearch, reference, slabs, smartsearch
 
@@ -223,6 +224,54 @@ def _ops_state() -> dict:
 
 
 templates.env.globals["ops_state"] = _ops_state
+
+
+# Widths the catalog stores vs the width worth opening a lightbox at. Kept as data because
+# both numbers are a supplier's convention, not ours: ingest.py bakes `?width=1400` into
+# every Stone Profits URL, and SlabCloud's API exposes no image field at all so the crawler
+# derives `<slabid>_thumb.jpg`, whose full-res sibling is the same path without the suffix.
+_SPS_STORED_WIDTH = "width=1400"
+_SPS_FULL_WIDTH = "width=2400"
+
+
+def full_res(image_url: str) -> str:
+    """The largest version of a catalog photo we can name, or the URL unchanged.
+
+    Never guesses beyond the two conventions we actually crawl, and never fabricates a
+    host or a path shape. The caller treats the result as a HINT: the lightbox loads it
+    and falls back to the stored URL on error, so a supplier who does not honour the
+    bigger width costs a retry, not a broken image.
+    """
+    url = (image_url or "").strip()
+    if not url:
+        return ""
+    if _SPS_STORED_WIDTH in url:
+        return url.replace(_SPS_STORED_WIDTH, _SPS_FULL_WIDTH)
+    if "slabcloud.com" in url and "_thumb." in url:
+        return url.replace("_thumb.", ".")
+    return url
+
+
+templates.env.filters["full_res"] = full_res
+
+
+def lb_attrs(title: str = "", sub: str = "", href: str = "") -> Markup:
+    """The caption attributes the shared lightbox reads off an <img data-lb>.
+
+    A helper rather than three inline `data-` attributes per template because five call
+    sites across four templates would otherwise each have their own escaping, and one of
+    them would eventually get a stone name containing a quote wrong. Emits nothing for an
+    empty field, so the lightbox hides the row instead of showing a blank one.
+    """
+    parts = []
+    for name, value in (("title", title), ("sub", sub), ("href", href)):
+        text = str(value or "").strip()
+        if text:
+            parts.append(f'data-lb-{name}="{escape(text)}"')
+    return Markup(" ".join(parts))
+
+
+templates.env.globals["lb_attrs"] = lb_attrs
 
 
 def _distinct(conn, column: str) -> list[str]:
