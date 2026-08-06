@@ -402,56 +402,32 @@
     {
       "host": "blackstonesd.slabware.com",
       "name": "Blackstone SD",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://blackstonesd.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "selectstone.slabware.com",
       "name": "Select Stone",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://selectstone.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "slabsupplync.slabware.com",
       "name": "Slab Supply NC",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://slabsupplync.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stratastonedistributors.slabware.com",
       "name": "Strata Stone Distributors",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stratastonedistri",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stonearrangement.slabware.com",
       "name": "Stone Arrangement",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stonearrangement.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "rgs.slabware.com",
       "name": "RGS",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://rgs.slabware.com/",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "owstone.slabcloud.com",
@@ -616,128 +592,72 @@
     {
       "host": "13801memphisave.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://13801memphisave.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "13801memphisaveal.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://13801memphisaveal",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "13801memphisaveg.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://13801memphisaveg.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "301granite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://301granite.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "a1granite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://a1granite.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "aatestexo.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://aatestexo.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "absolutestonedesign.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://absolutestonedesi",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "absolutestonedesigno.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://absolutestonedesi",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "acuemarmonite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://acuemarmonite.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "ameriquartzusa.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://ameriquartzusa.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "ameriquartzusae.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://ameriquartzusae.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "ameriquartzusau.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://ameriquartzusau.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "anytopshop.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://anytopshop.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "applegreenimport.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://applegreenimport.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "appsbc.stoneprofitsweb.com",
@@ -766,11 +686,7 @@
     {
       "host": "aranastone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://aranastone.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "arcaecommerce.stoneprofitsweb.com",
@@ -791,182 +707,102 @@
     {
       "host": "architecturaltilestone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://architecturaltile",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "architecturaltilestonek.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://architecturaltile",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "architecturaltilestonex.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://architecturaltile",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "artisan.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://artisan.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "artisan1.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://artisan1.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "artisanv.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://artisanv.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "artstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://artstone.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "authenticstonedesign.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://authenticstonedes",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "autobuy.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://autobuy.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "azzarosurfaces.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://azzarosurfaces.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "azzarosurfacesco.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://azzarosurfacesco.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "azzarosurfacescob.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://azzarosurfacescob",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "azzarosurfacesq.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://azzarosurfacesq.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "bathgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://bathgranite.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "bathgranitep.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://bathgranitep.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "bdamarbleandgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://bdamarbleandgrani",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "biancosurfaces.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://biancosurfaces.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "blackeagle.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://blackeagle.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "blackeaglea.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://blackeaglea.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "bluesuefaces.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://bluesuefaces.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "bluesurfaces.slabware.com",
@@ -980,29 +816,17 @@
     {
       "host": "boatmantileandgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://boatmantileandgra",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "boatmantileandgraniteq.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://boatmantileandgra",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "boatmantileandgranitey.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://boatmantileandgra",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "bostongranite.stoneprofitsweb.com",
@@ -1031,20 +855,12 @@
     {
       "host": "bravoresourcesinc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://bravoresourcesinc",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "britus.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://britus.slabware.c",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "broward.slabware.com",
@@ -1058,20 +874,12 @@
     {
       "host": "cabinetscountertopsandmore.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cabinetscounterto",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "cabinetwarehousesurplus.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cabinetwarehouses",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "capitolgranitem.stoneprofitsweb.com",
@@ -1092,362 +900,202 @@
     {
       "host": "capstone806.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://capstone806.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "capstone806a.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://capstone806a.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "carolinasstonemarblegranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://carolinasstonemar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "cedargraniteco.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cedargraniteco.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "cfi.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cfi.slabware.com/",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "classicmarblegranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://classicmarblegran",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "classicmarblegranitew.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://classicmarblegran",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "comptoirluxe.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://comptoirluxe.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "comptoirluxev.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://comptoirluxev.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "cornerstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cornerstone.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "cornerstonerm.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cornerstonerm.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "cosiston.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cosiston.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "countertopsolutionsinc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://countertopsolutio",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "creative.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://creative.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "csaz.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://csaz.slabware.com",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "cutting-edgesurfaces.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://cutting-edgesurfa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "daycapiedras.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://daycapiedras.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dcapri.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dcapri.slabware.c",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dcaprican.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dcaprican.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "deltastoneproducts.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://deltastoneproduct",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "demo1yir.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://demo1yir.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "demo2yi.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://demo2yi.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "demo3yik.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://demo3yik.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "demolitea.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://demolitea.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "demoliteyk.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://demoliteyk.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "designgranites.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://designgranites.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dhdesignsinc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dhdesignsinc.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "distinctive.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://distinctive.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "distributor.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://distributor.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "distributorvj.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://distributorvj.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dmgdesigner.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dmgdesigner.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dominguezstoneworks.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dominguezstonewor",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dsw.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dsw.slabware.com/",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dswe.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dswe.slabware.com",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dynamicstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dynamicstone.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "dynamicstoney.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://dynamicstoney.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "eaglestone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://eaglestone.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "eaglestoneb.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://eaglestoneb.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "elementsmarble.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://elementsmarble.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "elitekitchenandstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://elitekitchenandst",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "ellfab.stoneprofitsweb.com",
@@ -1460,11 +1108,7 @@
     {
       "host": "esgroup.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://esgroup.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "euromarble.slabware.com",
@@ -1474,101 +1118,57 @@
     {
       "host": "eurostoneamericaint.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://eurostoneamericai",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "exoticstoneimports.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://exoticstoneimport",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "exporter.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://exporter.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "exporterg.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://exporterg.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "exporterxpf.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://exporterxpf.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "fabricator.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://fabricator.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "fabricatorw.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://fabricatorw.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "fordstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://fordstone.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "galaxygranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://galaxygranite.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "galleriaofstoneaz.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://galleriaofstoneaz",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "garpa.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://garpa.slabware.co",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "gbcsouth.slabware.com",
@@ -1582,155 +1182,87 @@
     {
       "host": "globalstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://globalstone.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "globalstonecollection.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://globalstonecollec",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "gmistone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://gmistone.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "gmistonexc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://gmistonexc.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "goodfellasgranitellc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://goodfellasgranite",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "goodfellasgranitellcfab.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://goodfellasgranite",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "granitedynasty.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://granitedynasty.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "granitemountain.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://granitemountain.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "graniteslabsuk.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://graniteslabsuk.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "graniteslabsukw.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://graniteslabsukw.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "granitewholesalefl.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://granitewholesalef",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "grupogapc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://grupogapc.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "halfprice.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://halfprice.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "hcorpfs.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://hcorpfs.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "imperialgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://imperialgranite.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "infinitystone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://infinitystone.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "infinitystones.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://infinitystones.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "instyle.stoneprofitsweb.com",
@@ -1743,83 +1275,47 @@
     {
       "host": "italymarbleandgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://italymarbleandgra",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "italymarbleandgraniteq.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://italymarbleandgra",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "jegamstones.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://jegamstones.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "jjgraniteinc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://jjgraniteinc.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "jnlgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://jnlgranite.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "jvsgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://jvsgranite.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "kalacattastone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://kalacattastone.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "kcpc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://kcpc.slabware.com",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "kitchenandbathscenter.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://kitchenandbathsce",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "kivastone.stoneprofitsweb.com",
@@ -1836,56 +1332,32 @@
     {
       "host": "lafayettmarblegranitellc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://lafayettmarblegra",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "lagalleriadipietra.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://lagalleriadipietr",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "lapidus.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://lapidus.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "lite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://lite.slabware.com",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "livingstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://livingstone.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "maiastonecompany.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://maiastonecompany.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "marbleoftheworld.stoneprofitsweb.com",
@@ -1898,11 +1370,7 @@
     {
       "host": "marbleunlimited.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://marbleunlimited.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "marjandev.stoneprofitsweb.com",
@@ -1915,20 +1383,12 @@
     {
       "host": "marmi.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://marmi.slabware.co",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "marmoglass.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://marmoglass.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "massgranite.stoneprofitsweb.com",
@@ -1937,20 +1397,12 @@
     {
       "host": "mautic.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://mautic.slabware.c",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "maxgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://maxgranite.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "megagranite.stoneprofitsweb.com",
@@ -1959,29 +1411,17 @@
     {
       "host": "menastones.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://menastones.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "miastoneassociates.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://miastoneassociate",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "middletngranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://middletngranite.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "mkt.slabware.com",
@@ -1995,11 +1435,7 @@
     {
       "host": "modernstones.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://modernstones.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "mondial.stoneprofitsweb.com",
@@ -2008,29 +1444,17 @@
     {
       "host": "mondialgranit.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://mondialgranit.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "msdmarble.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://msdmarble.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "multiservice.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://multiservice.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "mysticgranite.stoneprofitsweb.com",
@@ -2039,11 +1463,7 @@
     {
       "host": "national.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://national.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "natureofmarblea.stoneprofitsweb.com",
@@ -2056,20 +1476,12 @@
     {
       "host": "newgranitecorp.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://newgranitecorp.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "novosite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://novosite.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "nsr.stoneprofitsweb.com",
@@ -2086,11 +1498,7 @@
     {
       "host": "olympusmarble.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://olympusmarble.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "omega.stoneprofitsweb.com",
@@ -2111,92 +1519,52 @@
     {
       "host": "pinnaclesurface.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://pinnaclesurface.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "pinnaclesurfacedallas.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://pinnaclesurfaceda",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "pmggranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://pmggranite.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "pmw.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://pmw.slabware.com/",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "prod-us-1.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://prod-us-1.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "prod1-us-1.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://prod1-us-1.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "qatarmarble.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://qatarmarble.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "rdmarble.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://rdmarble.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "renaissanceslabyard.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://renaissanceslabya",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "ridstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://ridstone.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "roca.stoneprofitsweb.com",
@@ -2209,20 +1577,12 @@
     {
       "host": "rocksolidgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://rocksolidgranite.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "romanstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://romanstone.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "royaltystone.stoneprofitsweb.com",
@@ -2231,38 +1591,22 @@
     {
       "host": "rsgstones.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://rsgstones.slabwar",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "rsw.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://rsw.slabware.com/",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "seacoaststone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://seacoaststone.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "seattlestone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://seattlestone.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "selectstone.stoneprofitsweb.com",
@@ -2271,20 +1615,12 @@
     {
       "host": "sevenseastone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://sevenseastone.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "sg.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://sg.slabware.com/F",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "shellfab.stoneprofitsweb.com",
@@ -2329,38 +1665,22 @@
     {
       "host": "slabshouse.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://slabshouse.slabwa",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "spdcountertop.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://spdcountertop.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "splendourstonescorp.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://splendourstonesco",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stoneandtilefromportugal.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stoneandtilefromp",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stonecraftlc.slabware.com",
@@ -2374,20 +1694,12 @@
     {
       "host": "stonedesign.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stonedesign.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stonegallerybygapc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stonegallerybygap",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stonelink.stoneprofitsweb.com",
@@ -2396,20 +1708,12 @@
     {
       "host": "stonera.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stonera.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stonesmithsindy.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stonesmithsindy.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stonespyre.stoneprofitsweb.com",
@@ -2418,11 +1722,7 @@
     {
       "host": "stoneworksaug.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://stoneworksaug.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "stoneyarduk.stoneprofitsweb.com",
@@ -2469,20 +1769,12 @@
     {
       "host": "takeitforgranite.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://takeitforgranite.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "taxilastone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://taxilastone.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "tbgranite.stoneprofitsweb.com",
@@ -2531,11 +1823,7 @@
     {
       "host": "test-distributor.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://test-distributor.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "test-exporter.slabware.com",
@@ -2549,11 +1837,7 @@
     {
       "host": "test-fabricator.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://test-fabricator.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "test-uniquartz.slabware.com",
@@ -2577,20 +1861,12 @@
     {
       "host": "texascounterfitters.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://texascounterfitte",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "tggstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://tggstone.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "thegraniteyardnh.slabware.com",
@@ -2604,11 +1880,7 @@
     {
       "host": "therockshop.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://therockshop.slabw",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "theslabhouse.stoneprofitsweb.com",
@@ -2625,29 +1897,17 @@
     {
       "host": "tmnaturalstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://tmnaturalstone.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "topstonestation.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://topstonestation.s",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "tqstone.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://tqstone.slabware.",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "tritonstoneinventory.stoneprofitsweb.com",
@@ -2676,11 +1936,7 @@
     {
       "host": "unitedstonesource.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://unitedstonesource",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "universalcountertop.slabware.com",
@@ -2694,29 +1950,17 @@
     {
       "host": "vanguardquartz.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://vanguardquartz.sl",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "varshastones.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://varshastones.slab",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "veneziamarble.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://veneziamarble.sla",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "vfgranite.slabware.com",
@@ -2738,20 +1982,12 @@
     {
       "host": "wholesalegraniteinc.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://wholesalegranitei",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "wildcard.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://wildcard.slabware",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "wildcard.stoneprofitsweb.com",
@@ -2764,11 +2000,7 @@
     {
       "host": "wwwm.slabware.com",
       "name": "",
-      "provider": "slabware",
-      "rejected": {
-        "reason": "3 consecutive zero-item crawls; last: HTTPStatusError: Client error '403 Forbidden' for url 'https://wwwm.slabware.com",
-        "at": "2026-08-03"
-      }
+      "provider": "slabware"
     },
     {
       "host": "zionstonegallery.slabware.com",
