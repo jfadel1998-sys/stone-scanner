@@ -25,7 +25,7 @@
   <div class="watchprev">
     {% for r in (digest.restock + digest.listed)[:12] %}
       <a class="pvthumb" href="/item?id={{ r.id }}" title="{{ r.name_norm|title }} — {{ r.supplier_name }}{% if r.slabs %} · {{ r.slabs }} slabs{% endif %}">
-        {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.style.display='none'">{% else %}🪨{% endif %}
+        {% if r.image_url %}<img loading="lazy" decoding="async" src="{{ r.image_url }}" alt="" onerror="this.parentNode.innerHTML='🪨'">{% else %}🪨{% endif %}
       </a>
     {% endfor %}
   </div>
@@ -38,15 +38,15 @@
     <div class="watchhead">
       <a class="watchq" href="/?q={{ it.watch.query|urlencode }}">{{ it.watch.query }}</a>
       <span class="watchcount">{{ it.total }} match{{ '' if it.total == 1 else 'es' }}{% if it.new_count %} · <span class="new">{{ it.new_count }} NEW</span>{% endif %}</span>
-      <form method="post" action="/watchlist/remove" style="display:inline;margin-left:auto;">
+      <form method="post" action="/watchlist/remove">
         <input type="hidden" name="id" value="{{ it.watch.id }}">
-        <button class="rmbtn" title="Remove from watchlist">✕</button>
+        <button class="rmbtn" title="Remove from watchlist" aria-label="Remove '{{ it.watch.query }}' from watchlist">✕</button>
       </form>
     </div>
     <div class="watchprev">
       {% for r in it.preview %}
         <a class="pvthumb" href="/item?id={{ r.id }}" title="{{ r.item_name }}">
-          {% if r.image_url %}<img loading="lazy" src="{{ r.image_url }}" alt="" onerror="this.style.display='none'">{% else %}🪨{% endif %}
+          {% if r.image_url %}<img loading="lazy" decoding="async" src="{{ r.image_url }}" alt="" onerror="this.parentNode.innerHTML='🪨'">{% else %}🪨{% endif %}
         </a>
       {% else %}<span class="muted">No current matches.</span>{% endfor %}
     </div>

@@ -7,12 +7,12 @@
   <div class="detail-photo">
     {% if m.image_url %}
       <a href="{{ m.image_url }}" target="_blank" rel="noopener" title="Open full-size photo">
-        <img src="{{ m.image_url }}" alt="{{ m.item_name }}" loading="eager"
+        <img src="{{ m.image_url }}" alt="{{ m.item_name }}" loading="eager" fetchpriority="high" decoding="async"
              onerror="this.closest('.detail-photo').classList.add('noimg')">
       </a>
     {% elif rep_photo %}
       <a href="{{ rep_photo }}" target="_blank" rel="noopener" title="Representative photo of this stone">
-        <img src="{{ rep_photo }}" alt="{{ m.item_name }}" loading="eager"
+        <img src="{{ rep_photo }}" alt="{{ m.item_name }}" loading="eager" fetchpriority="high" decoding="async"
              onerror="this.closest('.detail-photo').classList.add('noimg')">
         <span class="repbadge" title="This supplier published no photo of its own — showing a representative photo of this stone">≈ representative</span>
       </a>
@@ -79,7 +79,7 @@
         <input type="hidden" name="image_url" value="{{ m.image_url or '' }}">
         <input type="hidden" name="back" value="/item?id={{ m.id }}">
         <label class="cmpchk cmpchk-btn" title="Add this material to the compare tray">
-          <input type="checkbox" name="on" data-cmpkey="{{ m.material_key }}" onchange="this.form.requestSubmit()" {{ 'checked' if m.material_key in cmp.keyset }}>
+          <input type="checkbox" name="on" data-cmpkey="{{ m.material_key }}" aria-label="Add {{ m.item_name }} to compare" onchange="this.form.requestSubmit()" {{ 'checked' if m.material_key in cmp.keyset }}>
           <span class="cmpchk-face" aria-hidden="true">{{ ic('scale') }}</span>
           <span class="cmpchk-text"></span>
         </label>
@@ -118,7 +118,7 @@
 </div>
 
 <section class="block" id="slabgallery">
-  <h2>Slabs in stock <span id="slabcount" class="muted"></span> <span id="slabstamp" class="livestamp"></span></h2>
+  <h2>Slabs in stock <span id="slabcount" class="muted" aria-live="polite"></span> <span id="slabstamp" class="livestamp" aria-live="polite"></span></h2>
   <div id="slablist" class="slabgrid">
     <div class="slabloading"><span class="spin"></span> Loading live slab photos from {{ m.supplier_name }}…</div>
   </div>
@@ -128,11 +128,11 @@
 <section class="block">
   <h2>Other {{ m.thickness_label if false else 'options' }} at {{ m.supplier_name }}</h2>
   <table class="materials">
-    <thead><tr><th></th><th>Listed as</th><th>Thk</th><th>Finish</th><th>Form</th><th class="num">Slabs</th><th></th></tr></thead>
+    <thead><tr><th></th><th>Listed as</th><th title="Thickness">Thk</th><th>Finish</th><th>Form</th><th class="num">Slabs</th><th></th></tr></thead>
     <tbody>
     {% for v in variants %}
       <tr>
-        <td class="thumbcell">{% if v.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ v.image_url|full_res }}" {{ lb_attrs(v.item_name or m.item_name, m.supplier_name, '/item?id=' ~ v.id) }} src="{{ v.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
+        <td class="thumbcell">{% if v.image_url %}<img class="thumb" loading="lazy" decoding="async" data-lb data-full="{{ v.image_url|full_res }}" {{ lb_attrs(v.item_name or m.item_name, m.supplier_name, '/item?id=' ~ v.id) }} src="{{ v.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
         <td class="name">{{ v.item_name }}</td>
         <td>{{ v.thickness }}</td>
         <td class="muted">{{ v.finish }}</td>
@@ -153,7 +153,7 @@
     <tbody>
     {% for o in others %}
       <tr class="{{ 'self' if o.supplier_host == m.supplier_host }}">
-        <td class="thumbcell">{% if o.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ o.image_url|full_res }}" {{ lb_attrs(o.item_name, o.supplier_name, '/item?id=' ~ o.id) }} src="{{ o.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
+        <td class="thumbcell">{% if o.image_url %}<img class="thumb" loading="lazy" decoding="async" data-lb data-full="{{ o.image_url|full_res }}" {{ lb_attrs(o.item_name, o.supplier_name, '/item?id=' ~ o.id) }} src="{{ o.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">{% else %}<span class="thumb noimg"></span>{% endif %}</td>
         <td class="name">{{ o.supplier_name }}{% if o.supplier_host == m.supplier_host %} <span class="here">viewing</span>{% endif %}</td>
         <td class="num">{% if o.slabs %}{{ o.slabs }}{% elif o.tile_sf %}<span class="milechip" title="Sold as tile — measured by area">{{ o.tile_sf|round|int }} ft² tile</span>{% elif o.has_tile %}<span class="milechip">tile</span>{% else %}—{% endif %}</td>
         <td class="num muted">{{ o.variants }}</td>
@@ -173,7 +173,7 @@
   <div class="simgrid">
     {% for x in similar %}
     <a class="simcard" href="/item?id={{ x.id }}">
-      {% if x.image_url %}<img loading="lazy" data-lb data-full="{{ x.image_url|full_res }}" {{ lb_attrs(x.item_name, (x.suppliers ~ ' supplier' ~ ('' if x.suppliers == 1 else 's')), '/material?key=' ~ (x.material_key|urlencode)) }} src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
+      {% if x.image_url %}<img loading="lazy" decoding="async" data-lb data-full="{{ x.image_url|full_res }}" {{ lb_attrs(x.item_name, (x.suppliers ~ ' supplier' ~ ('' if x.suppliers == 1 else 's')), '/material?key=' ~ (x.material_key|urlencode)) }} src="{{ x.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;simph&quot;>🪨</span>'">
       {% else %}<span class="simph">🪨</span>{% endif %}
       <div class="simmeta">
         <b>{{ x.item_name }}</b>
@@ -227,17 +227,17 @@
      means they were reached and list nothing. Branching on FIELDS, not on message text. */
   function emptyMessage(d){
     if(d && d.live_supported === false){
-      return '<div class="slabloading">' + esc(LB_SUPPLIER) + '’s platform publishes a '
+      return '<div class="slabloading" role="status">' + esc(LB_SUPPLIER) + '’s platform publishes a '
            + 'slab count, not individual slabs — so there is no per-slab gallery to show. '
            + 'The quantity above is what they publish. ' + liveLink + '</div>';
     }
     if(d && d.error){
-      return '<div class="slabloading warn">Couldn’t reach ' + esc(LB_SUPPLIER)
+      return '<div class="slabloading warn" role="status">Couldn’t reach ' + esc(LB_SUPPLIER)
            + ' just now, so this gallery is unavailable — it is not a statement about '
            + 'their stock. <button type="button" class="linklike" id="slabretry">Try again'
            + '</button> · ' + liveLink + '</div>';
     }
-    return '<div class="slabloading">No individual slab photos are published right now. '
+    return '<div class="slabloading" role="status">No individual slab photos are published right now. '
          + liveLink + '</div>';
   }
 
@@ -246,7 +246,10 @@
       list.innerHTML = emptyMessage(d);
       countEl.textContent = '';
       var again = document.getElementById('slabretry');
-      if(again) again.addEventListener('click', function(){ load(true); });
+      if(again) again.addEventListener('click', function(){
+        list.innerHTML = '<div class="slabloading" role="status"><span class="spin"></span> Retrying ' + esc(LB_SUPPLIER) + '…</div>';
+        load(true);
+      });
       return;
     }
     countEl.textContent = '· '+slabs.length+' slab'+(slabs.length===1?'':'s');
@@ -256,7 +259,7 @@
       var size = (s.length && s.width) ? Math.round(s.length)+'×'+Math.round(s.width) : '';
       var img;
       if(s.thumb){
-        img = '<img loading="lazy" data-lb src="'+s.thumb+'" data-full="'+s.photo+'"'
+        img = '<img loading="lazy" decoding="async" data-lb src="'+esc(s.thumb)+'" data-full="'+esc(s.photo||s.thumb)+'"'
             + ' data-lb-title="'+esc(LB_NAME)+'" data-lb-sub="'+esc(LB_SUPPLIER
               + (s.slab_no ? ' · slab '+s.slab_no : '')
               + (size ? ' · '+size+' '+(s.uom||'in') : '')
@@ -264,7 +267,7 @@
             + ' alt="" onerror="this.parentNode.classList.add(\'noimg\')">';
       } else if(repPhoto){
         // No photo of this exact slab -> show a labeled representative of the stone.
-        img = '<img loading="lazy" data-lb class="repimg" src="'+repPhoto+'" data-full="'+repPhoto+'"'
+        img = '<img loading="lazy" decoding="async" data-lb class="repimg" src="'+esc(repPhoto)+'" data-full="'+esc(repPhoto)+'"'
             + ' data-lb-title="'+esc(LB_NAME)+'" data-lb-sub="representative photo — the actual slab varies"'
             + ' alt="" onerror="this.parentNode.classList.add(\'noimg\')">'
             + '<span class="repbadge" title="No photo of this exact slab was published — showing a representative photo of this stone">≈ representative</span>';

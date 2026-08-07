@@ -16,7 +16,7 @@
 <div class="block"><p class="okchip warn">The image-search model isn't installed in this build. Add <code>stonescan/models/clip/clip_vision.onnx</code> and rebuild.</p></div>
 {% endif %}
 
-<form class="filters" method="post" action="/photo" enctype="multipart/form-data">
+<form class="filters" method="post" action="/photo" enctype="multipart/form-data" onsubmit="var b=this.querySelector('button[type=submit]'); b.disabled=true; b.textContent='Identifying…';">
   <input type="file" name="photo" accept="image/*" required class="fileinput">
   <select name="material_type" title="Restrict to one material type">
     <option value="">Any type</option>
@@ -159,11 +159,11 @@
         <p class="notest">No reference entry for this stone yet.</p>
         <p class="muted small">The bundled reference covers the most widely-carried stones. You can look this one up now — it fetches from public sources, cites them, and is remembered for next time.</p>
         {% if ident.known %}
-        <form method="post" action="/photo/lookup" class="lookupform">
+        <form method="post" action="/photo/lookup" class="lookupform" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Looking this up…';">
           <input type="hidden" name="key" value="{{ ident.best.material_key }}">
           <input type="hidden" name="name" value="{{ ident.best.name }}">
           <input type="hidden" name="stone_type" value="{{ ident.best.material_type }}">
-          <button type="submit">Look this up</button>
+          <button type="submit" class="btn">Look this up</button>
         </form>
         {% endif %}
       {% endif %}
@@ -194,8 +194,8 @@
           <dd>
             {% if evidence.prices.per_sqft %}
               {% set p = evidence.prices.per_sqft %}
-              <b>${{ p.low|round(2) }}–${{ p.high|round(2) }}</b> / sq ft
-              <span class="muted">· median ${{ p.median|round(2) }} · {{ p.n }} listing{{ '' if p.n == 1 else 's' }} on {{ p.suppliers|join(', ') }}</span>
+              <b>${{ "%.2f"|format(p.low) }}–${{ "%.2f"|format(p.high) }}</b> / sq ft
+              <span class="muted">· median ${{ "%.2f"|format(p.median) }} · {{ p.n }} listing{{ '' if p.n == 1 else 's' }} on {{ p.suppliers|join(', ') }}</span>
             {% endif %}
             {% if evidence.prices.slab_total %}
               {% set t = evidence.prices.slab_total %}
@@ -230,7 +230,7 @@
     <div class="cardgrid">
     {% for r in results %}
       <a class="matcard" href="/item?id={{ r.id }}">
-        {% if r.image_url %}<img data-lb data-full="{{ r.image_url|full_res }}" {{ lb_attrs(r.item_name, r.supplier_name, '/material?key=' ~ (r.material_key|urlencode)) }} src="{{ r.image_url }}" loading="lazy" onerror="this.classList.add('broken')">{% else %}<div class="cardph">🪨</div>{% endif %}
+        {% if r.image_url %}<img data-lb data-full="{{ r.image_url|full_res }}" {{ lb_attrs(r.item_name, r.supplier_name, '/material?key=' ~ (r.material_key|urlencode)) }} src="{{ r.image_url }}" loading="lazy" decoding="async" onerror="this.outerHTML='<div class=&quot;cardph&quot;>🪨</div>'">{% else %}<div class="cardph">🪨</div>{% endif %}
         <span class="cardmeta">
           <b>{{ r.item_name }}</b>
           <span class="cardsup">{{ r.supplier_name }}</span>

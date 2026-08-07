@@ -2,13 +2,13 @@
 {% block title %}Review merges — Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats"><a href="/quality">← Data quality</a></div>
+<div class="stats"><a href="/quality">‹ Data quality</a></div>
 {% endblock %}
 
 {% block content %}
 <div class="material-head">
   <h1>Review merges</h1>
-  <div class="viewtoggle" style="margin-left:0;display:inline-flex;margin-top:6px;margin-bottom:6px;">
+  <div class="viewtoggle inline">
     <a href="/quality/merge?kind=conflict" class="{{ 'on' if kind == 'conflict' }}">Type conflicts</a>
     <a href="/quality/merge?kind=fuzzy" class="{{ 'on' if kind == 'fuzzy' }}">Spelling variants</a>
   </div>
@@ -25,7 +25,7 @@
 <div class="mergelist">
 {% for c in clusters %}
   <div class="mergecard">
-    {% if c.image_url %}<img class="mthumb" src="{{ c.image_url }}" loading="lazy" onerror="this.classList.add('noimg')">{% else %}<span class="mthumb noimg"></span>{% endif %}
+    {% if c.image_url %}<img class="mthumb" src="{{ c.image_url }}" loading="lazy" decoding="async" onerror="this.classList.add('noimg')">{% else %}<span class="mthumb noimg"></span>{% endif %}
     <div class="mbody">
       <b class="mname">{{ c.display }}</b>
       <div class="qchips">
@@ -62,9 +62,9 @@
 
 {% if pages > 1 %}
 <div class="pager">
-  {% if page > 1 %}<a href="/quality/merge?kind={{ kind }}&page={{ page - 1 }}">← Prev</a>{% endif %}
+  {% if page > 1 %}<a href="/quality/merge?kind={{ kind }}&page={{ page - 1 }}">‹ Prev</a>{% endif %}
   <span>Page {{ page }} of {{ pages }}</span>
-  {% if page < pages %}<a href="/quality/merge?kind={{ kind }}&page={{ page + 1 }}">Next →</a>{% endif %}
+  {% if page < pages %}<a href="/quality/merge?kind={{ kind }}&page={{ page + 1 }}">Next ›</a>{% endif %}
 </div>
 {% endif %}
 {% endblock %}

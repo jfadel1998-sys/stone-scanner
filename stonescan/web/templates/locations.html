@@ -61,6 +61,7 @@
 <script id="pindata" type="application/json">{{ pins | tojson }}</script>
 <script>
 (function () {
+  if (!window.L) { document.getElementById('map').innerHTML = '<p class="empty">Map library failed to load — the location cards below still work.</p>'; return; }
   var pins = JSON.parse(document.getElementById('pindata').textContent);
   var map = L.map('map', { scrollWheelZoom: false }).setView([39.5, -98.35], 4);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -81,9 +82,9 @@
       dashArray: p.approx ? '3,3' : null
     }).addTo(map).bindPopup(
       '<b>' + p.location + '</b><br>' +
-      (p.label && p.label !== p.location ? '<span style="color:#8a857d">' + p.label + '</span><br>' : '') +
+      (p.label && p.label !== p.location ? '<span class="muted">' + p.label + '</span><br>' : '') +
       p.slabs + ' slabs · ' + p.products + ' products · ' + p.suppliers + ' supplier(s)<br>' +
-      (p.approx ? '<i style="color:#9c5a40">approximate — bare city name, could be another state</i><br>' : '') +
+      (p.approx ? '<i class="popapprox">approximate — bare city name, could be another state</i><br>' : '') +
       '<a href="/?location=' + encodeURIComponent(p.location) + '&in_stock=1&sort=slabs">Search this location →</a>'
     );
     bounds.push([p.lat, p.lon]);

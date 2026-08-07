@@ -30,20 +30,20 @@
     </span>
   </h2>
   <table class="materials">
-    <thead><tr><th></th><th>Material</th><th>Thk</th><th class="num">Slabs now</th><th>Note</th><th></th></tr></thead>
+    <thead><tr><th></th><th>Material</th><th title="Thickness">Thk</th><th class="num">Slabs now</th><th>Note</th><th></th></tr></thead>
     <tbody>
     {% for it in g['items'] %}
       <tr {% if it.gone %}class="gonerow"{% endif %}>
         <td class="thumbcell">
           {% if it.live_id %}<a href="/item?id={{ it.live_id }}">{% endif %}
-          {% if it.image_url %}<img class="thumb" loading="lazy" src="{{ it.image_url }}" alt="" onerror="this.classList.add('broken')">
+          {% if it.image_url %}<img class="thumb" loading="lazy" decoding="async" src="{{ it.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
           {% else %}<span class="thumb noimg"></span>{% endif %}
           {% if it.live_id %}</a>{% endif %}
         </td>
         <td class="name">
           {% if it.live_id %}<a class="itemlink" href="/item?id={{ it.live_id }}">{{ it.item_name }}</a>
           {% else %}{{ it.item_name }} <span class="gonechip" title="Not in the supplier's catalog at the last crawl">gone</span>{% endif %}
-          {% if it.finish %}<div class="muted" style="font-size:12px">{{ it.finish }}</div>{% endif %}
+          {% if it.finish %}<div class="muted subline">{{ it.finish }}</div>{% endif %}
         </td>
         <td>{{ it.thickness }}</td>
         {# A tile's quantity is square feet, not slabs — label it as area rather than
@@ -63,7 +63,7 @@
           <form method="post" action="/lists/remove">
             <input type="hidden" name="item_id" value="{{ it.id }}">
             <input type="hidden" name="list_id" value="{{ meta.id }}">
-            <button class="rmbtn" title="Remove from list">✕</button>
+            <button class="rmbtn" title="Remove from list" aria-label="Remove {{ it.item_name }} from this list">✕</button>
           </form>
         </td>
       </tr>

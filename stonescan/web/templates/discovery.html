@@ -22,7 +22,7 @@
 
 <div class="block">
   <h2>By platform</h2>
-  <table class="materials" style="width:auto; min-width:min(560px, calc(100% - 44px));">
+  <table class="materials fit">
     <thead><tr><th>Platform</th><th class="num">Candidates</th><th class="num">Live</th><th class="num">Materials</th></tr></thead>
     <tbody>
     {% for p in by_provider %}
@@ -35,7 +35,7 @@
 {% if cats.unprobed %}
 <div class="block">
   <h2>Unprobed candidates <span class="qbadge">{{ counts.unprobed }}</span></h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">Newly discovered, never crawled. Probe them to see which expose a public catalog:</p>
+  <p class="muted qdesc">Newly discovered, never crawled. Probe them to see which expose a public catalog:</p>
   <pre class="rfqbody" style="margin:0 0 10px; white-space:pre-wrap;">python -m stonescan.ingest --only {{ unprobed_hosts }} --slabs</pre>
   <table class="materials healthtable">
     <thead><tr><th>Host</th><th>Platform</th></tr></thead>
@@ -51,7 +51,7 @@
 {% if cats.empty %}
 <div class="block">
   <h2>Empty — private or dead <span class="qbadge">{{ counts.empty }}</span></h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">Crawled cleanly but returned no items — almost always a login-gated tenant or a retired catalog. Candidates to prune from <code>suppliers.json</code>.</p>
+  <p class="muted qdesc">Crawled cleanly but returned no items — almost always a login-gated tenant or a retired catalog. Candidates to prune from <code>suppliers.json</code>.</p>
   <table class="materials healthtable">
     <thead><tr><th>Host</th><th>Platform</th><th>Last crawl</th></tr></thead>
     <tbody>
@@ -66,7 +66,7 @@
 {% if cats.broken %}
 <div class="block">
   <h2>Errored <span class="qbadge">{{ counts.broken }}</span></h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">Failed on the last crawl (Cloudflare, a moved <code>buildId</code>, a network blip). Retry with <code>--retry-errored</code>; see <a href="/health">Health</a> for details.</p>
+  <p class="muted qdesc">Failed on the last crawl (Cloudflare, a moved <code>buildId</code>, a network blip). Retry with <code>--retry-errored</code>; see <a href="/health">Health</a> for details.</p>
   <table class="materials healthtable">
     <thead><tr><th>Host</th><th>Platform</th><th>Error</th></tr></thead>
     <tbody>
@@ -81,7 +81,7 @@
 {% if cats.rejected %}
 <div class="block">
   <h2>Rejected — triaged out <span class="qbadge">{{ counts.rejected }}</span></h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">Judged not worth probing — auto-rejected after 3 consecutive empty crawls, or rejected by hand in <code>suppliers.json</code>. Skipped by the crawl so they stop costing a request every night; each rejection lapses after 90 days for a fresh chance. Delete the <code>rejected</code> block to restore one immediately.</p>
+  <p class="muted qdesc">Judged not worth probing — auto-rejected after 3 consecutive empty crawls, or rejected by hand in <code>suppliers.json</code>. Skipped by the crawl so they stop costing a request every night; each rejection lapses after 90 days for a fresh chance. Delete the <code>rejected</code> block to restore one immediately.</p>
   <table class="materials healthtable">
     <thead><tr><th>Host</th><th>Reason</th><th>Rejected</th><th class="num">Lapses in</th></tr></thead>
     <tbody>
@@ -101,7 +101,7 @@
 {% if cats.challenged %}
 <div class="block">
   <h2>Declined by a bot check <span class="qbadge">{{ counts.challenged }}</span></h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">Not a fault to fix, and not something to work around: these hosts answer with a bot-protection challenge, which is the operator declining automated access — the same statement <code>robots.txt</code> makes, said out of band. They are excluded from the retry pass and the empty-crawl streak, and re-probed only every {{ challenge_recheck_days }} days rather than nightly, because re-asking them every night is the traffic that protection exists to stop.</p>
+  <p class="muted qdesc">Not a fault to fix, and not something to work around: these hosts answer with a bot-protection challenge, which is the operator declining automated access — the same statement <code>robots.txt</code> makes, said out of band. They are excluded from the retry pass and the empty-crawl streak, and re-probed only every {{ challenge_recheck_days }} days rather than nightly, because re-asking them every night is the traffic that protection exists to stop.</p>
   <table class="materials healthtable">
     <thead><tr><th>Host</th><th>Platform</th><th>What they answered</th></tr></thead>
     <tbody>
@@ -116,7 +116,7 @@
 {% if cats.blocked %}
 <div class="block">
   <h2>Declined by robots.txt <span class="qbadge">{{ counts.blocked }}</span></h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">Not a fault to fix: these hosts disallow us in their <code>robots.txt</code>, and we honor that. They are re-checked on each full crawl (so a change on their side is picked up) but excluded from the retry pass. To stop probing one entirely, run <code>python -m stonescan.denylist add &lt;host&gt;</code>.</p>
+  <p class="muted qdesc">Not a fault to fix: these hosts disallow us in their <code>robots.txt</code>, and we honor that. They are re-checked on each full crawl (so a change on their side is picked up) but excluded from the retry pass. To stop probing one entirely, run <code>python -m stonescan.denylist add &lt;host&gt;</code>.</p>
   <table class="materials healthtable">
     <thead><tr><th>Host</th><th>Platform</th><th>Rule</th></tr></thead>
     <tbody>
@@ -130,7 +130,7 @@
 
 <div class="block">
   <h2>Live catalogs <span class="qbadge">{{ counts.live }}</span></h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">Publicly published and indexed. Full operational detail on the <a href="/health">Health</a> page.</p>
+  <p class="muted qdesc">Publicly published and indexed. Full operational detail on the <a href="/health">Health</a> page.</p>
   <div class="locgrid" style="padding:0;">
   {% for r in cats.live[:60] %}
     <div class="loccard"><b>{{ r.name or r.host }}</b><span>{{ r.items }} materials · {{ r.slabs }} slabs</span><span class="muted">{{ r.provider }}</span></div>
