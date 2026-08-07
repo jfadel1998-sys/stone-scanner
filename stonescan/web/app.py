@@ -206,8 +206,14 @@ def _ops_refresh() -> None:
     try:
         value = _ops_counts()
         _ops_cache["value"] = value
+        _ops_cache["error"] = ""
         _ops_cache["at"] = time.time()
-    except Exception:  # noqa: BLE001 - a badge must never take the app down
+    except Exception as e:  # noqa: BLE001 - a badge must never take the app down
+        # ...but it must not fail SILENTLY either, which is what happened: /discovery began
+        # raising KeyError, this swallowed it, and the badge rendered no number at all — a
+        # reading indistinguishable from "nothing needs attention". A badge that cannot be
+        # computed has to say so somewhere, or it is worse than no badge.
+        _ops_cache["error"] = f"{type(e).__name__}: {e}"
         _ops_cache["at"] = time.time()   # back off rather than spin on a failing query
     finally:
         _ops_cache["running"] = False
@@ -221,7 +227,8 @@ def _ops_state() -> dict:
             if not _ops_cache["running"]:
                 _ops_cache["running"] = True
                 threading.Thread(target=_ops_refresh, daemon=True).start()
-    return value or {"health": 0, "discovery": 0, "quality": 0, "total": 0, "ready": False}
+    return value or {"health": 0, "discovery": 0, "quality": 0, "total": 0, "ready": False,
+                     "error": _ops_cache.get("error", "")}
 
 
 templates.env.globals["ops_state"] = _ops_state
@@ -2478,6 +2485,18 @@ def discovery_status(*, probed: bool, items: int, error: str) -> str:
     return "live" if items > 0 else "empty"
 
 
+# Every bucket the triage page can show, in the order it shows them. Single source of
+# truth: the route builds its dict from this and `test_every_discovery_status_has_a_bucket`
+# asserts it covers discovery_status()'s whole range, so adding a status without a home
+# fails a test instead of 500-ing the page the next time one occurs.
+DISCOVERY_BUCKETS = ("unprobed", "empty", "broken", "challenged", "blocked", "live",
+                     "rejected")
+
+
+def _discovery_buckets() -> dict[str, list]:
+    return {k: [] for k in DISCOVERY_BUCKETS}
+
+
 def _discovery_cats(conn) -> tuple[dict[str, list], dict[str, dict]]:
     """Categorise every suppliers.json entry for the triage queue.
 
@@ -2491,8 +2510,12 @@ def _discovery_cats(conn) -> tuple[dict[str, list], dict[str, dict]]:
         "SELECT host, company, item_count, slab_count, last_crawled, last_error FROM suppliers")}
     from datetime import date
     today = date.today()
-    cats: dict[str, list] = {"unprobed": [], "empty": [], "broken": [], "blocked": [],
-                             "live": [], "rejected": []}
+    # Every value discovery_status() can return needs a bucket here. It gained "challenged"
+    # when AIL-33 taught it to recognise a bot check, and this dict was not extended — a
+    # latent KeyError that could not fire while no supplier carried a challenge-marked
+    # error. AIL-42 reclassified 197 hosts, produced that status for the first time, and
+    # 500'd the page. `_discovery_buckets()` now derives the keys, so the two cannot drift.
+    cats: dict[str, list] = _discovery_buckets()
     by_provider: dict[str, dict] = {}
     for e in entries:
         r = rows.get(e["host"])
@@ -2527,7 +2550,7 @@ def _discovery_cats(conn) -> tuple[dict[str, list], dict[str, dict]]:
         if rec["status"] == "live":
             p["live"] += 1
     cats["live"].sort(key=lambda r: -r["items"])
-    for k in ("unprobed", "empty", "broken", "blocked", "rejected"):
+    for k in (b for b in DISCOVERY_BUCKETS if b != "live"):
         cats[k].sort(key=lambda r: r["host"])
     return cats, by_provider
 
@@ -2549,6 +2572,7 @@ def discovery(request: Request):
         "by_provider": sorted(by_provider.values(), key=lambda p: -p["total"]),
         "total": len(entries),
         "unprobed_hosts": ",".join(r["host"] for r in cats["unprobed"]),
+        "challenge_recheck_days": db.CHALLENGE_RECHECK_DAYS,
         "stats": stats,
     })
 

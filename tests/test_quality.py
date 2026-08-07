@@ -5307,6 +5307,90 @@ class ColourFamilyTests(unittest.TestCase):
         self.assertEqual(app._colors_for_choice(self.conn, ""), [])
 
 
+class DiscoveryBucketTests(unittest.TestCase):
+    """AIL-43 — a status with no bucket 500s the page, and silences the ⚙ badge.
+
+    AIL-33 taught discovery_status() to return "challenged" and did not extend the route's
+    `cats` dict. The KeyError could not fire while no supplier carried a challenge-marked
+    error, so it sat latent for a day — until AIL-42 reclassified 197 hosts and produced
+    that status for the first time.
+    """
+
+    def test_every_status_discovery_can_return_has_a_bucket(self):
+        """Derived from the source, not from a list someone remembered to update: a new
+        `return "..."` in discovery_status is caught here rather than in production."""
+        from stonescan.web.app import DISCOVERY_BUCKETS
+        src = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+               "app.py").read_text(encoding="utf-8")
+        fn = next(n for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.FunctionDef) and n.name == "discovery_status")
+        returned = {n.value.value for n in ast.walk(fn)
+                    if isinstance(n, ast.Return) and isinstance(n.value, ast.Constant)}
+        # the IfExp in `return "live" if items > 0 else "empty"`
+        returned |= {c.value for n in ast.walk(fn) if isinstance(n, ast.Return)
+                     and isinstance(n.value, ast.IfExp)
+                     for c in (n.value.body, n.value.orelse) if isinstance(c, ast.Constant)}
+        missing = returned - set(DISCOVERY_BUCKETS)
+        self.assertEqual(missing, set(),
+                         f"discovery_status can return {missing}, which has no bucket — "
+                         f"that is a KeyError waiting for the first host in that state")
+
+    def test_a_challenged_host_lands_in_its_own_bucket(self):
+        """The behavioural half: the exact combination that broke the page."""
+        from stonescan.web.app import discovery_status
+        from stonescan.challenge import challenge_error
+        self.assertEqual(
+            discovery_status(probed=True, items=0, error=challenge_error("bot check: x")),
+            "challenged")
+
+    def test_the_buckets_cover_the_template_and_the_sort(self):
+        from stonescan.web.app import DISCOVERY_BUCKETS
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "discovery.html").read_text(encoding="utf-8")
+        for bucket in DISCOVERY_BUCKETS:
+            self.assertIn(f"cats.{bucket}", html,
+                          f"the {bucket} bucket is collected but never rendered")
+
+    def test_the_page_renders_with_a_challenged_host(self):
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        r = TestClient(webapp.app).get("/discovery")
+        self.assertEqual(r.status_code, 200, "the triage page must not 500")
+
+    # --- the silent half -----------------------------------------------------
+    def test_a_badge_that_cannot_be_computed_says_so(self):
+        """The failure was doubly quiet: /discovery 500'd AND _ops_counts swallowed the
+        same exception, so the ⚙ rendered no number — indistinguishable from all-clear."""
+        from stonescan.web import app as webapp
+        orig = webapp._ops_counts
+        webapp._ops_counts = lambda: (_ for _ in ()).throw(KeyError("challenged"))
+        webapp._ops_cache.update({"at": 0.0, "value": None, "running": False, "error": ""})
+        try:
+            webapp._ops_refresh()
+            st = webapp._ops_state()
+            self.assertFalse(st["ready"])
+            self.assertIn("challenged", st["error"])
+        finally:
+            webapp._ops_counts = orig
+            webapp._ops_cache.update({"at": 0.0, "value": None, "running": False, "error": ""})
+
+    def test_a_successful_refresh_clears_a_previous_error(self):
+        from stonescan.web import app as webapp
+        orig = webapp._ops_counts
+        webapp._ops_cache.update({"at": 0.0, "value": None, "running": False,
+                                  "error": "KeyError: stale"})
+        webapp._ops_counts = lambda: {"health": 1, "discovery": 2, "quality": 3,
+                                      "total": 6, "ready": True}
+        try:
+            webapp._ops_refresh()
+            self.assertEqual(webapp._ops_cache["error"], "")
+            self.assertEqual(webapp._ops_state()["total"], 6)
+        finally:
+            webapp._ops_counts = orig
+            webapp._ops_cache.update({"at": 0.0, "value": None, "running": False, "error": ""})
+
+
 class RecheckRefusalsTests(unittest.TestCase):
     """AIL-42 — stored refusals older than the code that would classify them.
 
