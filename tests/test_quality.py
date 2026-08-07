@@ -5307,6 +5307,113 @@ class ColourFamilyTests(unittest.TestCase):
         self.assertEqual(app._colors_for_choice(self.conn, ""), [])
 
 
+class TruthfulLabelTests(unittest.TestCase):
+    """AIL-43 — five places the UI asserted something the code knows is false."""
+
+    # --- 1. a failed refresh must not wear a success tick --------------------
+    def test_the_refresh_state_records_success_separately_from_completion(self):
+        """`done` is true for a crash too, which is why the tick was unconditional."""
+        from stonescan.web import app as webapp
+        self.assertIn("ok", webapp._refresh)
+
+    def test_a_crashed_refresh_sets_ok_false(self):
+        from stonescan.web import app as webapp
+        from stonescan import ingest
+        saved = dict(webapp._refresh)
+        orig = ingest.run_all
+
+        async def boom(*a, **k):
+            raise RuntimeError("drive vanished")
+        ingest.run_all = boom
+        try:
+            webapp._run_refresh_job(False)
+            self.assertFalse(webapp._refresh["ok"])
+            self.assertIn("Refresh failed", webapp._refresh["summary"])
+        finally:
+            ingest.run_all = orig
+            webapp._refresh.clear(); webapp._refresh.update(saved)
+
+    def test_the_template_branches_on_ok_rather_than_always_ticking(self):
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("showDone(s.summary||'Done', s.ok !== false)", html)
+        # The failure path exists, returns early, and carries no tick.
+        self.assertIn("if(!ok){", html)
+        fail_branch = html.split("if(!ok){", 1)[1].split("return;", 1)[0]
+        self.assertIn("⚠", fail_branch)
+        self.assertNotIn("✓", fail_branch)
+
+    # --- 2. Origin means two opposite things ---------------------------------
+    def test_origin_is_only_called_origin_where_it_is_geology(self):
+        from stonescan.web.app import origin_is_geological
+        self.assertTrue(origin_is_geological("black-eagle.iblocky.it"))
+        for host in ("swtm.stoneprofitsweb.com", "selectstone.slabware.com",
+                     "owstone.slabcloud.com", "umistone.com", ""):
+            self.assertFalse(origin_is_geological(host), host)
+
+    def test_the_item_page_asks_before_calling_it_origin(self):
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "item.html").read_text(encoding="utf-8")
+        self.assertIn("origin_is_geological(m.supplier_host)", html)
+        self.assertIn("Listed location", html)
+
+    # --- 3. a per-yard figure presented as a total ---------------------------
+    def test_the_sqft_cell_says_which_yard_it_describes(self):
+        """app.py selects MAX(sup_sqft) AS total_sqft — the alias is a lie the cell
+        inherited. The number stays; the words change."""
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("ft² at that yard", html)
+        self.assertNotIn('this much total in-stock area', html)
+
+    # --- 4. one stone, two spellings -----------------------------------------
+    def test_the_material_heading_matches_the_card_that_links_to_it(self):
+        """Same derivation as index.html's mat_name macro, asserted against Jinja's own
+        title filter so the two cannot drift."""
+        from jinja2 import Environment
+
+        from stonescan.web.app import _display_name
+        title = Environment().from_string("{{ s|title }}")
+        for base in ("bianco carrara", "taj mahal", "nero marquina", "o'brien white",
+                     "2cm calacatta viola"):
+            self.assertEqual(_display_name(base + "|marble"), title.render(s=base), base)
+
+    def test_the_heading_is_not_a_title_cased_raw_name(self):
+        """.title() on the supplier's own string yields '2Cm Calacatta Viola'."""
+        from stonescan.web.app import _display_name
+        out = _display_name("calacatta viola|marble",
+                            [{"item_name": "2CM CALACATTA VIOLA"}])
+        self.assertEqual(out, "Calacatta Viola")
+        self.assertNotIn("2Cm", out)
+
+    def test_a_keyless_material_still_gets_a_name(self):
+        from stonescan.web.app import _display_name
+        self.assertEqual(_display_name("", [{"item_name": "Odd Slab"},
+                                            {"item_name": "Odd Slab"}]), "Odd Slab")
+        self.assertEqual(_display_name("", []), "")
+
+    # --- 5. the compare lightbox's dead exit link ----------------------------
+    def test_compare_passes_fields_that_actually_exist(self):
+        """_compare_column returns key/types; the template asked for material_key/type,
+        so the caption rendered href="/material?key=" — introduced by AIL-38."""
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "compare.html").read_text(encoding="utf-8")
+        self.assertIn("c.key|urlencode", html)
+        self.assertIn("c.types|join", html)
+        self.assertNotIn("c.material_key", html)
+        self.assertNotIn("lb_attrs(c.name, c.type,", html)
+
+    def test_the_compare_column_contract_is_what_the_template_reads(self):
+        """Guards the direction the last bug came from: a renamed key in app.py should
+        fail here rather than silently emptying an attribute."""
+        import inspect
+
+        from stonescan.web import app as webapp
+        src = inspect.getsource(webapp._compare_column)
+        for field in ('"key"', '"types"', '"name"', '"image"'):
+            self.assertIn(field, src)
+
+
 class DiscoveryBucketTests(unittest.TestCase):
     """AIL-43 — a status with no bucket 500s the page, and silences the ⚙ badge.
 

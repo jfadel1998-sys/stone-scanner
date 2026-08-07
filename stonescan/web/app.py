@@ -282,6 +282,23 @@ def lb_attrs(title: str = "", sub: str = "", href: str = "") -> Markup:
 templates.env.globals["lb_attrs"] = lb_attrs
 
 
+# Which suppliers' `origin` column actually means geology. Exactly one platform's does.
+# CLAUDE.md measured the rest: 44 distinct values, 3 of them countries, the other 41 US
+# warehouse cities ("Anaheim, CA"), 1.1% populated — a mislabelled location field. iBlocky
+# has a separate field for it and is ~79% populated with real countries.
+#
+# A helper rather than a template conditional so the rule lives in one testable place and
+# the reasoning travels with it; a bare `.endswith()` in a template invites a second copy.
+_GEOLOGICAL_ORIGIN_SUFFIX = ".iblocky.it"
+
+
+def origin_is_geological(supplier_host: str) -> bool:
+    return (supplier_host or "").lower().endswith(_GEOLOGICAL_ORIGIN_SUFFIX)
+
+
+templates.env.globals["origin_is_geological"] = origin_is_geological
+
+
 def _distinct(conn, column: str) -> list[str]:
     # Never offer the accessory/non-slab bucket as a material-type filter — the catalog
     # is stone/tile only (it remains queryable on the Quality audit page).
@@ -1110,6 +1127,22 @@ def index(
     return templates.TemplateResponse(request, "index.html", ctx)
 
 
+def _display_name(key: str, rows: list[dict] | None = None) -> str:
+    """The stone's name as the rest of the app writes it.
+
+    Mirrors index.html's `mat_name` macro — `material_key.split('|')[0]`, title-cased —
+    so a card and the page it links to never disagree. Falls back to the most common raw
+    `item_name` only when there is no key to read.
+    """
+    base = (key or "").split("|", 1)[0].strip()
+    if base:
+        return " ".join(w[:1].upper() + w[1:].lower() if w else w for w in base.split(" "))
+    names: dict[str, int] = {}
+    for r in (rows or []):
+        names[r["item_name"]] = names.get(r["item_name"], 0) + 1
+    return max(names, key=lambda n: names[n]) if names else ""
+
+
 @app.get("/material", response_class=HTMLResponse)
 def material(request: Request, key: str, added: int = -1, list: int = 0):
     """Canonical page for a material: the whole market for it in one view —
@@ -1128,11 +1161,16 @@ def material(request: Request, key: str, added: int = -1, list: int = 0):
         return HTMLResponse("<p style='padding:40px;font-family:sans-serif'>Unknown material. "
                             "<a href='/'>Back to search</a></p>", status_code=404)
 
-    # The display name is the most common spelling suppliers use for it.
-    names: dict[str, int] = {}
-    for r in rows:
-        names[r["item_name"]] = names.get(r["item_name"], 0) + 1
-    name = max(names, key=lambda n: names[n])
+    # The display name comes from the material_key, exactly as the search card that linked
+    # here derives it — NOT from the most common raw item_name, which is usually a
+    # supplier's shouty "BIANCO CARRARA". The card said "Bianco Carrara" and this heading
+    # said "BIANCO CARRARA" for the same stone, so the compare tray could hold what looked
+    # like two of them.
+    #
+    # .title() on the raw name is the tempting shortcut and is wrong: it yields
+    # "2Cm Calacatta Viola". The key's base has already had the thickness/finish tails
+    # stripped by material_key(), which is why it is the right source.
+    name = _display_name(key, rows)
 
     # One block per supplier: their listings collapsed, best photo, stock, contact.
     by_supplier: dict[str, dict] = {}
@@ -1414,14 +1452,18 @@ async def api_slabs(id: int, live: int = 0):
         return JSONResponse({"slabs": [], "error": str(e), "cached": False})
 
 
-_refresh = {"running": False, "done": False, "summary": "", "done_count": 0, "total": 0}
+# `ok` is separate from `done`: a crash also finishes. Without it the UI rendered
+# "✓ Refresh failed: ..." — a success tick on the failure path, on a project whose
+# nightly dies to a flaky USB drive often enough that failure is the LIKELY outcome.
+_refresh = {"running": False, "done": False, "ok": True, "summary": "",
+            "done_count": 0, "total": 0}
 
 
 def _run_refresh_job(with_slabs: bool) -> None:
     from .. import discover as disc
     from ..ingest import run_all
     entries = disc.load_suppliers()
-    _refresh.update(running=True, done=False, summary="Starting…",
+    _refresh.update(running=True, done=False, ok=True, summary="Starting…",
                     done_count=0, total=len(entries), materials=0)
 
     def progress(label: str, n: int) -> None:
@@ -1452,6 +1494,7 @@ def _run_refresh_job(with_slabs: bool) -> None:
         _refresh["summary"] = (f"Done — {s['materials']} materials, "
                                f"{s['suppliers']} suppliers updated.")
     except Exception as e:  # noqa: BLE001
+        _refresh["ok"] = False
         _refresh["summary"] = f"Refresh failed: {e}"
     finally:
         _refresh["running"] = False

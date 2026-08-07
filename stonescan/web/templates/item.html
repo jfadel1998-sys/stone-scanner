@@ -35,7 +35,12 @@
       <div><span>Thickness</span>{{ m.thickness or '—' }}</div>
       <div><span>Form</span>{{ m.product_form or '—' }}</div>
       {% if m.sku %}<div><span>SKU</span>{{ m.sku }}</div>{% endif %}
-      {% if m.origin %}<div><span>Origin</span>{{ m.origin }}</div>{% endif %}
+      {# "Origin" only where the column really is geology. Everywhere else this field is a
+         warehouse or branch city, and calling that Origin is the app asserting a fact the
+         codebase knows it does not have — /material has always worded it correctly. #}
+      {% if m.origin %}<div>{% if origin_is_geological(m.supplier_host) %}<span
+          title="Geological origin, as published by this supplier's platform.">Origin</span>{% else %}<span
+          title="Origin as entered in supplier catalogs — usually a warehouse or branch location, not a verified geological source. See the material page's “About this stone” for the cited origin.">Listed location</span>{% endif %}{{ m.origin }}</div>{% endif %}
       {% if m.locations %}<div><span>Locations</span>{{ m.locations.replace(',', ', ') }}</div>{% endif %}
     </div>
 
