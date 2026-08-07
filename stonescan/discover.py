@@ -39,6 +39,7 @@ manual entries are kept.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -395,6 +396,92 @@ def reject_by_streak(db_path=None, *, threshold: int = AUTO_REJECT_STREAK,
 _CHALLENGE_REJECTION_HINT = "403 Forbidden"
 
 
+def _unclassified_refusals(conn) -> list[dict]:
+    """Suppliers whose stored error is a refusal nobody has classified.
+
+    Deliberately narrow. A row qualifies only if its error is NOT already a decision
+    (`is_declined` covers both robots and challenge markers) and does name a refusal
+    status. Anything else — a 5xx, a connect error, an empty catalog — is a different
+    problem and re-asking it here would be a probe with no question to answer.
+    """
+    from .challenge import CHALLENGE_STATUSES
+    from .robots import is_declined
+    rows = conn.execute(
+        "SELECT host, last_error FROM suppliers WHERE last_error IS NOT NULL "
+        "AND last_error <> '' ORDER BY host").fetchall()
+    out = []
+    for r in rows:
+        err = r["last_error"] or ""
+        if is_declined(err):
+            continue
+        if any(str(code) in err for code in CHALLENGE_STATUSES):
+            out.append({"host": r["host"], "error": err})
+    return out
+
+
+async def recheck_refusals(db_path: str = "", *, dry_run: bool = False, limit: int = 0,
+                           delay: float = 0.5, verbose: bool = True,
+                           client_factory=None) -> dict[str, list[str]]:
+    """Re-ask hosts whose stored refusal predates the code that would have classified it.
+
+    WHY THIS PROBES, when `repair_challenge_rejections` deliberately does not. That repair
+    could judge from stored text because a wrong guess was reversible — "the next crawl
+    supplies the real evidence either way". Here there may be no next crawl: the circuit
+    breaker skips a washed-out provider (3 of 220 SlabWare hosts attempted in the last run)
+    and a skipped host records nothing, so a stale label survives indefinitely. A guess
+    would therefore be permanent, and guessing wrong marks a genuinely broken supplier as
+    declined — which drops it from the retry pass, a quieter failure than the one being
+    fixed. So this asks, and writes only what it observed.
+
+    Three verdicts, and only two of them write:
+      * a recognised challenge  -> stamp CHALLENGE_MARKER, so /health files it CHALLENGED
+      * a success               -> clear the error; it is simply not failing any more
+      * anything else           -> untouched, including any error raised by this probe
+
+    Manual, rate-limited and bounded. It must never be wired into the nightly: re-asking
+    hundreds of challenged hosts every night is the traffic CHALLENGE_RECHECK_DAYS exists
+    to prevent, and the whole point is that a challenge is an answer we accept.
+    """
+    from . import db as _db
+    from .challenge import Challenged, challenge_error
+
+    conn = _db.connect(db_path or str(_db.DEFAULT_DB))
+    try:
+        targets = _unclassified_refusals(conn)
+        if limit:
+            targets = targets[:limit]
+        by_host = {(e.get("host") or "").lower(): e for e in load_suppliers()}
+        out: dict[str, list[str]] = {"challenged": [], "cleared": [], "unchanged": []}
+        for i, t in enumerate(targets):
+            host = t["host"]
+            entry = by_host.get(host.lower(), {"host": host})
+            verdict, detail = "unchanged", ""
+            try:
+                from .robots import client_for as robots_client_for
+                factory = client_factory or (lambda e: robots_client_for(e, follow_redirects=True))
+                async with factory(entry) as client:
+                    r = await client.get(f"https://{host}/", timeout=30)
+                    if 200 <= r.status_code < 300:
+                        verdict = "cleared"
+            except Challenged as e:
+                verdict, detail = "challenged", challenge_error(f"{e.reason}: https://{host}/")
+            except Exception:  # noqa: BLE001
+                # A probe that fails tells us nothing new, and must not overwrite the
+                # supplier's own stored error with this command's networking trouble.
+                verdict = "unchanged"
+            out[verdict].append(host)
+            if verbose:
+                say(f"  {verdict:10} {host}")
+            if not dry_run and verdict != "unchanged":
+                _db.upsert_supplier(conn, host=host,
+                                    last_error=detail if verdict == "challenged" else "")
+            if delay and i + 1 < len(targets):
+                await asyncio.sleep(delay)
+        return out
+    finally:
+        conn.close()
+
+
 def repair_challenge_rejections(*, dry_run: bool = False) -> dict[str, list[str]]:
     """Un-reject hosts auto-rejected for what turns out to have been a bot check.
 
@@ -740,6 +827,29 @@ def discover_sps_embeds(verbose: bool = True) -> set[str]:
 
 if __name__ == "__main__":
     import sys as _sys
+
+    if "--recheck-refusals" in _sys.argv:
+        # Re-asks hosts whose stored refusal predates challenge detection. Manual on
+        # purpose (see recheck_refusals' docstring) — never call this from the nightly.
+        _dry = "--dry-run" in _sys.argv
+        _lim = 0
+        if "--limit" in _sys.argv:
+            try:
+                _lim = int(_sys.argv[_sys.argv.index("--limit") + 1])
+            except (IndexError, ValueError):
+                _lim = 0
+        say(f"Re-asking suppliers whose stored refusal was never classified"
+            f"{' (dry run)' if _dry else ''}...")
+        _r = asyncio.run(recheck_refusals(dry_run=_dry, limit=_lim))
+        say(f"\n{'Would reclassify' if _dry else 'Reclassified'} "
+            f"{len(_r['challenged'])} host(s) as CHALLENGED — a supplier decision, not a "
+            f"crawl failure.")
+        say(f"{'Would clear' if _dry else 'Cleared'} {len(_r['cleared'])} host(s) that now "
+            f"answer normally.")
+        say(f"Left {len(_r['unchanged'])} host(s) alone — they refused with no challenge "
+            f"evidence, or could not be reached. Guessing there would mark a broken "
+            f"supplier as declined and quietly drop it from the retry pass.")
+        raise SystemExit(0)
 
     if "--repair-challenge-rejections" in _sys.argv:
         # Offline: reads stored reason text, writes suppliers.json, touches no network.

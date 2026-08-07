@@ -5307,6 +5307,154 @@ class ColourFamilyTests(unittest.TestCase):
         self.assertEqual(app._colors_for_choice(self.conn, ""), [])
 
 
+class RecheckRefusalsTests(unittest.TestCase):
+    """AIL-42 — stored refusals older than the code that would classify them.
+
+    192 hosts read BROKEN on /health because their errors were written before AIL-33/35
+    shipped, and the circuit breaker skips their provider, so no crawl ever revisits them.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.dbp = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.dbp)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _supplier(self, host, err):
+        db.upsert_supplier(self.conn, host=host, last_error=err)
+        self.conn.commit()
+
+    def _err(self, host):
+        return db.connect(self.dbp).execute(
+            "SELECT last_error FROM suppliers WHERE host=?", (host,)).fetchone()[0]
+
+    def _run(self, responses, **kw):
+        """responses: host -> (status, headers, body) or an Exception to raise."""
+        import asyncio
+        import contextlib
+
+        import httpx
+
+        from stonescan import discover, robots
+
+        def route(request):
+            host = request.url.host
+            spec = responses.get(host)
+            if isinstance(spec, Exception):
+                raise spec
+            status, headers, body = spec
+            if request.url.path == "/robots.txt":
+                return httpx.Response(404, text="")
+            return httpx.Response(status, headers=headers, text=body)
+
+        @contextlib.asynccontextmanager
+        async def factory(entry):
+            async with robots.PoliteClient(transport=httpx.MockTransport(route)) as c:
+                yield c
+
+        return asyncio.run(discover.recheck_refusals(
+            self.dbp, delay=0, verbose=False, client_factory=factory, **kw))
+
+    _CF = (403, {"cf-mitigated": "challenge"}, "<title>Just a moment...</title>")
+    _OK = (200, {}, "<html>catalog</html>")
+    _BARE = (403, {"server": "nginx"}, "Forbidden")
+    _STORED = "HTTPStatusError: Client error '403 Forbidden' for url 'https://x/'"
+
+    def test_a_challenged_host_is_recorded_as_a_decision(self):
+        from stonescan import robots
+        self._supplier("a.slabware.com", self._STORED)
+        out = self._run({"a.slabware.com": self._CF})
+        self.assertEqual(out["challenged"], ["a.slabware.com"])
+        self.assertTrue(robots.is_challenge_error(self._err("a.slabware.com")))
+        self.assertTrue(robots.is_declined(self._err("a.slabware.com")))
+
+    def test_a_host_that_now_works_has_its_error_cleared(self):
+        self._supplier("b.slabware.com", self._STORED)
+        out = self._run({"b.slabware.com": self._OK})
+        self.assertEqual(out["cleared"], ["b.slabware.com"])
+        self.assertEqual(self._err("b.slabware.com"), "")
+
+    def test_a_bare_403_is_left_exactly_as_it_was(self):
+        """AC-4, and the one that matters most. Relabelling a genuine refusal as a
+        supplier decision drops it from the retry pass — quieter than the bug being fixed,
+        and permanent, because the breaker means no crawl comes back to correct it."""
+        self._supplier("c.slabware.com", self._STORED)
+        out = self._run({"c.slabware.com": self._BARE})
+        self.assertEqual(out["unchanged"], ["c.slabware.com"])
+        self.assertEqual(self._err("c.slabware.com"), self._STORED)
+
+    def test_a_probe_that_fails_does_not_overwrite_the_suppliers_own_error(self):
+        """Our networking trouble is not evidence about their site."""
+        import httpx
+        self._supplier("d.slabware.com", self._STORED)
+        out = self._run({"d.slabware.com": httpx.ConnectError("no route")})
+        self.assertEqual(out["unchanged"], ["d.slabware.com"])
+        self.assertEqual(self._err("d.slabware.com"), self._STORED)
+
+    def test_one_dead_host_does_not_abort_the_pass(self):
+        import httpx
+        self._supplier("d.slabware.com", self._STORED)
+        self._supplier("e.slabware.com", self._STORED)
+        out = self._run({"d.slabware.com": httpx.ConnectError("x"),
+                         "e.slabware.com": self._CF})
+        self.assertIn("e.slabware.com", out["challenged"])
+
+    def test_dry_run_writes_nothing(self):
+        self._supplier("f.slabware.com", self._STORED)
+        out = self._run({"f.slabware.com": self._CF}, dry_run=True)
+        self.assertEqual(out["challenged"], ["f.slabware.com"])
+        self.assertEqual(self._err("f.slabware.com"), self._STORED)
+
+    def test_it_is_idempotent(self):
+        self._supplier("g.slabware.com", self._STORED)
+        self._run({"g.slabware.com": self._CF})
+        again = self._run({"g.slabware.com": self._CF})
+        self.assertEqual(again, {"challenged": [], "cleared": [], "unchanged": []},
+                         "a host already marked as declined must not be re-asked")
+
+    def test_only_unclassified_refusals_are_probed(self):
+        """Already-decided hosts, and errors that are not refusals, are none of its
+        business — a probe with no question to answer is just traffic."""
+        from stonescan import robots
+        from stonescan.challenge import challenge_error
+        self._supplier("already.slabware.com", challenge_error("bot check: x"))
+        self._supplier("blocked.slabware.com", robots.block_error("robots: x"))
+        self._supplier("timeout.slabware.com", "ReadTimeout: too slow")
+        self._supplier("empty.slabware.com", "no items returned")
+        out = self._run({})
+        self.assertEqual(out, {"challenged": [], "cleared": [], "unchanged": []})
+
+    def test_limit_bounds_the_pass(self):
+        for n in range(5):
+            self._supplier(f"h{n}.slabware.com", self._STORED)
+        out = self._run({f"h{n}.slabware.com": self._CF for n in range(5)}, limit=2)
+        self.assertEqual(len(out["challenged"]), 2)
+
+    def test_it_reclassifies_what_health_calls_broken(self):
+        """End to end on the actual symptom: the status the page derives changes from
+        broken to challenged, without touching a genuinely broken row."""
+        self._supplier("chal.slabware.com", self._STORED)
+        self._supplier("real.slabware.com", self._STORED)
+        before = {r["host"]: r["status"] for r in db.supplier_health(self.conn)}
+        self.assertEqual(before["chal.slabware.com"], "broken")
+        self._run({"chal.slabware.com": self._CF, "real.slabware.com": self._BARE})
+        conn2 = db.connect(self.dbp)
+        after = {r["host"]: r["status"] for r in db.supplier_health(conn2)}
+        conn2.close()
+        self.assertEqual(after["chal.slabware.com"], "challenged")
+        self.assertEqual(after["real.slabware.com"], "broken")
+
+    def test_the_nightly_does_not_call_it(self):
+        """NG-4. Re-asking hundreds of challenged hosts every night is exactly the traffic
+        CHALLENGE_RECHECK_DAYS exists to prevent."""
+        for name in ("ingest.py", "desktop.py"):
+            src = (Path(__file__).resolve().parent.parent / "stonescan" /
+                   name).read_text(encoding="utf-8")
+            self.assertNotIn("recheck_refusals", src, f"{name} must not invoke it")
+
+
 class RefreshPhaseTests(unittest.TestCase):
     """AIL-41 — a long, healthy refresh must not look like a hung one.
 

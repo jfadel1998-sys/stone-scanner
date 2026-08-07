@@ -23,6 +23,7 @@ commercial ask, not a code change.
 .\.venv\Scripts\python.exe -m stonescan.ingest --slabs                    # crawl all (+ slab galleries; add --slab-cap N to bound the deep pre-fetch — nightly uses 40)
 .\.venv\Scripts\python.exe -m stonescan.ingest --only host1,host2 --slabs # crawl specific suppliers
 .\.venv\Scripts\python.exe -m stonescan.discover                          # find more public catalogs
+.\.venv\Scripts\python.exe -m stonescan.discover --recheck-refusals       # re-ask hosts whose stored 403 predates challenge detection (--dry-run, --limit N). MANUAL — never nightly
 .\.venv\Scripts\python.exe -m stonescan.geocode                           # resolve locations for the map (--recheck to redo)
 .\.venv\Scripts\python.exe -m stonescan.dedupe                            # report merge candidates (--auto-conflicts to bulk-merge landslides)
 .\.venv\Scripts\python.exe -m stonescan.imagesearch --download-model     # fetch the CLIP model (~81MB, git-ignored), then:
