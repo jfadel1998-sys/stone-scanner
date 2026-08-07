@@ -2,7 +2,7 @@
 {% block title %}Data quality — Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{{ qs.materials }} materials · {{ qs.unique_materials }} unique</div>
+<div class="stats">{{ qs.materials|comma }} materials · {{ qs.unique_materials|comma }} unique</div>
 {% endblock %}
 
 {% block content %}
@@ -11,13 +11,13 @@
   <p class="hintline muted">The catalog only compares across suppliers as well as its grouping is clean. Below: where the same stone is still split apart, and what's left to tidy. Confirmed merges survive every re-crawl.</p>
 </div>
 
-<div class="inv-box" style="padding:0 22px;">
-  <div class="inv-stat"><b>{{ qs.unique_materials }}</b><span>unique materials</span></div>
-  <div class="inv-stat"><b>{{ n_conflicts }}</b><span>type conflicts</span></div>
-  <div class="inv-stat"><b>{{ n_fuzzy }}</b><span>spelling variants</span></div>
-  <div class="inv-stat"><b>{{ qs.other }}</b><span>in “Other”</span></div>
-  <div class="inv-stat"><b>{{ qs.no_color }}</b><span>no colour</span></div>
-  <div class="inv-stat"><b>{{ qs.aliases }}</b><span>merges applied</span></div>
+<div class="inv-box pagepad">
+  <div class="inv-stat"><b>{{ qs.unique_materials|comma }}</b><span>unique materials</span></div>
+  <div class="inv-stat"><b>{{ n_conflicts|comma }}</b><span>type conflicts</span></div>
+  <div class="inv-stat"><b>{{ n_fuzzy|comma }}</b><span>spelling variants</span></div>
+  <div class="inv-stat"><b>{{ qs.other|comma }}</b><span>in “Other”</span></div>
+  <div class="inv-stat"><b>{{ qs.no_color|comma }}</b><span>no colour</span></div>
+  <div class="inv-stat"><b>{{ qs.aliases|comma }}</b><span>merges applied</span></div>
 </div>
 
 <div class="qgrid">
@@ -69,7 +69,7 @@
 {% if aliases %}
 <div class="block">
   <h2>Confirmed merges ({{ qs.aliases }})</h2>
-  <table class="materials" style="width:calc(100% - 44px);">
+  <table class="materials">
     <thead><tr><th>Folded away</th><th>Into</th><th>Type</th><th></th></tr></thead>
     <tbody>
     {% for a in aliases %}

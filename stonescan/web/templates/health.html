@@ -2,7 +2,7 @@
 {% block title %}Supplier health — Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{{ stats.materials }} materials · {{ total }} suppliers</div>
+<div class="stats">{{ stats.materials|comma }} materials · {{ total }} suppliers</div>
 {% endblock %}
 
 {% block content %}

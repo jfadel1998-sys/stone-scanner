@@ -8,7 +8,7 @@
 {% block content %}
 <div class="material-head">
   <h1>Watchlist</h1>
-  <p class="hintline muted">Save any search (from the Search page's <b>★ Save search</b> button) to track materials over time.
+  <p class="hintline muted">Save any search (from the Search page's <b>{{ ic('star') }} Save search</b> button) to track materials over time.
      Each shows its current match count and how many are newly arrived.</p>
 </div>
 
@@ -52,7 +52,12 @@
     </div>
   </div>
   {% else %}
-  <p class="empty">Your watchlist is empty. Run a search, then click <b>★ Save search</b> to add it here.</p>
+  <div class="emptybox">
+    <p class="ei">{{ ic('star') }}</p>
+    <h2>Your watchlist is empty</h2>
+    <p>Run a search you care about, then click <b>{{ ic('star') }} Save search</b> to track its matches and new arrivals here.</p>
+    <a class="btn ghost" href="/">Go to search</a>
+  </div>
   {% endfor %}
 </div>
 {% endblock %}

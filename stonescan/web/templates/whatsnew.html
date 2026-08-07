@@ -53,7 +53,7 @@
 {% endif %}
 
 <section class="block">
-  <h2>New arrivals <span class="muted">— materials the suppliers flagged as new ({{ total }})</span></h2>
+  <h2>New arrivals <span class="muted">— materials the suppliers flagged as new ({{ total|comma }})</span></h2>
   {% if not restock %}
   {% if has_baseline %}
   <p class="hintline muted">Nothing newly back in stock — each supplier's latest crawl was compared against its own previous one.</p>

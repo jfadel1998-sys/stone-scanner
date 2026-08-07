@@ -11,20 +11,50 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+<a class="skiplink" href="#main">Skip to content</a>
+{# One inline icon set, referenced everywhere via <use>. Monochrome stroke glyphs in
+   currentColor, so every icon follows the text colour and theme automatically — emoji
+   never did either, and rendered as clashing colour bitmaps besides. #}
+{# style, not the hidden attribute: SVG elements don't implement `hidden`, so the sprite
+   would render as a blank 300×150 box above the header. #}
+<svg style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="M3.5 7.5c2.8-2.2 5.7 2.2 8.5 0s5.7-2.2 8.5 0M3.5 12c2.8-2.2 5.7 2.2 8.5 0s5.7-2.2 8.5 0M3.5 16.5c2.8-2.2 5.7 2.2 8.5 0s5.7-2.2 8.5 0"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.2"/><path d="m20.5 20.5-4.4-4.4"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 9a2 2 0 0 1 2-2h2.2l1.4-2h6.8l1.4 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><circle cx="12" cy="12.8" r="3.2"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 4.5 13.6 9l4.4 1.6-4.4 1.6L12 16.5l-1.6-4.3L6 10.6 10.4 9Z"/><path d="m18.8 15.5.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8Z"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.3 9.5a5.7 5.7 0 0 1 11.4 0c0 4.6 1.8 5.8 1.8 5.8H4.5s1.8-1.2 1.8-5.8"/><path d="M10.3 18.8a1.9 1.9 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21.5S5.5 16 5.5 10.5a6.5 6.5 0 0 1 13 0C18.5 16 12 21.5 12 21.5Z"/><circle cx="12" cy="10.5" r="2.4"/></symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="5.5" y="4.5" width="13" height="16.5" rx="2"/><path d="M9 4.5a3 3 0 0 1 6 0"/><path d="M9 11h6M9 14.5h6M9 18h3.5"/></symbol>
+  <symbol id="i-scale" viewBox="0 0 24 24"><path d="M12 4v16M8.5 20.5h7M4.5 7h15"/><path d="m4.5 7-2.3 5a2.7 2.7 0 0 0 4.6 0ZM19.5 7l-2.3 5a2.7 2.7 0 0 0 4.6 0Z"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.8 2.5 5.2 5.7.8-4.1 4 1 5.7-5.1-2.7-5.1 2.7 1-5.7-4.1-4 5.7-.8Z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M6 4v5M6 13v7M3.5 11h5"/><path d="M12 4v2M12 10v10M9.5 8h5"/><path d="M18 4v9M18 17v3M15.5 15h5"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.2 13.6A8.2 8.2 0 1 1 10.4 3.8a6.6 6.6 0 0 0 9.8 9.8Z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5V5M12 19v2.5M2.5 12H5M19 12h2.5M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12.5h4l2.4-6.2 4.1 12 2.3-5.8H21"/></symbol>
+  <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.7"/><path d="m15.6 8.4-1.9 5.3-5.3 1.9 1.9-5.3Z"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="M3.5 20.5 14.2 9.8"/><path d="M16.5 3.8v2.4M16.5 11.2v2.4M12.6 7.7h2.4M20 7.7h2.4"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.9 1 6.7 2.7L21 8"/><path d="M21 3v5h-5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5V15"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 19.5h15"/></symbol>
+  <symbol id="i-rows" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 10h17M3.5 14.7h17"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-printer" viewBox="0 0 24 24"><path d="M7 8.5V4h10v4.5"/><path d="M7 16.5H5a1.8 1.8 0 0 1-1.8-1.8v-4.4A1.8 1.8 0 0 1 5 8.5h14a1.8 1.8 0 0 1 1.8 1.8v4.4A1.8 1.8 0 0 1 19 16.5h-2"/><rect x="7" y="13.5" width="10" height="7" rx="1"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3.2" y="5.2" width="17.6" height="13.6" rx="2"/><path d="m4.5 7.5 7.5 5.4 7.5-5.4"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M5.5 3.5h3.2L10.5 8 8.3 9.7a12.5 12.5 0 0 0 6 6l1.7-2.2 4.5 1.8v3.2a1.8 1.8 0 0 1-1.9 1.8A17 17 0 0 1 3.7 5.4a1.8 1.8 0 0 1 1.8-1.9Z"/></symbol>
+</svg>
 <header class="site-header">
-  <div class="brand"><a href="/">🪨 <span>Stone Scanner</span></a></div>
+  <div class="brand"><a href="/"><svg class="ic brandmark" aria-hidden="true"><use href="#i-mark"/></svg><span>Stone Scanner</span></a></div>
   {% set p = request.url.path %}
   {% set cmp = compare_state() %}
   {% set alerts = alert_state() %}
-  <nav class="topnav">
-    <a href="/" class="{{ 'active' if p == '/' }}">Search</a>
-    <a href="/photo" class="{{ 'active' if p.startswith('/photo') }}">📷 By Photo</a>
-    <a href="/new" class="{{ 'active' if p.startswith('/new') }}">✨ What's New</a>
-    <a href="/alerts" class="{{ 'active' if p.startswith('/alerts') }}">🔔 Alerts <span class="navcount alertcount" id="alertNavCount"{% if not alerts.unread %} hidden{% endif %}>{{ alerts.unread }}</span></a>
-    <a href="/locations" class="{{ 'active' if p.startswith('/locations') }}">📍 Locations</a>
-    <a href="/lists" class="{{ 'active' if p.startswith('/list') }}">📋 Lists</a>
-    <a href="/compare" class="{{ 'active' if p.startswith('/compare') }}">⚖ Compare <span class="navcount" id="cmpNavCount"{% if not cmp.count %} hidden{% endif %}>{{ cmp.count }}</span></a>
-    <a href="/watchlist" class="{{ 'active' if p.startswith('/watchlist') }}">★ Watchlist</a>
+  <nav class="topnav" aria-label="Primary">
+    <a href="/" class="{{ 'active' if p == '/' }}">{{ ic('search') }}<span>Search</span></a>
+    <a href="/photo" class="{{ 'active' if p.startswith('/photo') }}">{{ ic('camera') }}<span>By Photo</span></a>
+    <a href="/new" class="{{ 'active' if p.startswith('/new') }}">{{ ic('sparkles') }}<span>What's New</span></a>
+    <a href="/alerts" class="{{ 'active' if p.startswith('/alerts') }}">{{ ic('bell') }}<span>Alerts</span> <span class="navcount alertcount" id="alertNavCount"{% if not alerts.unread %} hidden{% endif %}>{{ alerts.unread }}</span></a>
+    <a href="/locations" class="{{ 'active' if p.startswith('/locations') }}">{{ ic('pin') }}<span>Locations</span></a>
+    <a href="/lists" class="{{ 'active' if p.startswith('/list') }}">{{ ic('clipboard') }}<span>Lists</span></a>
+    <a href="/compare" class="{{ 'active' if p.startswith('/compare') }}">{{ ic('scale') }}<span>Compare</span> <span class="navcount" id="cmpNavCount"{% if not cmp.count %} hidden{% endif %}>{{ cmp.count }}</span></a>
+    <a href="/watchlist" class="{{ 'active' if p.startswith('/watchlist') }}">{{ ic('star') }}<span>Watchlist</span></a>
   </nav>
   <div class="header-aside">
     {% include "_refresh_warning.html" %}
@@ -36,36 +66,38 @@
     {% set opshere = p.startswith('/health') or p.startswith('/discovery') or p.startswith('/quality') %}
     <details class="opsmenu{{ ' active' if opshere }}" id="opsMenu">
       <summary class="iconbtn" title="Operator tools — Health, Discovery, Quality"
-               aria-label="Operator tools">⚙{% if ops.total %}<span
+               aria-label="Operator tools">{{ ic('sliders') }}{% if ops.total %}<span
         class="navcount opscount">{{ '99+' if ops.total > 99 else ops.total }}</span>{% endif %}</summary>
       <div class="opspanel" role="menu">
         <a role="menuitem" href="/health" class="{{ 'active' if p.startswith('/health') }}">
-          🩺 Health{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.health }}">{{ ops.health }} need attention</span>{% endif %}</a>
+          <span class="opslabel">{{ ic('pulse') }}Health</span>{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.health }}">{{ ops.health }} need attention</span>{% endif %}</a>
         <a role="menuitem" href="/discovery" class="{{ 'active' if p.startswith('/discovery') }}">
-          🔍 Discovery{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.discovery }}">{{ ops.discovery }} to triage</span>{% endif %}</a>
+          <span class="opslabel">{{ ic('compass') }}Discovery</span>{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.discovery }}">{{ ops.discovery }} to triage</span>{% endif %}</a>
         <a role="menuitem" href="/quality" class="{{ 'active' if p.startswith('/quality') }}">
-          🧹 Quality{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.quality }}">{{ ops.quality }} to review</span>{% endif %}</a>
+          <span class="opslabel">{{ ic('wand') }}Quality</span>{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.quality }}">{{ ops.quality }} to review</span>{% endif %}</a>
         {# A badge that cannot be computed must say so. Silence here read as "all clear" for
            the whole time /discovery was raising. #}
         {% if ops.error %}<span class="opsfail" title="{{ ops.error }}">⚠ counts unavailable — open a page above to see why</span>{% endif %}
       </div>
     </details>
-    <button id="themeToggle" class="iconbtn" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">🌗</button>
+    <button id="themeToggle" class="iconbtn" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">{{ ic('moon', 'ic-moon') }}{{ ic('sun', 'ic-sun') }}</button>
   </div>
 </header>
 
+<main class="page" id="main">
 {% if request.query_params.get('cmp') == 'full' %}
 <div class="cmpfull-banner">Compare holds {{ cmp.count }} — remove one first.</div>
 {% endif %}
 
 {% block content %}{% endblock %}
+</main>
 
 {# Sticky compare tray: present on every page, shown only when the tray is non-empty.
    Server-rendered so it's correct on first paint and without JS; the compare script
    updates it in place after a background toggle. #}
 <div id="cmpBar" class="cmpbar"{% if not cmp.count %} hidden{% endif %} aria-live="polite">
   <div class="cmpbar-inner">
-    <span class="cmpbar-label">⚖ Compare</span>
+    <span class="cmpbar-label">{{ ic('scale') }} Compare</span>
     <div class="cmpbar-thumbs" id="cmpBarThumbs">
       {% for t in cmp.tray %}<span class="cmpthumb">{% if t.image_url %}<img src="{{ t.image_url }}" alt="" onerror="this.remove()">{% else %}🪨{% endif %}</span>{% endfor %}
     </div>
@@ -95,6 +127,18 @@
 <footer>{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}</footer>
 
 {% block scripts %}{% endblock %}
+<script>
+/* Publish the header's real height as --header-h so sticky table headers can dock right
+   under it. The header wraps at narrow widths, so a hardcoded offset is wrong somewhere. */
+(function(){
+  var h=document.querySelector('.site-header');
+  if(!h)return;
+  function set(){document.documentElement.style.setProperty('--header-h',h.offsetHeight+'px');}
+  set();
+  if(window.ResizeObserver){ new ResizeObserver(set).observe(h); }
+  else window.addEventListener('resize',set);
+})();
+</script>
 <script>
 /* Lightbox. Judging stone means seeing it big, and until now only the item page's slab
    gallery could. Every <img data-lb> on any page opens here.
