@@ -6,6 +6,15 @@
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "stonescan.web.app:app", "--port", "8770"],
       "port": 8770
+    },
+    {
+      "name": "the-ledger",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "cd /d C:\\Users\\Traxtone\\Projects\\the-ledger && set PATH=C:\\Users\\Traxtone\\tools\\node-v22.23.2-win-x64;%PATH% && npm run dev"
+      ],
+      "port": 3000
     }
   ]
 }
