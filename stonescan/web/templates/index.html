@@ -71,7 +71,7 @@
       <select name="radius" title="Search radius" class="radsel">
         {% for r in [50, 100, 150, 300, 500] %}<option value="{{ r }}" {{ 'selected' if radius|string == r|string }}>{{ r }} mi</option>{% endfor %}
       </select>
-      <input type="number" name="min_sqft" value="{{ min_sqft }}" placeholder="min ft²" class="sizein" title="Only material with at least this much total in-stock area" min="0" step="10">
+      <input type="number" name="min_sqft" value="{{ min_sqft }}" placeholder="min ft²" class="sizein" title="Only material where at least one yard holds this much in-stock area. Not a total across suppliers — the filter tests the single best-stocked yard." min="0" step="10">
       <select name="sort" title="Sort results">
         {% for v, label in [('relevance','Best match'), ('slabs','Most slabs'), ('size','Biggest slabs'), ('area','Most area'), ('new','Newest first'), ('distance','Nearest')] %}
         <option value="{{ v }}" {{ 'selected' if v == sort }}>{{ label }}</option>{% endfor %}
@@ -206,7 +206,9 @@
       <td>{{ r.material_type }}</td>
       <td>{% if r.color %}<span class="chip">{{ r.color }}</span>{% endif %}</td>
       <td class="num">{{ r.suppliers }}</td>
-      <td class="num">{% if r.available_slabs %}{{ r.available_slabs }}{% if r.total_sqft %}<span class="sqft">{{ r.total_sqft|round|int }} ft²</span>{% endif %}{% elif r.tile_sf %}<span class="milechip">{{ r.tile_sf|round|int }} ft² tile</span>{% elif r.has_tile %}<span class="milechip">tile</span>{% endif %}</td>
+      {# `total_sqft` is MAX(sup_sqft) — the deepest single yard, not a sum. Rendering it as
+         a bare "N ft²" under a "Slabs / yard" column read as a catalog-wide total. #}
+      <td class="num">{% if r.available_slabs %}{{ r.available_slabs }}{% if r.total_sqft %}<span class="sqft" title="Square footage at the single best-stocked yard — not the total across all {{ r.suppliers }} supplier{{ '' if r.suppliers == 1 else 's' }}.">{{ r.total_sqft|round|int }} ft² at that yard</span>{% endif %}{% elif r.tile_sf %}<span class="milechip">{{ r.tile_sf|round|int }} ft² tile</span>{% elif r.has_tile %}<span class="milechip">tile</span>{% endif %}</td>
       {% if near_ok %}<td class="num muted">{% if r.miles is not none %}{{ r.miles|round|int }} mi{% endif %}</td>{% endif %}
     </tr>
   {% else %}
@@ -411,13 +413,22 @@
     fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){
       if(s.running){ btn.disabled=true; msg.textContent='⏳ '+(s.summary||'Refreshing…'); }
       else { clearInterval(timer); btn.disabled=false;
-        if(s.done){ showDone(s.summary||'Done'); }
+        if(s.done){ showDone(s.summary||'Done', s.ok !== false); }
       }
     }).catch(function(){});
   }
   // On completion, point at the new alerts (count + link) and relight the 🔔 badge live.
   // The summary is app-generated (fixed text + numbers), so it's safe to place in innerHTML.
-  function showDone(summary){
+  /* `ok` decides the tick and the wording. This used to prepend '✓' unconditionally, so a
+     crashed crawl rendered "✓ Refresh failed: … — reload to see changes." — a success mark
+     on the failure path, inviting the user to reload for changes that do not exist. */
+  function showDone(summary, ok){
+    if(!ok){
+      msg.classList.add('failed');
+      msg.textContent='⚠ '+summary+' — the catalog is unchanged. See Health for the run log.';
+      return;
+    }
+    msg.classList.remove('failed');
     fetch('/api/alerts/count').then(function(r){return r.json();}).then(function(a){
       var n=a.unread||0;
       var extra = n>0 ? ' · '+n+' change'+(n===1?'':'s')+' <a href="/alerts">View alerts</a>' : '';

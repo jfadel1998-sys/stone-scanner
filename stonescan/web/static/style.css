@@ -230,6 +230,8 @@ header,
 .refreshbtn:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
 .refreshbtn:disabled { opacity: .5; cursor: default; }
 .refreshmsg { font-size: 12px; color: var(--muted); }
+/* A failed refresh must not read like a quiet success — it used to render with a ✓. */
+.refreshmsg.failed { color: var(--brick-ink, var(--accent)); font-weight: 600; }
 .fresh { color: var(--muted); }
 
 /* ---- Filters bar -------------------------------------------------------- */

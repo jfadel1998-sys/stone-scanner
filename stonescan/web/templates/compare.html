@@ -57,7 +57,10 @@
           <div class="cmp-goneflag">no longer listed</div>
         {% else %}
           <a href="/material?key={{ c.key|urlencode }}">
-            {% if c.image %}<img class="cmp-photo" loading="lazy" data-lb data-full="{{ c.image|full_res }}" {{ lb_attrs(c.name, c.type, '/material?key=' ~ (c.material_key|urlencode)) }} src="{{ c.image }}" alt="" onerror="this.outerHTML='<span class=&quot;cmp-photo cmp-photoph&quot;>🪨</span>'">
+            {% if c.image %}<img class="cmp-photo" loading="lazy" data-lb data-full="{{ c.image|full_res }}" {# Reads key/types, which is what _compare_column actually returns. AIL-38 asked it for two
+   field names the column has never carried, so the caption rendered an empty key= and the
+   lightbox's only way out of /compare went nowhere. #}
+{{ lb_attrs(c.name, c.types|join(', '), '/material?key=' ~ (c.key|urlencode)) }} src="{{ c.image }}" alt="" onerror="this.outerHTML='<span class=&quot;cmp-photo cmp-photoph&quot;>🪨</span>'">
             {% else %}<span class="cmp-photo cmp-photoph">🪨</span>{% endif %}
             <div class="cmp-colname">{{ c.name }}</div>
           </a>
