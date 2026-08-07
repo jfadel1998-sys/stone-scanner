@@ -12,12 +12,14 @@ specific regression rather than "something in the pipeline".
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -5303,6 +5305,218 @@ class ColourFamilyTests(unittest.TestCase):
     def test_an_uncoloured_material_has_no_colour_restriction(self):
         from stonescan.web import app
         self.assertEqual(app._colors_for_choice(self.conn, ""), [])
+
+
+class RefreshPhaseTests(unittest.TestCase):
+    """AIL-41 — a long, healthy refresh must not look like a hung one.
+
+    The real run: crawl finished 05:27 and wrote "Done", the process legitimately indexed
+    images until ~08:1x, and every outside signal (a terminal-sounding log, a silent task
+    log, a Running task refusing later triggers) said "wedged". It wasn't.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.dbp = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.dbp)
+        self.log = Path(self.tmp) / "refresh-history.log"
+
+    def tearDown(self):
+        self.conn.close()
+        os.environ.pop("STONESCAN_TASK_LOG", None)
+
+    def _lines(self):
+        return self.log.read_text(encoding="utf-8").splitlines() if self.log.exists() else []
+
+    def _run_index(self, *, available=True, pending=0, indexed=0, raises=None, run_id=None):
+        """Drive desktop._index_images with a stubbed indexer."""
+        from stonescan import imagesearch
+        from stonescan import desktop as D
+        orig = (imagesearch.available, imagesearch.unindexed_urls, imagesearch.index_missing)
+        imagesearch.available = lambda: available
+        imagesearch.unindexed_urls = lambda conn, limit=0: ["u%d" % i for i in range(pending)]
+
+        def _idx(conn, *a, **k):
+            if raises:
+                raise raises
+            return indexed
+        imagesearch.index_missing = _idx
+        try:
+            D._index_images(self.dbp, run_id)
+        finally:
+            (imagesearch.available, imagesearch.unindexed_urls,
+             imagesearch.index_missing) = orig
+
+    # --- the phase is announced -------------------------------------------
+    def test_the_indexing_phase_announces_itself_before_it_starts(self):
+        self._run_index(pending=1200, indexed=1200)
+        text = "\n".join(self._lines())
+        self.assertIn("indexing 1200 new image(s)", text)
+        self.assertIn("can take hours", text)
+
+    def test_it_reports_what_it_actually_embedded(self):
+        self._run_index(pending=1200, indexed=1180)
+        self.assertRegex("\n".join(self._lines()),
+                         r"indexed 1180 of 1200 image\(s\) in [\d.]+ ?(s|min|h)")
+
+    def test_a_short_index_is_not_rounded_up_into_a_lie(self):
+        """A 35-second index really did report "1 min" — a small dishonesty in a change
+        whose whole point is that the log should be trusted."""
+        from stonescan.desktop import _elapsed
+        self.assertEqual(_elapsed(35), "35s")
+        self.assertEqual(_elapsed(0.4), "0s")
+        self.assertEqual(_elapsed(600), "10 min")
+        self.assertEqual(_elapsed(9720), "2.7 h")
+
+    def test_done_is_the_last_line_and_says_the_whole_run_is_over(self):
+        self._run_index(pending=5, indexed=5)
+        last = self._lines()[-1]
+        self.assertIn("Done", last)
+        self.assertIn("photo index", last)
+
+    # --- the crawl line must stop claiming to be the end -------------------
+    def test_a_non_final_crawl_does_not_write_done(self):
+        """The bug in one assertion: run_all's last line said Done while hours of work
+        remained. With final=False it must say something that invites reading on."""
+        from stonescan import ingest
+        ingest._refresh_log(self.dbp, "crawl complete — 100 materials, 5 suppliers. "
+                                      "Post-crawl work follows.")
+        line = self._lines()[-1]
+        self.assertNotIn("Done", line)
+        self.assertIn("crawl complete", line)
+
+    def test_the_crawl_line_and_the_run_line_are_different_strings(self):
+        """A log reader must not be able to mistake the first for the last."""
+        src = (Path(__file__).resolve().parent.parent / "stonescan" /
+               "ingest.py").read_text(encoding="utf-8")
+        self.assertIn('f"Done — {s[\'materials\']} materials', src)
+        self.assertIn('f"crawl complete — {s[\'materials\']} materials', src)
+
+    def test_run_all_still_says_done_when_it_is_the_whole_run(self):
+        """The CLI path has no later phase; final defaults to True so it is unchanged."""
+        import inspect
+
+        from stonescan import ingest
+        self.assertIs(inspect.signature(ingest.run_all).parameters["final"].default, True)
+
+    # --- AC-6: on disk when it happens, not at exit ------------------------
+    def test_the_start_line_is_on_disk_before_indexing_returns(self):
+        """The only requirement that actually matters. A buffered implementation passes
+        every other test in this class and fails the purpose of all of them."""
+        seen = {}
+
+        def _idx(conn, *a, **k):
+            seen["text"] = self.log.read_text(encoding="utf-8") if self.log.exists() else ""
+            return 3
+
+        from stonescan import imagesearch
+        from stonescan import desktop as D
+        orig = (imagesearch.available, imagesearch.unindexed_urls, imagesearch.index_missing)
+        imagesearch.available = lambda: True
+        imagesearch.unindexed_urls = lambda conn, limit=0: ["a", "b", "c"]
+        imagesearch.index_missing = _idx
+        try:
+            D._index_images(self.dbp, None)
+        finally:
+            (imagesearch.available, imagesearch.unindexed_urls,
+             imagesearch.index_missing) = orig
+        self.assertIn("indexing 3 new image(s)", seen.get("text", ""),
+                      "the start line was still buffered while indexing ran")
+
+    # --- AC-8: no phantom phase -------------------------------------------
+    def test_nothing_to_index_claims_no_phase(self):
+        self._run_index(pending=0)
+        text = "\n".join(self._lines())
+        self.assertNotIn("indexing 0", text)
+        self.assertIn("already current", text)
+
+    def test_a_build_without_the_model_claims_no_phase(self):
+        self._run_index(available=False)
+        text = "\n".join(self._lines())
+        self.assertNotIn("indexing", text)
+        self.assertIn("no photo index on this build", text)
+
+    # --- AC-4: a failure is recorded and distinguishable -------------------
+    def test_an_indexing_failure_is_recorded_and_not_mistaken_for_clean(self):
+        self._run_index(pending=10, raises=RuntimeError("disk full"))
+        text = "\n".join(self._lines())
+        self.assertIn("FAILED during image indexing", text)
+        self.assertIn("disk full", text)
+        self.assertNotIn("Done —", text)
+
+    def test_an_indexing_failure_says_the_crawl_itself_survived(self):
+        """Otherwise the night reads as a total loss when the catalog is actually fine."""
+        self._run_index(pending=10, raises=RuntimeError("boom"))
+        self.assertIn("the crawl itself succeeded", "\n".join(self._lines()))
+
+    # --- the ledger ---------------------------------------------------------
+    def test_the_phase_reaches_the_ledger_and_keeps_the_heartbeat_alive(self):
+        """Indexing touches no supplier for hours, so without a heartbeat here
+        recent_refresh_runs would call a healthy run `interrupted` — the same false
+        alarm in a different place."""
+        run_id = db.start_refresh_run(self.conn, planned=3)
+        before = self.conn.execute(
+            "SELECT heartbeat_at FROM refresh_runs WHERE id=?", (run_id,)).fetchone()[0]
+        time.sleep(1.1)
+        db.set_refresh_phase(self.conn, run_id, "indexing 1200 image(s)")
+        row = self.conn.execute(
+            "SELECT detail, heartbeat_at FROM refresh_runs WHERE id=?", (run_id,)).fetchone()
+        self.assertEqual(row[0], "indexing 1200 image(s)")
+        self.assertGreater(row[1], before, "the heartbeat did not advance")
+        self.assertEqual(db.recent_refresh_runs(self.conn)[0]["state"], "running")
+
+    def test_the_run_is_closed_after_indexing_not_before(self):
+        run_id = db.start_refresh_run(self.conn, planned=1)
+        self.assertIsNone(self.conn.execute(
+            "SELECT finished_at FROM refresh_runs WHERE id=?", (run_id,)).fetchone()[0])
+        self._run_index(pending=2, indexed=2, run_id=run_id)
+        row = db.connect(self.dbp).execute(
+            "SELECT outcome, finished_at FROM refresh_runs WHERE id=?", (run_id,)).fetchone()
+        self.assertEqual(row[0], "done")
+        self.assertIsNotNone(row[1])
+
+    def test_an_indexing_failure_closes_the_run_as_failed(self):
+        run_id = db.start_refresh_run(self.conn, planned=1)
+        self._run_index(pending=2, raises=RuntimeError("nope"), run_id=run_id)
+        row = db.connect(self.dbp).execute(
+            "SELECT outcome, detail FROM refresh_runs WHERE id=?", (run_id,)).fetchone()
+        self.assertEqual(row[0], "failed")
+        self.assertIn("image indexing", row[1])
+
+    # --- AC-5: the task log --------------------------------------------------
+    def test_the_task_log_hears_about_the_phase_change(self):
+        """The wrapper waits on this process and can see nothing inside it, so it gets
+        told rather than left with one SPILL line for hours."""
+        tl = Path(self.tmp) / "refresh-task.log"
+        os.environ["STONESCAN_TASK_LOG"] = str(tl)
+        self._run_index(pending=900, indexed=900)
+        text = tl.read_text(encoding="utf-8")
+        self.assertIn("indexing 900 image(s)", text)
+        self.assertIn("indexing finished: 900 of 900", text)
+
+    def test_no_task_log_configured_is_a_no_op(self):
+        """A normal dev run has no wrapper; this must not invent a file or raise."""
+        self._run_index(pending=1, indexed=1)   # STONESCAN_TASK_LOG unset
+        self.assertFalse((Path(self.tmp) / "refresh-task.log").exists())
+
+    def test_the_installer_hands_its_log_to_the_crawl(self):
+        ps = (Path(__file__).resolve().parent.parent /
+              "install-refresh-task.ps1").read_text(encoding="utf-8")
+        self.assertIn("STONESCAN_TASK_LOG", ps)
+
+    # --- NG-1 ---------------------------------------------------------------
+    def test_no_one_added_an_exit_to_shorten_the_run(self):
+        """NG-1. Nothing was hanging; indexing is real work. An exit here would truncate
+        it — which is exactly the fix I nearly shipped for a bug that did not exist."""
+        src = (Path(__file__).resolve().parent.parent / "stonescan" /
+               "desktop.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        main = next(n for n in tree.body
+                    if isinstance(n, ast.FunctionDef) and n.name == "main")
+        calls = [n for n in ast.walk(main) if isinstance(n, ast.Call)]
+        for c in calls:
+            name = getattr(c.func, "attr", None) or getattr(c.func, "id", None)
+            self.assertNotIn(name, ("exit", "_exit"), "main() must not force an exit")
 
 
 class OpsMenuTests(unittest.TestCase):

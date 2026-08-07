@@ -60,6 +60,27 @@ def _ledger_start(db_path: str, planned: int) -> int | None:
     return _ledger(_open)
 
 
+def refresh_log(db_path: str, msg: str) -> None:
+    """Public alias for `_refresh_log`, so the phases that run OUTSIDE run_all (image
+    indexing, in desktop.run_refresh) land in the same file with the same format. A second
+    logger would drift in timestamp format and, worse, in flush behaviour."""
+    _refresh_log(db_path, msg)
+
+
+def ledger_phase(db_path: str, run_id: int | None, phase: str) -> None:
+    """Tell the ledger what a still-running refresh is doing. Never raises."""
+    if run_id is None:
+        return
+
+    def _stamp():
+        conn = db.connect(db_path)
+        try:
+            db.set_refresh_phase(conn, run_id, phase)
+        finally:
+            conn.close()
+    _ledger(_stamp)
+
+
 def _ledger_finish(db_path: str, run_id: int | None, *, outcome: str,
                    materials: int | None = None, detail: str | None = None) -> None:
     if run_id is None:
@@ -370,8 +391,15 @@ async def _crawl_entries(entries, *, concurrency, delay, headless, db_path,
 async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1.5,
                   headless: bool = True, db_path: str = "", with_slabs: bool = False,
                   provider_limit: int = 0, retry_errored: bool = False,
-                  slab_item_cap: int = 0, honor_rejections: bool = True, progress=None) -> None:
+                  slab_item_cap: int = 0, honor_rejections: bool = True, progress=None,
+                  final: bool = True) -> int | None:
     """Crawl a mixed supplier list, routing each entry to its provider.
+
+    `final` says whether this crawl is the whole run. The CLI's answer is yes; the
+    packaged nightly's is no, because it indexes images afterwards. It decides two things
+    and nothing else: whether the last history line says "Done", and whether the ledger row
+    is closed here or left open for the caller. Returns the run id so a non-final caller
+    can finish what it opened.
 
     Every caller that crawls "everything in suppliers.json" must come through here:
     the list is no longer all Stone Profits, and feeding a UMI/SlabWare entry to the
@@ -611,8 +639,20 @@ async def run_all(entries: list[dict], *, concurrency: int = 3, delay: float = 1
             say(f"  circuit breaker: {sum(len(hs) for hs in abandoned.values())} host(s) "
                   f"across {len(abandoned)} provider(s) not attempted this run.")
         say(f"  product rollup: {n_rollup} products indexed for fast browse.")
-        _refresh_log(db_path, f"Done — {s['materials']} materials, {s['suppliers']} suppliers.")
-        _ledger_finish(db_path, run_id, outcome="done", materials=s["materials"])
+        if final:
+            _refresh_log(db_path,
+                         f"Done — {s['materials']} materials, {s['suppliers']} suppliers.")
+            _ledger_finish(db_path, run_id, outcome="done", materials=s["materials"])
+        else:
+            # NOT "Done": the caller has more to do (image indexing, which on the full
+            # catalog runs for hours). A terminal-sounding last line is precisely what made
+            # a healthy nightly read as a hung one — the log said Done at 05:27 and the
+            # process legitimately worked until 08:1x. The ledger row stays open and the
+            # caller closes it.
+            _refresh_log(db_path, f"crawl complete — {s['materials']} materials, "
+                                  f"{s['suppliers']} suppliers. Post-crawl work follows.")
+            ledger_phase(db_path, run_id, "crawl complete")
+        return run_id
     except Exception as e:  # noqa: BLE001 - record durably, then let the caller handle it
         import traceback
         _refresh_log(db_path, f"FAILED: {type(e).__name__}: {e}\n"
