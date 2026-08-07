@@ -20,7 +20,7 @@
     <form class="cmp-near" method="get" action="/compare">
       <input type="search" name="near" value="{{ near }}" placeholder="Distance from city…" title="Show miles to each material's nearest yard from this city">
       <button type="submit">Set</button>
-      {% if near and near_ok %}<span class="ichip">📍 from {{ near_label }}</span>
+      {% if near and near_ok %}<span class="ichip">{{ ic('pin') }} from {{ near_label }}</span>
       {% elif near %}<span class="okchip warn" title="Not in the offline city dataset — try a bigger city or 'City ST'">couldn't place “{{ near }}”</span>{% endif %}
     </form>
     <a class="btn ghost" href="/compare/print{% if near %}?near={{ near|urlencode }}{% endif %}">{{ ic('printer') }} Print board</a>
@@ -45,11 +45,11 @@
     <tr>
       <th class="cmp-rowlabel"></th>
       {% for c in cols %}
-      <th class="cmp-col{{ ' gone' if c.gone }}">
+      <th scope="col" class="cmp-col{{ ' gone' if c.gone }}">
         <form class="cmpcol-remove js-compare" method="post" action="/compare/toggle">
           <input type="hidden" name="material_key" value="{{ c.orig_key }}">
           <input type="hidden" name="back" value="/compare{% if near %}?near={{ near|urlencode }}{% endif %}">
-          <button type="submit" title="Remove from compare" aria-label="Remove">✕</button>
+          <button type="submit" title="Remove from compare" aria-label="Remove {{ c.name }} from compare">✕</button>
         </form>
         {% if c.gone %}
           <span class="cmp-photo cmp-photoph">🪨</span>
@@ -57,7 +57,7 @@
           <div class="cmp-goneflag">no longer listed</div>
         {% else %}
           <a href="/material?key={{ c.key|urlencode }}">
-            {% if c.image %}<img class="cmp-photo" loading="lazy" data-lb data-full="{{ c.image|full_res }}" {# Reads key/types, which is what _compare_column actually returns. AIL-38 asked it for two
+            {% if c.image %}<img class="cmp-photo" loading="lazy" decoding="async" data-lb data-full="{{ c.image|full_res }}" {# Reads key/types, which is what _compare_column actually returns. AIL-38 asked it for two
    field names the column has never carried, so the caption rendered an empty key= and the
    lightbox's only way out of /compare went nowhere. #}
 {{ lb_attrs(c.name, c.types|join(', '), '/material?key=' ~ (c.key|urlencode)) }} src="{{ c.image }}" alt="" onerror="this.outerHTML='<span class=&quot;cmp-photo cmp-photoph&quot;>🪨</span>'">
@@ -71,38 +71,38 @@
   </thead>
   <tbody>
     <tr class="cmp-group"><th colspan="{{ cols|length + 1 }}">Catalog</th></tr>
-    <tr><th>Type</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.types|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Color</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.colors|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Finish</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.finishes|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Thickness</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.thicknesses|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Slab size range</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.size_range or '—' }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Form</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.forms|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Type</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.types|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Color</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.colors|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Finish</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.finishes|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Thickness</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.thicknesses|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Slab size range</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.size_range or '—' }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Form</th>{% for c in cols %}<td>{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.forms|join(', ') or '—' }}{% endif %}</td>{% endfor %}</tr>
 
     <tr class="cmp-group"><th colspan="{{ cols|length + 1 }}">Availability</th></tr>
-    <tr><th>Suppliers</th>{% for c in cols %}<td class="num{{ win(winners, 'suppliers', loop.index0) }}">{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.suppliers }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th title="Slabs at the single best-stocked yard — not a total across yards">Deepest yard</th>{% for c in cols %}<td class="num{{ win(winners, 'deepest', loop.index0) }}">{% if c.gone or not c.deepest_yard %}<span class="cmp-none">—</span>{% else %}{{ c.deepest_yard.slabs }} <span class="cmp-sub">at {{ c.deepest_yard.supplier }}</span>{% endif %}</td>{% endfor %}</tr>
-    <tr><th title="Total across every yard — held separately, not one pile">Total slabs</th>{% for c in cols %}<td class="num{{ win(winners, 'total', loop.index0) }}">{% if c.gone or not c.total_slabs %}<span class="cmp-none">—</span>{% else %}{{ c.total_slabs }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Tile</th>{% for c in cols %}<td class="num">{% if c.gone or not c.tile_sf %}<span class="cmp-none">—</span>{% else %}{{ c.tile_sf|round|int }} ft²{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Yard locations</th>{% for c in cols %}<td>{% if c.gone or not c.locations %}<span class="cmp-none">—</span>{% else %}{{ c.locations|join(', ') }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Suppliers</th>{% for c in cols %}<td class="num{{ win(winners, 'suppliers', loop.index0) }}">{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ c.suppliers }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row" title="Slabs at the single best-stocked yard — not a total across yards">Deepest yard</th>{% for c in cols %}<td class="num{{ win(winners, 'deepest', loop.index0) }}">{% if c.gone or not c.deepest_yard %}<span class="cmp-none">—</span>{% else %}{{ c.deepest_yard.slabs }} <span class="cmp-sub">at {{ c.deepest_yard.supplier }}</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row" title="Total across every yard — held separately, not one pile">Total slabs</th>{% for c in cols %}<td class="num{{ win(winners, 'total', loop.index0) }}">{% if c.gone or not c.total_slabs %}<span class="cmp-none">—</span>{% else %}{{ c.total_slabs }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Tile</th>{% for c in cols %}<td class="num">{% if c.gone or not c.tile_sf %}<span class="cmp-none">—</span>{% else %}{{ c.tile_sf|round|int }} ft²{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Yard locations</th>{% for c in cols %}<td>{% if c.gone or not c.locations %}<span class="cmp-none">—</span>{% else %}{{ c.locations|join(', ') }}{% endif %}</td>{% endfor %}</tr>
     {% if near_ok %}
-    <tr><th title="Miles to the nearest yard known to stock it, from {{ near_label }}">Nearest yard</th>{% for c in cols %}<td class="num{{ win(winners, 'nearest', loop.index0) }}">{% if c.gone or c.miles is none %}<span class="cmp-none">—</span>{% else %}{{ c.miles|round|int }} mi{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row" title="Miles to the nearest yard known to stock it, from {{ near_label }}">Nearest yard</th>{% for c in cols %}<td class="num{{ win(winners, 'nearest', loop.index0) }}">{% if c.gone or c.miles is none %}<span class="cmp-none">—</span>{% else %}{{ c.miles|round|int }} mi{% endif %}</td>{% endfor %}</tr>
     {% endif %}
 
     <tr class="cmp-group"><th colspan="{{ cols|length + 1 }}">Price <span class="cmp-grouphint">observed in catalogs — never a tier code, never averaged across bases</span></th></tr>
-    <tr><th>$ / sq ft</th>{% for c in cols %}<td class="num{{ win(winners, 'price_sqft', loop.index0) }}">{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ priceband(c.prices.per_sqft, ' /sf') }}{% endif %}</td>{% endfor %}</tr>
-    <tr><th title="A whole-slab total (Unbuilt / Marble Systems) — NOT per square foot">Whole slab</th>{% for c in cols %}<td class="num">{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ priceband(c.prices.slab_total, '') }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">$ / sq ft</th>{% for c in cols %}<td class="num{{ win(winners, 'price_sqft', loop.index0) }}">{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ priceband(c.prices.per_sqft, ' / sq ft') }}{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row" title="A whole-slab total (Unbuilt / Marble Systems) — NOT per square foot">Whole slab</th>{% for c in cols %}<td class="num">{% if c.gone %}<span class="cmp-none">—</span>{% else %}{{ priceband(c.prices.slab_total, '') }}{% endif %}</td>{% endfor %}</tr>
 
     <tr class="cmp-group cmp-group-ref"><th colspan="{{ cols|length + 1 }}">Reference <span class="cmp-grouphint">cited external facts — “not established” when we have no source</span></th></tr>
-    <tr><th>What it is</th>{% for c in cols %}<td>{% if not c.gone and c.ref.known and c.ref.stone_type %}{{ c.ref.stone_type }}{% if c.ref.formation == 'engineered' %} <span class="ichip">engineered</span>{% endif %}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Origin</th>{% for c in cols %}<td>{% if not c.gone and c.ref.origin %}{{ c.ref.origin_text }}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Quarries</th>{% for c in cols %}<td>{% if not c.gone and c.ref.quarries %}{{ c.ref.quarries|map(attribute='name')|join(', ') }}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Market price</th>{% for c in cols %}<td>{% if not c.gone and c.ref.price_text %}{{ c.ref.price_text }}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">What it is</th>{% for c in cols %}<td>{% if not c.gone and c.ref.known and c.ref.stone_type %}{{ c.ref.stone_type }}{% if c.ref.formation == 'engineered' %} <span class="ichip">engineered</span>{% endif %}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Origin</th>{% for c in cols %}<td>{% if not c.gone and c.ref.origin %}{{ c.ref.origin_text }}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Quarries</th>{% for c in cols %}<td>{% if not c.gone and c.ref.quarries %}{{ c.ref.quarries|map(attribute='name')|join(', ') }}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Market price</th>{% for c in cols %}<td>{% if not c.gone and c.ref.price_text %}{{ c.ref.price_text }}{% else %}<span class="cmp-notest">not established</span>{% endif %}</td>{% endfor %}</tr>
 
     <tr class="cmp-group cmp-group-care"><th colspan="{{ cols|length + 1 }}">Care <span class="cmp-grouphint">general guidance for the category, not a per-stone fact</span></th></tr>
-    <tr><th>Porosity</th>{% for c in cols %}<td>{% if not c.gone and c.care.porosity %}{{ c.care.porosity }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Sealing</th>{% for c in cols %}<td>{% if not c.gone and c.care.sealing %}{{ c.care.sealing }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Durability</th>{% for c in cols %}<td>{% if not c.gone and c.care.durability %}{{ c.care.durability }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
-    <tr><th>Best for</th>{% for c in cols %}<td>{% if not c.gone and c.care.best_for %}{{ c.care.best_for }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Porosity</th>{% for c in cols %}<td>{% if not c.gone and c.care.porosity %}{{ c.care.porosity }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Sealing</th>{% for c in cols %}<td>{% if not c.gone and c.care.sealing %}{{ c.care.sealing }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Durability</th>{% for c in cols %}<td>{% if not c.gone and c.care.durability %}{{ c.care.durability }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
+    <tr><th scope="row">Best for</th>{% for c in cols %}<td>{% if not c.gone and c.care.best_for %}{{ c.care.best_for }}{% else %}<span class="cmp-none">—</span>{% endif %}</td>{% endfor %}</tr>
   </tbody>
 </table>
 </div>

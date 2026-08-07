@@ -29,7 +29,7 @@
     <p class="muted qdesc">The same stone sold under different material types by different suppliers ("Taj Mahal" as quartzite <em>and</em> granite) never groups together. These are the highest-impact merges.</p>
     {% for c in conflict_preview %}
       <div class="qprev">
-        {% if c.image_url %}<img class="qthumb" src="{{ c.image_url }}" loading="lazy" onerror="this.classList.add('noimg')">{% else %}<span class="qthumb noimg"></span>{% endif %}
+        {% if c.image_url %}<img class="qthumb" src="{{ c.image_url }}" loading="lazy" decoding="async" onerror="this.classList.add('noimg')">{% else %}<span class="qthumb noimg"></span>{% endif %}
         <div class="qprev-body">
           <b>{{ c.display }}</b>
           <div class="qchips">
@@ -48,7 +48,7 @@
     <p class="muted qdesc">Different spellings of one name ("Calacata Gold" vs "Calacatta Gold") that the normalizer didn't already fold together.</p>
     {% for c in fuzzy_preview %}
       <div class="qprev">
-        {% if c.image_url %}<img class="qthumb" src="{{ c.image_url }}" loading="lazy" onerror="this.classList.add('noimg')">{% else %}<span class="qthumb noimg"></span>{% endif %}
+        {% if c.image_url %}<img class="qthumb" src="{{ c.image_url }}" loading="lazy" decoding="async" onerror="this.classList.add('noimg')">{% else %}<span class="qthumb noimg"></span>{% endif %}
         <div class="qprev-body">
           <b>{{ c.display }}</b>
           <div class="qchips">
@@ -63,7 +63,7 @@
 
 <div class="block">
   <h2>Classifier audit</h2>
-  <p class="muted qdesc" style="margin:0 0 8px;">{{ qs.other }} materials landed in “Other” and {{ qs.accessory }} in “Accessory”. Browse them to spot real stones the classifier missed. <a href="/quality/types">Open the type audit →</a></p>
+  <p class="muted qdesc">{{ qs.other }} materials landed in “Other” and {{ qs.accessory }} in “Accessory”. Browse them to spot real stones the classifier missed. <a href="/quality/types">Open the type audit →</a></p>
 </div>
 
 {% if aliases %}
@@ -80,7 +80,7 @@
         <td>
           <form method="post" action="/quality/alias/remove" onsubmit="return confirm('Undo this merge? It reverses on the next crawl.')">
             <input type="hidden" name="alias_key" value="{{ a.alias_key }}">
-            <button class="rmbtn" title="Undo merge">✕</button>
+            <button class="rmbtn" title="Undo merge" aria-label="Undo merge of {{ a.alias_key }}">✕</button>
           </form>
         </td>
       </tr>

@@ -6,7 +6,9 @@
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}Stone Scanner — cross-supplier material search{% endblock %}</title>
   {# Set the saved theme before first paint to avoid a flash of the wrong theme. #}
-  <script>(function(){try{var t=localStorage.getItem('ss-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+  {# color-scheme is set inline too: the attribute alone only takes effect when style.css
+     arrives, so a dark-theme user on a light-OS machine got a white flash every cold start. #}
+  <script>(function(){try{var t=localStorage.getItem('ss-theme');if(t){var d=document.documentElement;d.setAttribute('data-theme',t);d.style.colorScheme=t;}}catch(e){}})();</script>
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -47,14 +49,14 @@
   {% set cmp = compare_state() %}
   {% set alerts = alert_state() %}
   <nav class="topnav" aria-label="Primary">
-    <a href="/" class="{{ 'active' if p == '/' }}">{{ ic('search') }}<span>Search</span></a>
-    <a href="/photo" class="{{ 'active' if p.startswith('/photo') }}">{{ ic('camera') }}<span>By Photo</span></a>
-    <a href="/new" class="{{ 'active' if p.startswith('/new') }}">{{ ic('sparkles') }}<span>What's New</span></a>
-    <a href="/alerts" class="{{ 'active' if p.startswith('/alerts') }}">{{ ic('bell') }}<span>Alerts</span> <span class="navcount alertcount" id="alertNavCount"{% if not alerts.unread %} hidden{% endif %}>{{ alerts.unread }}</span></a>
-    <a href="/locations" class="{{ 'active' if p.startswith('/locations') }}">{{ ic('pin') }}<span>Locations</span></a>
-    <a href="/lists" class="{{ 'active' if p.startswith('/list') }}">{{ ic('clipboard') }}<span>Lists</span></a>
-    <a href="/compare" class="{{ 'active' if p.startswith('/compare') }}">{{ ic('scale') }}<span>Compare</span> <span class="navcount" id="cmpNavCount"{% if not cmp.count %} hidden{% endif %}>{{ cmp.count }}</span></a>
-    <a href="/watchlist" class="{{ 'active' if p.startswith('/watchlist') }}">{{ ic('star') }}<span>Watchlist</span></a>
+    <a href="/" class="{{ 'active' if p == '/' }}"{% if p == '/' %} aria-current="page"{% endif %}>{{ ic('search') }}<span>Search</span></a>
+    <a href="/photo" class="{{ 'active' if p.startswith('/photo') }}"{% if p.startswith('/photo') %} aria-current="page"{% endif %}>{{ ic('camera') }}<span>By Photo</span></a>
+    <a href="/new" class="{{ 'active' if p.startswith('/new') }}"{% if p.startswith('/new') %} aria-current="page"{% endif %}>{{ ic('sparkles') }}<span>What's New</span></a>
+    <a href="/alerts" class="{{ 'active' if p.startswith('/alerts') }}"{% if p.startswith('/alerts') %} aria-current="page"{% endif %}>{{ ic('bell') }}<span>Alerts</span> <span class="navcount alertcount" id="alertNavCount"{% if not alerts.unread %} hidden{% endif %}>{{ alerts.unread }}</span></a>
+    <a href="/locations" class="{{ 'active' if p.startswith('/locations') }}"{% if p.startswith('/locations') %} aria-current="page"{% endif %}>{{ ic('pin') }}<span>Locations</span></a>
+    <a href="/lists" class="{{ 'active' if p.startswith('/list') }}"{% if p.startswith('/list') %} aria-current="page"{% endif %}>{{ ic('clipboard') }}<span>Lists</span></a>
+    <a href="/compare" class="{{ 'active' if p.startswith('/compare') }}"{% if p.startswith('/compare') %} aria-current="page"{% endif %}>{{ ic('scale') }}<span>Compare</span> <span class="navcount" id="cmpNavCount"{% if not cmp.count %} hidden{% endif %}>{{ cmp.count }}</span></a>
+    <a href="/watchlist" class="{{ 'active' if p.startswith('/watchlist') }}"{% if p.startswith('/watchlist') %} aria-current="page"{% endif %}>{{ ic('star') }}<span>Watchlist</span></a>
   </nav>
   <div class="header-aside">
     {% include "_refresh_warning.html" %}
@@ -65,15 +67,18 @@
     {% set ops = ops_state() %}
     {% set opshere = p.startswith('/health') or p.startswith('/discovery') or p.startswith('/quality') %}
     <details class="opsmenu{{ ' active' if opshere }}" id="opsMenu">
+      {# No role=menu/menuitem: these are ordinary links, and claiming menu semantics
+         promises arrow-key traversal nothing implements. The summary's label carries the
+         badge count, which aria-label used to silently override. #}
       <summary class="iconbtn" title="Operator tools — Health, Discovery, Quality"
-               aria-label="Operator tools">{{ ic('sliders') }}{% if ops.total %}<span
+               aria-label="Operator tools{% if ops.total %} — {{ ops.total }} to review{% endif %}">{{ ic('sliders') }}{% if ops.total %}<span
         class="navcount opscount">{{ '99+' if ops.total > 99 else ops.total }}</span>{% endif %}</summary>
-      <div class="opspanel" role="menu">
-        <a role="menuitem" href="/health" class="{{ 'active' if p.startswith('/health') }}">
+      <div class="opspanel">
+        <a href="/health" class="{{ 'active' if p.startswith('/health') }}">
           <span class="opslabel">{{ ic('pulse') }}Health</span>{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.health }}">{{ ops.health }} need attention</span>{% endif %}</a>
-        <a role="menuitem" href="/discovery" class="{{ 'active' if p.startswith('/discovery') }}">
+        <a href="/discovery" class="{{ 'active' if p.startswith('/discovery') }}">
           <span class="opslabel">{{ ic('compass') }}Discovery</span>{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.discovery }}">{{ ops.discovery }} to triage</span>{% endif %}</a>
-        <a role="menuitem" href="/quality" class="{{ 'active' if p.startswith('/quality') }}">
+        <a href="/quality" class="{{ 'active' if p.startswith('/quality') }}">
           <span class="opslabel">{{ ic('wand') }}Quality</span>{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.quality }}">{{ ops.quality }} to review</span>{% endif %}</a>
         {# A badge that cannot be computed must say so. Silence here read as "all clear" for
            the whole time /discovery was raising. #}
@@ -114,7 +119,7 @@
    one implementation is the only way the keyboard behaviour stays identical between them.
    Any <img data-lb ...> on any page participates; the script below finds them at open time,
    so images added later by JS (the item page's live slab gallery) work with no extra wiring. #}
-<div id="lightbox" class="lightbox" aria-hidden="true">
+<div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" aria-hidden="true">
   <button type="button" class="lb-close" id="lbClose" aria-label="Close">✕</button>
   <img id="lightbox-img" src="" alt="">
   <div class="lb-caption" id="lbCaption">
@@ -126,7 +131,9 @@
 
 <footer>{% block footer %}Indexes only publicly published catalogs. Data reflects each supplier's public catalog at last crawl.{% endblock %}</footer>
 
-{% block scripts %}{% endblock %}
+{# Page scripts load at the very end (after the inline wiring below): a page's heavy
+   script — leaflet on /locations — must not delay the theme toggle, lightbox, and
+   compare-tray interceptor that every page depends on. All are self-contained IIFEs. #}
 <script>
 /* Publish the header's real height as --header-h so sticky table headers can dock right
    under it. The header wraps at narrow widths, so a hardcoded offset is wrong somewhere. */
@@ -175,6 +182,8 @@
     opener=el; box.classList.add('show'); box.setAttribute('aria-hidden','false');
     document.body.style.overflow='hidden';
     show(n);
+    /* Move focus INTO the dialog — otherwise Tab keeps walking the page behind it. */
+    document.getElementById('lbClose').focus();
   }
   function close(){
     box.classList.remove('show'); box.setAttribute('aria-hidden','true');
@@ -235,6 +244,9 @@
   b.addEventListener('click',function(){
     var next=current()==='dark'?'light':'dark';
     document.documentElement.setAttribute('data-theme',next);
+    // Mirror the bootstrap's inline color-scheme, which would otherwise outlive the toggle
+    // and leave form controls/scrollbars on the stale scheme.
+    document.documentElement.style.colorScheme=next;
     try{localStorage.setItem('ss-theme',next);}catch(e){}
   });
 })();
@@ -294,5 +306,6 @@
   });
 })();
 </script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

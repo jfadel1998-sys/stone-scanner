@@ -16,7 +16,7 @@
 {% macro alert_row(it, change) -%}
 {% set href = ('/item?id=' ~ it.id) if it.id else (('/material?key=' ~ it.material_key|urlencode) if it.material_key else '') %}
 <tr class="{{ 'alert-unread' if it.unread }}">
-  <td class="thumbcell">{% if href %}<a href="{{ href }}">{% endif %}{% if it.image_url %}<img class="thumb" loading="lazy" src="{{ it.image_url }}" alt="" onerror="this.classList.add('broken')">{% else %}<span class="thumb noimg"></span>{% endif %}{% if href %}</a>{% endif %}</td>
+  <td class="thumbcell">{% if href %}<a href="{{ href }}">{% endif %}{% if it.image_url %}<img class="thumb" loading="lazy" decoding="async" src="{{ it.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">{% else %}<span class="thumb noimg"></span>{% endif %}{% if href %}</a>{% endif %}</td>
   <td class="name">{% if href %}<a class="itemlink" href="{{ href }}">{{ it.name_norm|title }}</a>{% else %}{{ it.name_norm|title }}{% endif %}{% if it.unread %} <span class="new">NEW</span>{% endif %}</td>
   <td>{{ it.material_type }}</td>
   <td>{% if it.color %}<span class="chip">{{ it.color }}</span>{% endif %}</td>
@@ -26,12 +26,12 @@
 </tr>
 {%- endmacro %}
 
-{% macro alert_section(cls, title, hint, items, kind) -%}
+{% macro alert_section(cls, title, hint, items, kind, icon='') -%}
 {% if items %}
 <section class="block alert-sec {{ cls }}">
-  <h2>{{ title }} <span class="muted">— {{ hint }} ({{ items|length }})</span></h2>
+  <h2>{% if icon %}{{ ic(icon) }} {% endif %}{{ title }} <span class="muted">— {{ hint }} ({{ items|length }})</span></h2>
   <table class="materials">
-    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th>Thk</th><th>Supplier</th><th class="num">{{ 'Slabs' if kind in ('restock','listed') else 'Change' }}</th></tr></thead>
+    <thead><tr><th></th><th>Material</th><th>Type</th><th>Color</th><th title="Thickness">Thk</th><th>Supplier</th><th class="num">{{ 'Slabs' if kind in ('restock','listed') else 'Change' }}</th></tr></thead>
     <tbody>
       {% for it in items %}
         {% if kind == 'dropped' %}{{ alert_row(it, it.prev_slabs ~ ' → ' ~ it.latest_slabs) }}
@@ -66,7 +66,7 @@
 </div>
 {% else %}
 {{ alert_section('alert-up', '↑ Restocked', "listed with zero stock at the supplier's previous crawl, in stock now", digest.restock, 'restock') }}
-{{ alert_section('alert-new', '✨ New listings', "first seen in the supplier's latest crawl", digest.listed, 'listed') }}
+{{ alert_section('alert-new', 'New listings', "first seen in the supplier's latest crawl", digest.listed, 'listed', icon='sparkles') }}
 {{ alert_section('alert-drop', '↓ Sharp drops', "fell to half or less (and by ≥5 slabs) since the previous crawl", digest.dropped, 'dropped') }}
 {{ alert_section('alert-out', '✖ Sold out', "in stock at the previous crawl, zero now", digest.soldout, 'soldout') }}
 {{ alert_section('alert-gone', '⌫ Delisted', "in stock at the previous crawl, no longer in the catalog at all", digest.delisted, 'delisted') }}

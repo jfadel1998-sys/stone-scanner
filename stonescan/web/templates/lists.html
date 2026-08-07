@@ -23,11 +23,11 @@
       <span class="muted">{{ l.items }} item{{ '' if l.items == 1 else 's' }} · {{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
     </a>
     <div class="listthumbs">
-      {% for t in l.thumbs %}<img loading="lazy" src="{{ t }}" alt="" onerror="this.remove()">{% endfor %}
+      {% for t in l.thumbs %}<img loading="lazy" decoding="async" src="{{ t }}" alt="" onerror="this.remove()">{% endfor %}
     </div>
     <form method="post" action="/lists/delete" onsubmit="return confirm('Delete this list? The materials themselves are not affected.')">
       <input type="hidden" name="list_id" value="{{ l.id }}">
-      <button class="rmbtn" title="Delete list">✕</button>
+      <button class="rmbtn" title="Delete list" aria-label="Delete list {{ l.name }}">✕</button>
     </form>
   </div>
   {% else %}

@@ -11,6 +11,7 @@
 {% endblock %}
 
 {% block content %}
+<h1 class="sr-only">Search materials</h1>
 {% set adv_active = thickness or finish or location or min_length or min_width or near or min_sqft or new_only or in_stock or (sort and sort != 'relevance') %}
 <form class="filters" method="get" action="/">
   <div class="primary">
@@ -40,7 +41,7 @@
   </div>
 
   <details class="morefilters" {{ 'open' if adv_active }}>
-    <summary>More filters{% if adv_active %} · active{% endif %}</summary>
+    <summary>{{ ic('sliders') }} More filters{% if adv_active %} · active{% endif %}</summary>
     <div class="advfilters">
       <select name="thickness">
         <option value="">Any thickness</option>
@@ -99,8 +100,8 @@
   {% elif added == 0 %}<span class="okchip warn">Already on that list</span>{% endif %}
   {% if rows %}<a class="csvlink" href="/export.csv{% if qs %}?{{ qs }}{% endif %}" title="Download these results as a spreadsheet (CSV)">{{ ic('download') }} CSV</a>{% endif %}
   <span class="viewtoggle">
-    <a href="{{ base }}view=table&page={{ page }}" class="{{ 'on' if view != 'grid' }}">{{ ic('rows') }} Table</a>
-    <a href="{{ base }}view=grid&page={{ page }}" class="{{ 'on' if view == 'grid' }}">{{ ic('grid') }} Showroom</a>
+    <a href="{{ base }}view=table&page={{ page }}" class="{{ 'on' if view != 'grid' }}"{% if view != 'grid' %} aria-current="true"{% endif %}>{{ ic('rows') }} Table</a>
+    <a href="{{ base }}view=grid&page={{ page }}" class="{{ 'on' if view == 'grid' }}"{% if view == 'grid' %} aria-current="true"{% endif %}>{{ ic('grid') }} Showroom</a>
   </span>
 </p>
 
@@ -112,7 +113,7 @@
 <div class="filterchips">
   <span class="fcap">Filters:</span>
   {% for c in chips %}
-  <a class="fchip" href="{{ c.remove_href }}" title="Remove this filter">{{ c.label }}<span class="fx">×</span></a>
+  <a class="fchip" href="{{ c.remove_href }}" aria-label="Remove filter: {{ c.label }}">{{ c.label }}<span class="fx" aria-hidden="true">×</span></a>
   {% endfor %}
   {% if chips|length > 1 %}
   {# Keeps the query and the view: neither is a filter, and dropping the view here would
@@ -151,7 +152,7 @@
   <input type="hidden" name="image_url" value="{{ r.image_url or r.rep_image or '' }}">
   <input type="hidden" name="back" value="{{ here }}">
   <label class="cmpchk" title="Add to compare">
-    <input type="checkbox" name="on" data-cmpkey="{{ r.material_key }}" onchange="this.form.requestSubmit()" {{ 'checked' if r.material_key in cmpkeys }}>
+    <input type="checkbox" name="on" data-cmpkey="{{ r.material_key }}" aria-label="Add {{ mat_name(r)|trim }} to compare" onchange="this.form.requestSubmit()" {{ 'checked' if r.material_key in cmpkeys }}>
     <span class="cmpchk-face" aria-hidden="true">{{ ic('scale') }}</span>
   </label>
   <noscript><button type="submit" class="cmpchk-fallback">± compare</button></noscript>
@@ -164,8 +165,8 @@
   {% for r in rows %}
   <div class="matcardwrap">
   <a class="matcard" href="{{ mat_href(r) }}">
-    {% if r.image_url %}<img loading="lazy" data-lb data-full="{{ r.image_url|full_res }}" {{ lb_meta(r) }} src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'">
-    {% elif r.rep_image %}<img loading="lazy" data-lb data-full="{{ r.rep_image|full_res }}" {{ lb_meta(r, rep=true) }} src="{{ r.rep_image }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'"><span class="repbadge" title="A photo of the same-named stone from another listing — representative only; the actual slab varies">representative</span>
+    {% if r.image_url %}<img loading="{{ 'eager' if loop.index <= 8 else 'lazy' }}" decoding="async" data-lb data-full="{{ r.image_url|full_res }}" {{ lb_meta(r) }} src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'">
+    {% elif r.rep_image %}<img loading="{{ 'eager' if loop.index <= 8 else 'lazy' }}" decoding="async" data-lb data-full="{{ r.rep_image|full_res }}" {{ lb_meta(r, rep=true) }} src="{{ r.rep_image }}" alt="" onerror="this.outerHTML='<span class=&quot;cardph&quot;>🪨</span>'"><span class="repbadge" title="A photo of the same-named stone from another listing — representative only; the actual slab varies">representative</span>
     {% else %}<span class="cardph">🪨</span>{% endif %}
     <span class="cardmeta">
       <b>{{ mat_name(r) }}{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}</b>
@@ -199,17 +200,17 @@
 <table class="materials">
   <thead>
     <tr>
-      <th></th><th>Material</th><th>Type</th><th>Color</th>
-      <th class="num">Suppliers</th><th class="num" title="Slabs at the single best-stocked supplier — not a total across yards">Slabs / yard</th>{% if near_ok %}<th class="num" title="Distance to the nearest yard known to stock it (falls back to the supplier's yards when a slab-level location isn't cached)">Nearest</th>{% endif %}
+      <th scope="col"></th><th scope="col">Material</th><th scope="col">Type</th><th scope="col">Color</th>
+      <th scope="col" class="num">Suppliers</th><th scope="col" class="num" title="Slabs at the single best-stocked supplier — not a total across yards">Slabs / yard</th>{% if near_ok %}<th scope="col" class="num" title="Distance to the nearest yard known to stock it (falls back to the supplier's yards when a slab-level location isn't cached)">Nearest</th>{% endif %}
     </tr>
   </thead>
   <tbody>
   {% for r in rows %}
     <tr>
       <td class="thumbcell">
-        <a href="{{ mat_href(r) }}">
-        {% if r.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ r.image_url|full_res }}" {{ lb_meta(r) }} src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
-        {% elif r.rep_image %}<img class="thumb" loading="lazy" data-lb data-full="{{ r.rep_image|full_res }}" {{ lb_meta(r, rep=true) }} src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone — the actual slab varies" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
+        <a href="{{ mat_href(r) }}" aria-label="{{ mat_name(r)|trim }}">
+        {% if r.image_url %}<img class="thumb" loading="{{ 'eager' if loop.index <= 10 else 'lazy' }}" decoding="async" data-lb data-full="{{ r.image_url|full_res }}" {{ lb_meta(r) }} src="{{ r.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
+        {% elif r.rep_image %}<img class="thumb" loading="{{ 'eager' if loop.index <= 10 else 'lazy' }}" decoding="async" data-lb data-full="{{ r.rep_image|full_res }}" {{ lb_meta(r, rep=true) }} src="{{ r.rep_image }}" alt="" title="Representative photo of the same-named stone — the actual slab varies" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
         {% else %}<span class="thumb noimg"></span>{% endif %}</a>
       </td>
       <td class="name">{{ cmp_control(r, cmpkeys) }}<a class="itemlink" href="{{ mat_href(r) }}">{{ mat_name(r) }}</a>{% if r.new_arrival %} <span class="new">NEW</span>{% endif %}{% if r.rep_image %} <span class="repchip" title="The shown photo is a representative of the same-named stone from another listing — natural stone varies">≈ ref photo</span>{% endif %}{% if r.has_residue %} <span class="residuechip" title="At least one supplier behind this row is serving data its last crawl failed to replace, so the totals here include figures that have not been reconfirmed. Open the item to see each supplier's own collection date.">unconfirmed</span>{% endif %}</td>
@@ -466,7 +467,9 @@
       : 'Re-crawl all catalogs now (materials & prices only — slab photos load on demand). Runs in the background with live progress; the full list takes a while. Continue?';
     if(!confirm(m)) return;
     btn.disabled=true; msg.textContent='Starting…';
-    fetch('/api/refresh'+(deep?'?slabs=1':''), {method:'POST'}).then(function(){ timer=setInterval(poll, 3000); poll(); });
+    fetch('/api/refresh'+(deep?'?slabs=1':''), {method:'POST'})
+      .then(function(){ msg.classList.remove('failed'); timer=setInterval(poll, 3000); poll(); })
+      .catch(function(){ btn.disabled=false; msg.classList.add('failed'); msg.textContent='⚠ Couldn’t start the refresh — try again.'; });
   });
   // resume polling if a refresh is already running (e.g. after navigating)
   fetch('/api/refresh/status').then(function(r){return r.json();}).then(function(s){ if(s.running){ timer=setInterval(poll,3000); poll(); } });

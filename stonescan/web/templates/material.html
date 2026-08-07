@@ -18,7 +18,7 @@
     <input type="hidden" name="image_url" value="{{ photos[0] if photos else (rep_photo or '') }}">
     <input type="hidden" name="back" value="/material?key={{ key|urlencode }}">
     <label class="cmpchk cmpchk-btn" title="Add this material to the compare tray">
-      <input type="checkbox" name="on" data-cmpkey="{{ key }}" onchange="this.form.requestSubmit()" {{ 'checked' if key in cmp.keyset }}>
+      <input type="checkbox" name="on" aria-label="Add {{ name }} to compare" data-cmpkey="{{ key }}" onchange="this.form.requestSubmit()" {{ 'checked' if key in cmp.keyset }}>
       <span class="cmpchk-face" aria-hidden="true">{{ ic('scale') }}</span>
       <span class="cmpchk-text"></span>
     </label>
@@ -30,11 +30,11 @@
 
 {% if photos %}
 <div class="herostrip">
-  {% for p in photos %}<img loading="lazy" data-lb data-full="{{ p|full_res }}" {{ lb_attrs(name, [material_type, color]|select|join(' · ')) }} src="{{ p }}" alt="" onerror="this.remove()">{% endfor %}
+  {% for p in photos %}<img loading="{{ 'eager' if loop.index <= 4 else 'lazy' }}" decoding="async" data-lb data-full="{{ p|full_res }}" {{ lb_attrs(name, [material_type, color]|select|join(' · ')) }} src="{{ p }}" alt="" onerror="this.remove()">{% endfor %}
 </div>
 {% elif rep_photo %}
 <div class="herostrip">
-  <img loading="lazy" data-lb data-full="{{ rep_photo|full_res }}" {{ lb_attrs(name, 'representative photo — the actual slab varies') }} src="{{ rep_photo }}" alt="" onerror="this.closest('.herostrip').remove()">
+  <img loading="eager" decoding="async" data-lb data-full="{{ rep_photo|full_res }}" {{ lb_attrs(name, 'representative photo — the actual slab varies') }} src="{{ rep_photo }}" alt="" onerror="var h=this.closest('.herostrip');var n=h.nextElementSibling;if(n&&n.classList.contains('repnote'))n.remove();h.remove()">
 </div>
 <p class="repnote">≈ Representative photo — of the same-named stone from another listing. This exact material published no photo of its own, and natural stone varies, so the actual slab will differ.</p>
 {% endif %}
@@ -133,11 +133,11 @@
   {% else %}
     <p class="notest">No reference entry for this stone yet.</p>
     <p class="muted small">The bundled reference covers the most widely-carried stones. You can look this one up now — it fetches from public sources, cites them, and is remembered for next time.</p>
-    <form method="post" action="/photo/lookup" class="lookupform">
+    <form method="post" action="/photo/lookup" class="lookupform" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Looking this up…';">
       <input type="hidden" name="key" value="{{ key }}">
       <input type="hidden" name="name" value="{{ name }}">
       <input type="hidden" name="stone_type" value="{{ facts.types[0] if facts.types else '' }}">
-      <button type="submit">Look this up</button>
+      <button type="submit" class="btn">Look this up</button>
     </form>
   {% endif %}
 </section>
@@ -175,15 +175,15 @@
   <h2>Where to buy it</h2>
   <table class="materials">
     <thead>
-      <tr><th></th><th>Supplier</th><th>Listed as</th><th>Thk</th><th class="num">Slabs</th>
+      <tr><th></th><th>Supplier</th><th>Listed as</th><th title="Thickness">Thk</th><th class="num">Slabs</th>
           <th>Location</th><th>Contact</th><th></th><th></th></tr>
     </thead>
     <tbody>
     {% for s in suppliers_list %}
       <tr>
         <td class="thumbcell">
-          <a href="/item?id={{ s.id }}">
-          {% if s.image_url %}<img class="thumb" loading="lazy" data-lb data-full="{{ s.image_url|full_res }}" {{ lb_attrs(name, s.supplier_name, '/item?id=' ~ s.id) }} src="{{ s.image_url }}" alt="" onerror="this.classList.add('broken')">
+          <a href="/item?id={{ s.id }}" aria-label="{{ name }} at {{ s.supplier_name }}">
+          {% if s.image_url %}<img class="thumb" loading="lazy" decoding="async" data-lb data-full="{{ s.image_url|full_res }}" {{ lb_attrs(name, s.supplier_name, '/item?id=' ~ s.id) }} src="{{ s.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;thumb noimg&quot;></span>'">
           {% else %}<span class="thumb noimg"></span>{% endif %}</a>
         </td>
         <td class="name">{{ s.supplier_name }}</td>
@@ -198,7 +198,7 @@
         <td class="num">{% if s.slabs %}{{ s.slabs }}{% elif s.tile_sf %}<span class="milechip" title="Sold as tile — measured by area, not slab count">{{ s.tile_sf|round|int }} ft² tile</span>{% elif s.has_tile %}<span class="milechip" title="Sold as tile">tile</span>{% else %}—{% endif %}</td>
         <td class="muted loc">{{ s.locations[:2]|join(', ') }}</td>
         <td class="muted">
-          {% if s.phone %}<div>{{ s.phone }}</div>{% endif %}
+          {% if s.phone %}<div><a href="tel:{{ s.phone }}">{{ s.phone }}</a></div>{% endif %}
           {% if s.email %}<div><a href="mailto:{{ s.email }}?subject={{ name|urlencode }}">{{ s.email }}</a></div>{% endif %}
           {% if not s.phone and not s.email %}—{% endif %}
         </td>
@@ -215,7 +215,7 @@
             <select name="list_id" title="Add this supplier's listing to a sourcing list">
               {% for l in lists %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
             </select>
-            <button title="Add to this list">＋</button>
+            <button title="Add to this list" aria-label="Add {{ s.supplier_name }}'s listing to a sourcing list">＋</button>
           </form>
           {% else %}<a class="addnew" href="/lists" title="Create a sourcing list first">＋ list</a>{% endif %}
         </td>
@@ -231,7 +231,7 @@
   <div class="simgrid">
     {% for x in similar %}
     <a class="simcard" href="/material?key={{ x.material_key | urlencode }}">
-      {% if x.image_url %}<img loading="lazy" data-lb data-full="{{ x.image_url|full_res }}" {{ lb_attrs(x.item_name, (x.suppliers ~ ' supplier' ~ ('' if x.suppliers == 1 else 's')), '/material?key=' ~ (x.material_key|urlencode)) }} src="{{ x.image_url }}" alt="" onerror="this.classList.add('broken')">
+      {% if x.image_url %}<img loading="lazy" decoding="async" data-lb data-full="{{ x.image_url|full_res }}" {{ lb_attrs(x.item_name, (x.suppliers ~ ' supplier' ~ ('' if x.suppliers == 1 else 's')), '/material?key=' ~ (x.material_key|urlencode)) }} src="{{ x.image_url }}" alt="" onerror="this.outerHTML='<span class=&quot;simph&quot;>🪨</span>'">
       {% else %}<span class="simph">🪨</span>{% endif %}
       <span class="simmeta">
         <b>{{ x.item_name }}</b>
