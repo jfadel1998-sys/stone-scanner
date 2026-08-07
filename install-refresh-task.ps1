@@ -118,6 +118,11 @@ $guard = @(
     "`$spill = '$spillExe'"
     "`$stamp = Join-Path `$env:ProgramData 'StoneScanner\last-spill.txt'"
     "`$log = Join-Path `$env:ProgramData 'StoneScanner\refresh-task.log'"
+    # Hand the log to the crawl process so it can report its own phases here. Without this
+    # the spill path wrote one SPILL line and then nothing for hours, because this script
+    # only regains control when the process exits — which is what made a healthy nightly
+    # (crawl done 05:27, image indexing until 08:1x) read as wedged.
+    "`$env:STONESCAN_TASK_LOG = `$log"
     "`$d = Split-Path -LiteralPath `$log"
     "if (-not (Test-Path -LiteralPath `$d)) { New-Item -ItemType Directory -Path `$d -Force | Out-Null }"
     "function Note([string]`$m) { Add-Content -LiteralPath `$log -Encoding utf8 -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + `$m) }"

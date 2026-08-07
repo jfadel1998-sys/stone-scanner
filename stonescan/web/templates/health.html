@@ -102,7 +102,16 @@
         <td class="num">{{ r.attempts or 0 }}</td>
         <td class="num">{{ r.materials if r.materials is not none else '—' }}</td>
         <td>{{ (r.finished_at or r.heartbeat_at or '')[:16].replace('T',' ') or '—' }}</td>
-        <td class="muted">{{ r.detail or '' }}</td>
+        {# On a RUNNING row `detail` carries the phase, not an error (see db.set_refresh_phase).
+           Labelling it matters: a refresh spends hours indexing photos after the crawl has
+           reported its totals, and an unlabelled row gave no way to tell that from a hang. #}
+        <td class="muted">
+          {%- if r.state == 'running' -%}
+            {% if r.detail %}phase: {{ r.detail }}{% else %}<span title="This run predates phase reporting, or has not reached a phase it announces.">phase not reported</span>{% endif %}
+          {%- else -%}
+            {{ r.detail or '' }}
+          {%- endif -%}
+        </td>
       </tr>
       {% endfor %}
     </tbody>

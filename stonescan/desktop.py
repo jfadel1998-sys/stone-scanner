@@ -243,10 +243,16 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
         f"{' with slab galleries' if with_slabs else ''}...")
     # run_all, not run: the list holds non-StoneProfits suppliers too, and each
     # must reach its own provider rather than the Playwright crawler.
-    asyncio.run(run_all(
+    #
+    # final=False because the crawl is NOT the whole run — image indexing follows and on
+    # the full catalog takes hours. run_all therefore ends its history with "crawl
+    # complete" rather than "Done", and hands back the open ledger row for us to close.
+    db_path = os.environ["STONESCAN_DB"]
+    run_id = asyncio.run(run_all(
         entries, concurrency=4, delay=1.0, headless=True,
-        db_path=os.environ["STONESCAN_DB"], with_slabs=with_slabs, slab_item_cap=40,
+        db_path=db_path, with_slabs=with_slabs, slab_item_cap=40,
         retry_errored=True,  # give same-run transient failures a second chance
+        final=False,
     ))
 
     # Best-effort: embed any newly-crawled images so search-by-photo covers them too. Only
@@ -257,17 +263,95 @@ def run_refresh(with_slabs: bool = True, do_discover: bool = False) -> None:
     # say(), not print(): both of these run AFTER the ledger has already recorded the run as
     # 'done', and the second sits alone in an except body — so a failed write here turned a
     # completely successful crawl into a non-zero exit that refresh.ps1 logged as a failure.
+    _index_images(db_path, run_id)
+
+
+def _task_log(msg: str) -> None:
+    """Mirror a phase line into the scheduled task's own log, when there is one.
+
+    The nightly's PowerShell wrapper waits on this process and can see nothing inside it,
+    so on the spill path its log held one "SPILL" line and then nothing for hours. It now
+    passes its log path in STONESCAN_TASK_LOG; absent that (a normal dev run) this is a
+    no-op. Never raises — a logging failure must not end a crawl.
+    """
+    path = os.environ.get("STONESCAN_TASK_LOG", "").strip()
+    if not path:
+        return
     try:
-        from stonescan import db, imagesearch
-        if imagesearch.available():
-            conn = db.connect(os.environ["STONESCAN_DB"])
-            try:
-                n = imagesearch.index_missing(conn)
-                say(f"Indexed {n} new image(s) for search-by-photo.")
-            finally:
-                conn.close()
-    except Exception as e:  # noqa: BLE001 - indexing is optional; a crawl still succeeded
-        say(f"(image indexing skipped: {e})")
+        from datetime import datetime
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _elapsed(seconds: float) -> str:
+    """A duration that stays honest at both ends of the range this phase spans — 35s on one
+    supplier, hours on the full catalog. Rounding everything to minutes reported a 35-second
+    index as "1 min", which is the same kind of small lie this issue is about."""
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f} min"
+    return f"{seconds / 3600:.1f} h"
+
+
+def _index_images(db_path: str, run_id: int | None) -> None:
+    """Embed newly-crawled images, saying so before, during and after.
+
+    This is the phase that made a healthy nightly look hung: it runs AFTER the crawl
+    reports its totals, it can take hours on the full catalog, and until now it announced
+    itself nowhere. Every line here is written through ingest.refresh_log, which opens,
+    writes and closes per call — so it is on disk the moment it happens rather than
+    sitting in a buffer until exit, which would leave the log exactly as unreadable as it
+    was before.
+    """
+    import time
+
+    from stonescan import db, imagesearch, ingest
+
+    def finish(outcome: str, detail: str = "") -> None:
+        ingest._ledger_finish(db_path, run_id, outcome=outcome, detail=detail)
+
+    try:
+        if not imagesearch.available():
+            # No model, no phase. Saying "indexed 0 images" here would invent a step that
+            # never ran, which is its own kind of misleading log.
+            ingest.refresh_log(db_path, "Done — crawl only; no photo index on this build.")
+            _task_log("crawl complete; no photo index on this build")
+            finish("done")
+            return
+        conn = db.connect(db_path)
+        try:
+            pending = len(imagesearch.unindexed_urls(conn))
+            if not pending:
+                ingest.refresh_log(db_path, "Done — photo index already current.")
+                _task_log("crawl complete; photo index already current")
+                finish("done")
+                return
+            ingest.refresh_log(db_path, f"indexing {pending} new image(s) for "
+                                        f"search-by-photo — this can take hours.")
+            _task_log(f"crawl complete; indexing {pending} image(s) — this can take hours")
+            ingest.ledger_phase(db_path, run_id, f"indexing {pending} image(s)")
+            t0 = time.time()
+            n = imagesearch.index_missing(conn)
+            took = _elapsed(time.time() - t0)
+            say(f"Indexed {n} new image(s) for search-by-photo.")
+            ingest.refresh_log(db_path, f"indexed {n} of {pending} image(s) in {took}.")
+            _task_log(f"indexing finished: {n} of {pending} in {took}")
+        finally:
+            conn.close()
+        ingest.refresh_log(db_path, "Done — crawl and photo index complete.")
+        finish("done")
+    except Exception as e:  # noqa: BLE001 - the crawl succeeded; this phase did not
+        # Recorded, and worded so it cannot be mistaken for a clean finish. The crawl's own
+        # totals are already banked above, so this reports a partial run honestly rather
+        # than throwing away a night's work over an indexing failure.
+        ingest.refresh_log(db_path, f"FAILED during image indexing (the crawl itself "
+                                    f"succeeded): {type(e).__name__}: {e}")
+        _task_log(f"image indexing FAILED: {type(e).__name__}: {e}")
+        finish("failed", f"image indexing: {type(e).__name__}: {e}")
+        say(f"(image indexing failed: {e})")
 
 
 def _ensure_std_streams() -> None:

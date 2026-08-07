@@ -1070,6 +1070,24 @@ def heartbeat_refresh_run(conn: sqlite3.Connection, run_id: int) -> None:
     conn.commit()
 
 
+def set_refresh_phase(conn: sqlite3.Connection, run_id: int, phase: str) -> None:
+    """Record what a still-running refresh is currently doing.
+
+    Reuses `detail` rather than adding a column: on a finished row `detail` carries the
+    error, on a running one there is no error to carry, and the two are never read at the
+    same time (`state` decides which). That keeps this out of the migration business —
+    a snapshot DB predating this simply has NULL there, which reads as "unknown phase".
+
+    Also advances the heartbeat, and that is the load-bearing half. Image indexing runs
+    for hours without touching a supplier, so without this the per-supplier heartbeat goes
+    quiet and `recent_refresh_runs` declares a perfectly healthy run `interrupted` —
+    exactly the false alarm this change exists to stop.
+    """
+    conn.execute("UPDATE refresh_runs SET detail = ?, heartbeat_at = ? WHERE id = ?",
+                 ((phase or "")[:500], _now_iso(), run_id))
+    conn.commit()
+
+
 def finish_refresh_run(conn: sqlite3.Connection, run_id: int, *, outcome: str,
                        materials: int | None = None, detail: str | None = None) -> None:
     """Stamp the terminal state. `outcome` is 'done' or 'failed'."""
