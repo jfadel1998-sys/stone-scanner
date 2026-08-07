@@ -45,6 +45,9 @@
           🔍 Discovery{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.discovery }}">{{ ops.discovery }} to triage</span>{% endif %}</a>
         <a role="menuitem" href="/quality" class="{{ 'active' if p.startswith('/quality') }}">
           🧹 Quality{% if ops.ready %}<span class="opsnum{{ ' warn' if ops.quality }}">{{ ops.quality }} to review</span>{% endif %}</a>
+        {# A badge that cannot be computed must say so. Silence here read as "all clear" for
+           the whole time /discovery was raising. #}
+        {% if ops.error %}<span class="opsfail" title="{{ ops.error }}">⚠ counts unavailable — open a page above to see why</span>{% endif %}
       </div>
     </details>
     <button id="themeToggle" class="iconbtn" type="button" title="Toggle light / dark theme" aria-label="Toggle light or dark theme">🌗</button>

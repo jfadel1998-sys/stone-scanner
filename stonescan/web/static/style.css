@@ -1001,6 +1001,10 @@ img[data-lb] { cursor: zoom-in; }
 .opspanel a:hover { background: var(--accent-soft); color: var(--accent-soft-ink); }
 .opspanel a.active { background: var(--accent-soft); color: var(--accent-soft-ink); font-weight: 600; }
 .opsnum { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.opsfail {
+  display: block; margin: 4px 10px 2px; font-size: 11.5px; font-weight: 600;
+  color: var(--brick-ink, var(--accent)); white-space: normal; max-width: 210px;
+}
 .opsnum.warn { color: var(--brick-ink, var(--accent)); }
 
 /* No-JS refusal banner (JS path uses the sticky-bar message instead) */

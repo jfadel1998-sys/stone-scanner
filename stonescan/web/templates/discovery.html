@@ -98,6 +98,21 @@
 </div>
 {% endif %}
 
+{% if cats.challenged %}
+<div class="block">
+  <h2>Declined by a bot check <span class="qbadge">{{ counts.challenged }}</span></h2>
+  <p class="muted qdesc" style="margin:0 0 8px;">Not a fault to fix, and not something to work around: these hosts answer with a bot-protection challenge, which is the operator declining automated access — the same statement <code>robots.txt</code> makes, said out of band. They are excluded from the retry pass and the empty-crawl streak, and re-probed only every {{ challenge_recheck_days }} days rather than nightly, because re-asking them every night is the traffic that protection exists to stop.</p>
+  <table class="materials healthtable">
+    <thead><tr><th>Host</th><th>Platform</th><th>What they answered</th></tr></thead>
+    <tbody>
+    {% for r in cats.challenged %}
+      <tr><td class="name">{{ r.host }}</td><td class="muted">{{ r.provider }}</td><td class="muted herr">{{ r.error[:80] }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 {% if cats.blocked %}
 <div class="block">
   <h2>Declined by robots.txt <span class="qbadge">{{ counts.blocked }}</span></h2>
