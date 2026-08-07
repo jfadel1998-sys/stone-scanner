@@ -5307,6 +5307,142 @@ class ColourFamilyTests(unittest.TestCase):
         self.assertEqual(app._colors_for_choice(self.conn, ""), [])
 
 
+class SlabGalleryStateTests(unittest.TestCase):
+    """AIL-44 — three different situations used to print one sentence.
+
+    "No individual slab photos are published right now. Open the live catalog ↗" was shown
+    for a failed fetch, for a platform that structurally never publishes slabs, and for a
+    supplier that genuinely lists none. The API already distinguished all three; the page
+    read neither `error` nor `live_supported`.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.dbp = os.path.join(self.tmp, "t.db")
+        self.conn = db.init_db(self.dbp)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _seed(self, *, token, with_slabs, crawled_at="2026-08-01T00:00:00+00:00"):
+        sid = db.upsert_supplier(self.conn, host="x.example.com", company="Acme Stone")
+        if token:
+            self.conn.execute("UPDATE suppliers SET token=? WHERE id=?", ("tok", sid))
+        self.conn.execute(
+            """INSERT INTO materials (supplier_id, item_id, item_name, name_norm,
+                 material_key, material_type, thickness, finish, available_slabs)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (sid, "IT1", "Test Stone", "TEST STONE", "test stone|marble", "Marble",
+             "3cm", "Polished", 4))
+        mid = self.conn.execute("SELECT id FROM materials WHERE supplier_id=?",
+                                (sid,)).fetchone()[0]
+        if with_slabs:
+            self.conn.execute(
+                """INSERT INTO slabs (supplier_id, item_id, slab_no, location, length,
+                     width, qty, uom, barcode, image_filename, image_url, crawled_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (sid, "IT1", "S-1", "Yard", 120.0, 70.0, 1, "SF", "", "",
+                 "http://i/1.jpg", crawled_at))
+        self.conn.commit()
+        return mid
+
+    def _api(self, mid, live=0):
+        from fastapi.testclient import TestClient
+
+        from stonescan.web import app as webapp
+        orig = db.connect
+        db.connect = lambda *a, **k: orig(self.dbp)
+        try:
+            return TestClient(webapp.app).get(f"/api/slabs?id={mid}&live={live}").json()
+        finally:
+            db.connect = orig
+
+    # --- the payload keeps the three states apart ----------------------------
+    def test_a_cached_gallery_reports_when_it_was_collected(self):
+        """The stamp used to be written only on a LIVE read, so the trustworthy
+        seconds-old reading was dated and a three-week-old cache was not."""
+        mid = self._seed(token=True, with_slabs=True,
+                         crawled_at="2026-07-16T09:00:00+00:00")
+        d = self._api(mid)
+        self.assertTrue(d["cached"])
+        self.assertEqual(d["collected_at"], "2026-07-16T09:00:00+00:00")
+
+    def test_the_date_is_the_rows_own_not_now(self):
+        mid = self._seed(token=True, with_slabs=True,
+                         crawled_at="2026-07-16T09:00:00+00:00")
+        self.assertNotIn("2026-08", self._api(mid)["collected_at"])
+
+    def test_the_oldest_row_sets_the_date(self):
+        """A gallery is only as fresh as its stalest slab."""
+        mid = self._seed(token=True, with_slabs=True,
+                         crawled_at="2026-08-01T00:00:00+00:00")
+        sid = self.conn.execute("SELECT supplier_id FROM materials WHERE id=?",
+                                (mid,)).fetchone()[0]
+        self.conn.execute(
+            """INSERT INTO slabs (supplier_id, item_id, slab_no, length, width, qty, uom,
+                 barcode, image_filename, image_url, location, crawled_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (sid, "IT1", "S-2", 120.0, 70.0, 1, "SF", "", "", "http://i/2.jpg", "Yard",
+             "2026-06-01T00:00:00+00:00"))
+        self.conn.commit()
+        self.assertEqual(self._api(mid)["collected_at"], "2026-06-01T00:00:00+00:00")
+
+    def test_a_platform_with_no_slab_feed_says_so_structurally(self):
+        mid = self._seed(token=False, with_slabs=False)
+        d = self._api(mid)
+        self.assertIs(d["live_supported"], False)
+        self.assertEqual(d["slabs"], [])
+
+    def test_a_failed_fetch_reports_an_error_rather_than_emptiness(self):
+        from stonescan import slabs as slabmod
+        mid = self._seed(token=True, with_slabs=False)
+        orig = slabmod.fetch_slabs
+
+        async def boom(*a, **k):
+            raise RuntimeError("supplier unreachable")
+        slabmod.fetch_slabs = boom
+        try:
+            d = self._api(mid)
+            self.assertIn("error", d)
+            self.assertIn("unreachable", d["error"])
+            self.assertEqual(d["slabs"], [])
+            self.assertNotIn("live_supported", d)   # a different state entirely
+        finally:
+            slabmod.fetch_slabs = orig
+
+    # --- the client branches on fields, not on prose -------------------------
+    def test_the_page_reads_both_fields_it_used_to_ignore(self):
+        """They existed in the payload for months and nothing consumed them. A grep guard
+        is enough to stop a future edit quietly dropping them again."""
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "item.html").read_text(encoding="utf-8")
+        self.assertIn("live_supported === false", html)
+        self.assertIn("d.error", html)
+        self.assertIn("collected_at", html)
+
+    def test_the_three_messages_are_distinct(self):
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "item.html").read_text(encoding="utf-8")
+        body = html.split("function emptyMessage", 1)[1].split("function render", 1)[0]
+        self.assertIn("publishes a", body)          # structural
+        self.assertIn("Couldn’t reach", body)       # transport / fetch error
+        self.assertIn("published right now", body)  # reached, genuinely empty
+        self.assertIn("slabretry", body)            # AC-2 offers a retry
+
+    def test_a_stale_cache_is_marked_with_the_existing_treatment(self):
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "item.html").read_text(encoding="utf-8")
+        self.assertIn("warnstamp", html)
+        self.assertIn("STALE_DAYS", html)
+
+    def test_the_structural_case_does_not_offer_a_retry(self):
+        """Retrying something that can never succeed is worse than saying nothing."""
+        html = (Path(__file__).resolve().parent.parent / "stonescan" / "web" /
+                "templates" / "item.html").read_text(encoding="utf-8")
+        structural = html.split("live_supported === false", 1)[1].split("if(d && d.error)", 1)[0]
+        self.assertNotIn("slabretry", structural)
+
+
 class TruthfulLabelTests(unittest.TestCase):
     """AIL-43 — five places the UI asserted something the code knows is false."""
 
