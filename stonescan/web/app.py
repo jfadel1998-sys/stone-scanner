@@ -1422,7 +1422,8 @@ async def api_slabs(id: int, live: int = 0):
     if not live:
         ph = ",".join("?" for _ in item_ids)
         cached = [dict(c) for c in conn.execute(
-            f"""SELECT slab_no, location, length, width, qty, uom, barcode, image_url
+            f"""SELECT slab_no, location, length, width, qty, uom, barcode, image_url,
+                       crawled_at
                 FROM slabs WHERE supplier_id = ? AND item_id IN ({ph})
                 ORDER BY (image_url = '' OR image_url IS NULL), slab_no""",
             (row["supplier_id"], *item_ids),
@@ -1435,13 +1436,23 @@ async def api_slabs(id: int, live: int = 0):
             "length": c["length"], "width": c["width"],
             "qty": c["qty"], "uom": c["uom"], "barcode": c["barcode"],
         } for c in cached]
-        return JSONResponse({"slabs": slab_list, "cached": True, "n_items": len(item_ids)})
+        # The date these rows were collected. Until now only a LIVE read was ever stamped,
+        # so a seconds-old reading was dated and a possibly-three-week-old cached one was
+        # not — the more suspect the data, the less the page said about it. Oldest wins:
+        # a gallery is only as fresh as its stalest row.
+        stamps = [c["crawled_at"] for c in cached if c["crawled_at"]]
+        return JSONResponse({"slabs": slab_list, "cached": True, "n_items": len(item_ids),
+                             "collected_at": min(stamps) if stamps else ""})
 
     # slabs.fetch_slabs is StoneProfits-only (it reads the page's SPSWebToken and the
     # SPS API). A provider supplier — UMI/SlabWare/SlabCloud/StoneTrash, no SPS token —
     # has no live per-slab feed, so don't burn ~30s driving a browser to a doomed fetch
     # (which returns nothing and could blank a good cached gallery). Say so instead.
     if not row["token"]:
+        # Structural and permanent, not "right now": ~297 suppliers and ~25.7k materials
+        # are on platforms that publish a slab COUNT and never the slabs. The client used
+        # to render the same "not published right now — open the live catalog" here as it
+        # did for a transient miss, pointing the user at a catalog that cannot answer.
         return JSONResponse({"slabs": [], "cached": False, "live_supported": False})
 
     # Forced live (?live=1), or nothing pre-cached -> read the supplier's catalog now.

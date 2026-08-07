@@ -213,16 +213,43 @@
                                      .replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
   var liveLink = '<a href="https://'+host+'/" target="_blank" rel="noopener">Open the live catalog ↗</a>';
+  // A cached gallery older than this is marked stale. Matched to the nightly's cadence:
+  // anything past a few days means the refresh has not reached this supplier, which is
+  // the case worth flagging rather than a normal overnight gap.
+  var STALE_DAYS = 3;
 
   function nowLabel(){
     try { return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
     catch(e){ return ''; }
   }
 
-  function render(slabs){
+  /* Three different situations used to print one sentence — "No individual slab photos are
+     published right now. Open the live catalog ↗" — and the API had already told us which
+     was which. `live_supported: false` is structural and permanent (this platform publishes
+     counts, never slabs), `error` means we couldn't reach them, and a plain empty array
+     means they were reached and list nothing. Branching on FIELDS, not on message text. */
+  function emptyMessage(d){
+    if(d && d.live_supported === false){
+      return '<div class="slabloading">' + esc(LB_SUPPLIER) + '’s platform publishes a '
+           + 'slab count, not individual slabs — so there is no per-slab gallery to show. '
+           + 'The quantity above is what they publish. ' + liveLink + '</div>';
+    }
+    if(d && d.error){
+      return '<div class="slabloading warn">Couldn’t reach ' + esc(LB_SUPPLIER)
+           + ' just now, so this gallery is unavailable — it is not a statement about '
+           + 'their stock. <button type="button" class="linklike" id="slabretry">Try again'
+           + '</button> · ' + liveLink + '</div>';
+    }
+    return '<div class="slabloading">No individual slab photos are published right now. '
+         + liveLink + '</div>';
+  }
+
+  function render(slabs, d){
     if(!slabs.length){
-      list.innerHTML = '<div class="slabloading">No individual slab photos are published right now. '+liveLink+'</div>';
+      list.innerHTML = emptyMessage(d);
       countEl.textContent = '';
+      var again = document.getElementById('slabretry');
+      if(again) again.addEventListener('click', function(){ load(true); });
       return;
     }
     countEl.textContent = '· '+slabs.length+' slab'+(slabs.length===1?'':'s');
@@ -256,7 +283,24 @@
     });
   }
 
+  /* The date a CACHED gallery was collected. This element was only ever written by
+     markLive(), so the trustworthy seconds-old reading carried a timestamp and a gallery
+     that might be three weeks old carried none — exactly backwards. */
+  function markCached(iso){
+    if(!stampEl || !iso) return;
+    var d = new Date(iso.replace(' ', 'T'));
+    var days = isNaN(d) ? 0 : Math.floor((Date.now() - d.getTime()) / 86400000);
+    var day = isNaN(d) ? String(iso).slice(0, 10) : d.toISOString().slice(0, 10);
+    stampEl.textContent = '· from the crawl of ' + day;
+    stampEl.classList.toggle('warnstamp', days >= STALE_DAYS);
+    stampEl.title = days >= STALE_DAYS
+      ? 'Collected ' + days + ' days ago and not reconfirmed since. Open the supplier’s '
+        + 'catalog for a current reading.'
+      : 'Collected by the crawl on ' + day + '.';
+  }
+
   function markLive(slabs, nItems){
+    if(stampEl){ stampEl.classList.remove('warnstamp'); stampEl.title = ''; }
     if(stampEl) stampEl.textContent = '· live as of '+nowLabel();
     // Restate the header slab count from the live reading only when this product is
     // a single batch (unambiguous). Multi-batch products keep the crawl-time total.
@@ -267,9 +311,11 @@
   }
 
   // 1) Paint immediately from the default endpoint (the nightly cache if present).
-  fetch('/api/slabs?id='+id).then(function(r){return r.json();}).then(function(d){
+  function load(force){
+  fetch('/api/slabs?id='+id+(force?'&live=1':'')).then(function(r){return r.json();}).then(function(d){
     var slabs = (d && d.slabs) || [];
-    render(slabs);
+    render(slabs, d);
+    if(d && d.cached && d.collected_at) markCached(d.collected_at);
     if(d && d.cached === false){
       if(slabs.length) markLive(slabs, d.n_items);      // already a live reading
     } else if(sps && d.n_items === 1){
@@ -282,12 +328,16 @@
         // Replace only when the live read returns slabs WITH photos, so a transient
         // failure or a photoless read can never blank a good cached gallery.
         var withPhoto = live.filter(function(s){ return s.thumb; }).length;
-        if(live.length && withPhoto){ render(live); markLive(live, d2.n_items); }
+        if(live.length && withPhoto){ render(live, d2); markLive(live, d2.n_items); }
       }).catch(function(){});
     }
   }).catch(function(){
-    list.innerHTML = '<div class="slabloading">Couldn\'t load slab photos just now. '+liveLink+'</div>';
+    // A transport failure is the same class of thing as a fetch error from the server:
+    // it says nothing about their stock, so it must not read as "nothing published".
+    render([], {error: 'network'});
   });
+  }
+  load(false);
 })();
 </script>
 {% endblock %}
