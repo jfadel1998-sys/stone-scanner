@@ -2,7 +2,7 @@
 {% block title %}{{ meta.name }} — sourcing list · Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{{ stats.materials }} materials · {{ stats.suppliers }} suppliers</div>
+<div class="stats">{{ stats.materials|comma }} materials · {{ stats.suppliers }} suppliers</div>
 {% endblock %}
 
 {% block content %}
@@ -13,9 +13,9 @@
      {{ groups|length }} supplier{{ '' if groups|length == 1 else 's' }}
      {% if items|selectattr('gone')|list %} · <span class="gonechip">{{ items|selectattr('gone')|list|length }} no longer in catalog</span>{% endif %}</p>
   <div class="actions">
-    <a class="btn" href="/list/print?id={{ meta.id }}" target="_blank">🖨 Print / Save as PDF</a>
-    <a class="btn ghost" href="/list/rfq?id={{ meta.id }}">✉ Request quotes</a>
-    {% if items %}<a class="btn ghost" href="/list/export?id={{ meta.id }}">⬇ Export CSV</a>{% endif %}
+    <a class="btn" href="/list/print?id={{ meta.id }}" target="_blank">{{ ic('printer') }} Print / Save as PDF</a>
+    <a class="btn ghost" href="/list/rfq?id={{ meta.id }}">{{ ic('mail') }} Request quotes</a>
+    {% if items %}<a class="btn ghost" href="/list/export?id={{ meta.id }}">{{ ic('download') }} Export CSV</a>{% endif %}
   </div>
   {% if added == 0 %}<p class="hintline muted">That item was already on this list.</p>{% endif %}
 </div>

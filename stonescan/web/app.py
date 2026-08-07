@@ -263,6 +263,34 @@ def full_res(image_url: str) -> str:
 templates.env.filters["full_res"] = full_res
 
 
+def comma(value) -> str:
+    """Thousands separators for counts ("178891" reads as a typo; "178,891" reads as data).
+
+    Tolerant of the blanks and non-numbers templates actually pass — anything that isn't
+    an integer comes back unchanged rather than raising mid-render.
+    """
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "" if value is None else str(value)
+
+
+templates.env.filters["comma"] = comma
+
+
+def ic(name: str, cls: str = "") -> Markup:
+    """An inline icon from the sprite base.html defines: <svg><use href="#i-<name>"></svg>.
+
+    A Python global rather than a Jinja macro because macros defined in base.html are not
+    visible inside child templates' blocks — every template needs these.
+    """
+    classes = f"ic {cls}".strip()
+    return Markup(f'<svg class="{escape(classes)}" aria-hidden="true"><use href="#i-{escape(name)}"/></svg>')
+
+
+templates.env.globals["ic"] = ic
+
+
 def lb_attrs(title: str = "", sub: str = "", href: str = "") -> Markup:
     """The caption attributes the shared lightbox reads off an <img data-lb>.
 

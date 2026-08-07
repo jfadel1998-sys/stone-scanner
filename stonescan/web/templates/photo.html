@@ -2,8 +2,8 @@
 {% block title %}Identify a stone by photo — Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{{ index.indexed }} of {{ index.images_total }} images indexed
-  {%- if ref_stats.total %} · {{ ref_stats.total }} stones referenced{% endif %}</div>
+<div class="stats">{{ index.indexed|comma }} of {{ index.images_total|comma }} images indexed
+  {%- if ref_stats.total %} · {{ ref_stats.total|comma }} stones referenced{% endif %}</div>
 {% endblock %}
 
 {% block content %}

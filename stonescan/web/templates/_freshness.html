@@ -8,7 +8,7 @@
     supplier. Callers supply their own leading separator. -#}
 {%- if stats.last_updated -%}
   {%- if stats.suppliers_with_data and stats.suppliers_current < stats.suppliers_with_data -%}
-    <span class="fresh partial" title="Only {{ stats.suppliers_current }} of {{ stats.suppliers_with_data }} suppliers with data were refreshed in the last {{ stats.fresh_hours }}h. The rest still serve their previous crawl, the oldest from {{ stats.oldest_updated[:10] }}. Each item page shows its own supplier's crawl time.">{{ stats.suppliers_current }}/{{ stats.suppliers_with_data }} suppliers current · oldest {{ stats.oldest_updated[:10] }}</span>
+    <span class="fresh partial" title="Only {{ stats.suppliers_current }} of {{ stats.suppliers_with_data }} suppliers with data were refreshed in the last {{ stats.fresh_hours }}h. The rest still serve their previous crawl, the oldest from {{ stats.oldest_updated[:10] }}. Each item page shows its own supplier's crawl time.">{{ stats.suppliers_current }}/{{ stats.suppliers_with_data }} current · oldest {{ stats.oldest_updated[:10] }}</span>
   {%- else -%}
     <span class="fresh" title="Every supplier with data was refreshed within the last {{ stats.fresh_hours }}h">updated {{ stats.last_updated[:16].replace('T',' ') }} UTC</span>
   {%- endif -%}

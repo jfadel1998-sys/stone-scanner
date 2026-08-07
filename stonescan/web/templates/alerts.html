@@ -48,13 +48,13 @@
 
 {% block content %}
 <div class="alert-head">
-  <h1>🔔 Alerts</h1>
+  <h1>Alerts</h1>
   <p class="muted">What changed across every catalog since each supplier's previous crawl. Opening this page marks these as seen.</p>
 </div>
 
 {% if not digest.has_baseline %}
 <div class="alert-empty">
-  <p class="alert-empty-icon">🔔</p>
+  <p class="alert-empty-icon">{{ ic('bell') }}</p>
   <h2>No alerts yet</h2>
   <p>Alerts compare each supplier's latest crawl against its previous one, so they appear once a supplier has been crawled at least twice. Run <b>↻ Refresh</b> now, and again next time, to start the baseline.</p>
 </div>

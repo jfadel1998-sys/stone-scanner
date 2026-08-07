@@ -23,19 +23,19 @@
       {% if near and near_ok %}<span class="ichip">📍 from {{ near_label }}</span>
       {% elif near %}<span class="okchip warn" title="Not in the offline city dataset — try a bigger city or 'City ST'">couldn't place “{{ near }}”</span>{% endif %}
     </form>
-    <a class="btn ghost" href="/compare/print{% if near %}?near={{ near|urlencode }}{% endif %}">🖨 Print board</a>
+    <a class="btn ghost" href="/compare/print{% if near %}?near={{ near|urlencode }}{% endif %}">{{ ic('printer') }} Print board</a>
   </div>
   {% endif %}
 </div>
 
 {% if not cols %}
 <div class="cmp-empty">
-  <p class="cmp-empty-icon">⚖</p>
+  <p class="cmp-empty-icon">{{ ic('scale') }}</p>
   <h2>Nothing to compare yet</h2>
   <p>Pick materials to line up side by side — their specs, stock, observed prices, and reference facts.</p>
   <ul>
-    <li>Tick the ⚖ box on any <a href="/">search result</a> (table or showroom grid).</li>
-    <li>Or open a material and use the <b>⚖ Compare</b> button.</li>
+    <li>Tick the {{ ic('scale') }} box on any <a href="/">search result</a> (table or showroom grid).</li>
+    <li>Or open a material and use the <b>{{ ic('scale') }} Compare</b> button.</li>
   </ul>
 </div>
 {% else %}

@@ -2,7 +2,7 @@
 {% block title %}Sourcing lists — Stone Scanner{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{{ stats.materials }} materials · {{ stats.suppliers }} suppliers</div>
+<div class="stats">{{ stats.materials|comma }} materials · {{ stats.suppliers }} suppliers</div>
 {% endblock %}
 
 {% block content %}
@@ -19,7 +19,7 @@
   {% for l in lists %}
   <div class="listcard">
     <a href="/list?id={{ l.id }}">
-      <b>📋 {{ l.name }}</b>
+      <b>{{ ic('clipboard') }} {{ l.name }}</b>
       <span class="muted">{{ l.items }} item{{ '' if l.items == 1 else 's' }} · {{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
     </a>
     <div class="listthumbs">
@@ -31,7 +31,11 @@
     </form>
   </div>
   {% else %}
-  <p class="empty">No lists yet. Create one above, then open a material and use the ＋ next to a supplier under “Where to buy it” to add it.</p>
+  <div class="emptybox">
+    <p class="ei">{{ ic('clipboard') }}</p>
+    <h2>No lists yet</h2>
+    <p>Create one above, then open a material and use the ＋ next to a supplier under “Where to buy it” to add it.</p>
+  </div>
   {% endfor %}
 </div>
 {% endblock %}

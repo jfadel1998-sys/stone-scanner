@@ -1,11 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ m.item_name }} — {{ m.supplier_name }} · Stone Scanner{% endblock %}
 
-{% block headeraside %}
-<div class="stats"><a class="back" href="/" onclick="if(history.length>1){history.back();return false}">‹ Back to results</a></div>
-{% endblock %}
-
 {% block content %}
+<div class="backbar"><a class="back" href="/" onclick="if(history.length>1){history.back();return false}">‹ Back to results</a></div>
 <div class="detail">
   <div class="detail-photo">
     {% if m.image_url %}
@@ -63,8 +60,8 @@
     <div class="contact-card">
       <div class="cc-name">{{ m.supplier_name }}</div>
       <div class="cc-lines">
-        {% if m.supplier_phone %}<a href="tel:{{ m.supplier_phone }}" class="cc-link">📞 {{ m.supplier_phone }}</a>{% endif %}
-        {% if m.supplier_email %}<a href="mailto:{{ m.supplier_email }}?subject=Inquiry: {{ m.item_name|urlencode }}" class="cc-link">✉ {{ m.supplier_email }}</a>{% endif %}
+        {% if m.supplier_phone %}<a href="tel:{{ m.supplier_phone }}" class="cc-link">{{ ic('phone') }} {{ m.supplier_phone }}</a>{% endif %}
+        {% if m.supplier_email %}<a href="mailto:{{ m.supplier_email }}?subject=Inquiry: {{ m.item_name|urlencode }}" class="cc-link">{{ ic('mail') }} {{ m.supplier_email }}</a>{% endif %}
         {% if not m.supplier_phone and not m.supplier_email %}<a class="cc-link" href="https://{{ m.supplier_host }}/" target="_blank" rel="noopener">Contact via their site ↗</a>{% endif %}
       </div>
     </div>
@@ -83,7 +80,7 @@
         <input type="hidden" name="back" value="/item?id={{ m.id }}">
         <label class="cmpchk cmpchk-btn" title="Add this material to the compare tray">
           <input type="checkbox" name="on" data-cmpkey="{{ m.material_key }}" onchange="this.form.requestSubmit()" {{ 'checked' if m.material_key in cmp.keyset }}>
-          <span class="cmpchk-face" aria-hidden="true">⚖</span>
+          <span class="cmpchk-face" aria-hidden="true">{{ ic('scale') }}</span>
           <span class="cmpchk-text"></span>
         </label>
         <noscript><button type="submit" class="btn ghost">± Compare</button></noscript>

@@ -3,7 +3,7 @@
 {% block head %}<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">{% endblock %}
 
 {% block headeraside %}
-<div class="stats">{{ stats.materials }} materials · {{ stats.unique_materials }} unique · {{ stats.suppliers }} suppliers</div>
+<div class="stats">{{ stats.materials|comma }} materials · {{ stats.unique_materials|comma }} unique · {{ stats.suppliers }} suppliers</div>
 {% endblock %}
 
 {% block content %}
@@ -43,7 +43,7 @@
   <div class="locgrid">
     {% for l in locs %}
     <a class="loccard" href="/?location={{ l.location | urlencode }}&in_stock=1&sort=slabs">
-      <b>📍 {{ l.location }}</b>
+      <b>{{ ic('pin') }} {{ l.location }}</b>
       <span>{{ l.slabs }} slab{{ '' if l.slabs == 1 else 's' }} · {{ l.products }} product{{ '' if l.products == 1 else 's' }}</span>
       <span class="muted">{{ l.suppliers }} supplier{{ '' if l.suppliers == 1 else 's' }}</span>
     </a>
